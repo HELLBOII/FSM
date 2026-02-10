@@ -1,0 +1,216 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Leaflet map custom styles */
+.custom-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
+@layer base {
+  :root {
+    /* Irrigation/Agriculture Theme - Green & Blue */
+    --background: 140 20% 98%;
+    --foreground: 150 30% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 150 30% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 150 30% 10%;
+
+    /* Primary - Forest Green */
+    --primary: 152 45% 28%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Secondary - Water Blue */
+    --secondary: 200 70% 50%;
+    --secondary-foreground: 0 0% 100%;
+
+    /* Muted - Soft earth tones */
+    --muted: 140 15% 94%;
+    --muted-foreground: 150 15% 40%;
+
+    /* Accent - Light teal */
+    --accent: 175 50% 90%;
+    --accent-foreground: 175 50% 25%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 140 15% 88%;
+    --input: 140 15% 88%;
+    --ring: 152 45% 28%;
+
+    --radius: 0.75rem;
+
+    /* Status Colors */
+    --status-new: 210 100% 50%;
+    --status-scheduled: 32 95% 50%;
+    --status-in-progress: 45 100% 50%;
+    --status-completed: 142 70% 45%;
+    --status-rework: 0 72% 51%;
+    --status-approved: 152 45% 28%;
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(152, 45%, 28%) 0%, hsl(175, 50%, 35%) 100%);
+    --gradient-water: linear-gradient(135deg, hsl(200, 70%, 50%) 0%, hsl(190, 60%, 45%) 100%);
+    --gradient-earth: linear-gradient(135deg, hsl(35, 30%, 85%) 0%, hsl(140, 20%, 92%) 100%);
+    --gradient-hero: linear-gradient(180deg, hsl(152, 45%, 28%) 0%, hsl(200, 70%, 40%) 100%);
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 hsl(150 30% 10% / 0.05);
+    --shadow-md: 0 4px 6px -1px hsl(150 30% 10% / 0.1), 0 2px 4px -2px hsl(150 30% 10% / 0.1);
+    --shadow-lg: 0 10px 15px -3px hsl(150 30% 10% / 0.1), 0 4px 6px -4px hsl(150 30% 10% / 0.1);
+    --shadow-card: 0 2px 8px -2px hsl(150 30% 10% / 0.08), 0 4px 16px -4px hsl(150 30% 10% / 0.12);
+
+    /* Sidebar */
+    --sidebar-background: 152 45% 18%;
+    --sidebar-foreground: 140 20% 95%;
+    --sidebar-primary: 175 50% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 152 40% 25%;
+    --sidebar-accent-foreground: 140 20% 95%;
+    --sidebar-border: 152 35% 25%;
+    --sidebar-ring: 175 50% 45%;
+  }
+
+  .dark {
+    --background: 150 25% 8%;
+    --foreground: 140 15% 95%;
+
+    --card: 150 20% 12%;
+    --card-foreground: 140 15% 95%;
+
+    --popover: 150 20% 12%;
+    --popover-foreground: 140 15% 95%;
+
+    --primary: 152 50% 45%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 200 60% 45%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 150 15% 18%;
+    --muted-foreground: 140 15% 65%;
+
+    --accent: 175 40% 20%;
+    --accent-foreground: 175 50% 75%;
+
+    --destructive: 0 62% 45%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 150 15% 20%;
+    --input: 150 15% 20%;
+    --ring: 152 50% 45%;
+
+    --sidebar-background: 150 25% 6%;
+    --sidebar-foreground: 140 15% 90%;
+    --sidebar-primary: 175 50% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 150 20% 15%;
+    --sidebar-accent-foreground: 140 15% 90%;
+    --sidebar-border: 150 15% 15%;
+    --sidebar-ring: 175 50% 45%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+}
+
+@layer components {
+  /* Status Badge Styles */
+  .status-new {
+    @apply bg-blue-500 text-white;
+  }
+  .status-scheduled {
+    @apply bg-orange-500 text-white;
+  }
+  .status-in-progress {
+    @apply bg-yellow-500 text-yellow-950;
+  }
+  .status-completed {
+    @apply bg-emerald-500 text-white;
+  }
+  .status-rework {
+    @apply bg-red-500 text-white;
+  }
+  .status-approved {
+    @apply bg-primary text-primary-foreground;
+  }
+}
+
+@layer utilities {
+  /* Animations */
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out forwards;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.3s ease-out forwards;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.2s ease-out forwards;
+  }
+
+  .animate-pulse-soft {
+    animation: pulseSoft 2s ease-in-out infinite;
+  }
+
+  .animate-marker-pulse {
+    animation: markerPulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes scaleIn {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  @keyframes pulseSoft {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+  }
+
+  @keyframes markerPulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 hsl(var(--primary) / 0.4); }
+    50% { transform: scale(1.05); box-shadow: 0 0 0 8px hsl(var(--primary) / 0); }
+  }
+
+  /* Card hover effect */
+  .card-hover {
+    @apply transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5;
+  }
+
+  /* Gradient text */
+  .text-gradient-primary {
+    @apply bg-clip-text text-transparent;
+    background-image: var(--gradient-primary);
+  }
+
+  /* Touch-friendly tap area */
+  .touch-target {
+    @apply min-h-[44px] min-w-[44px];
+  }
+}
