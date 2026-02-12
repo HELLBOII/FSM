@@ -67,7 +67,9 @@ export default function Technicians() {
     email: '',
     employee_id: '',
     specializations: [],
-    status: 'active'
+    status: 'active',
+    latitude: '',
+    longitude: ''
   });
 
   const { data: technicians = [], isLoading } = useQuery({
@@ -108,7 +110,9 @@ export default function Technicians() {
       email: '',
       employee_id: '',
       specializations: [],
-      status: 'active'
+      status: 'active',
+      latitude: '',
+      longitude: ''
     });
   };
 
@@ -120,17 +124,23 @@ export default function Technicians() {
       email: tech.email || '',
       employee_id: tech.employee_id || '',
       specializations: tech.specializations || [],
-      status: tech.status || 'active'
+      status: tech.status || 'active',
+      latitude: tech.latitude || '',
+      longitude: tech.longitude || ''
     });
     setShowForm(true);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const submitData = {
+      ...formData
+    };
+    
     if (selectedTech) {
-      await updateMutation.mutateAsync({ id: selectedTech.id, data: formData });
+      await updateMutation.mutateAsync({ id: selectedTech.id, data: submitData });
     } else {
-      await createMutation.mutateAsync(formData);
+      await createMutation.mutateAsync(submitData);
     }
   };
 
@@ -337,6 +347,27 @@ export default function Technicians() {
               onChange={(e) => setFormData((prev) => ({ ...prev, email: e.target.value }))}
               placeholder="john@example.com" />
 
+            </div>
+
+            <div data-source-location="pages/Technicians:326:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
+              <div data-source-location="pages/Technicians:326:14" data-dynamic-content="true">
+                <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">Latitude</Label>
+                <Input data-source-location="pages/Technicians:328:14" data-dynamic-content="false"
+                type="number"
+                step="any"
+                value={formData.latitude}
+                onChange={(e) => setFormData((prev) => ({ ...prev, latitude: e.target.value }))}
+                placeholder="36.0800" />
+              </div>
+              <div data-source-location="pages/Technicians:326:14" data-dynamic-content="true">
+                <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">Longitude</Label>
+                <Input data-source-location="pages/Technicians:328:14" data-dynamic-content="false"
+                type="number"
+                step="any"
+                value={formData.longitude}
+                onChange={(e) => setFormData((prev) => ({ ...prev, longitude: e.target.value }))}
+                placeholder="-115.1522" />
+              </div>
             </div>
 
             <div data-source-location="pages/Technicians:336:12" data-dynamic-content="true">
