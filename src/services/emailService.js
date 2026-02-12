@@ -20,7 +20,7 @@ export const emailService = {
     try {
       // Call backend API endpoint that uses nodemailer
       // nodemailer cannot run in the browser - it must run on a Node.js backend
-      const apiUrl = import.meta.env.EMAIL_API || 'https://fsmbackend-production.up.railway.app';
+      const apiUrl = import.meta.env.EMAIL_API || 'https://fsmbackend.vercel.app';
       
       const response = await fetch(`${apiUrl}/api/send-email`, {
         method: 'POST',
