@@ -70,6 +70,7 @@ export default function EquipmentInventory() {
     stock_quantity: '',
     min_stock_level: '',
     unit_cost: '',
+    sellingcost: '',
     description: ''
   });
 
@@ -113,6 +114,7 @@ export default function EquipmentInventory() {
       stock_quantity: '',
       min_stock_level: '',
       unit_cost: '',
+      sellingcost: '',
       description: ''
     });
   };
@@ -127,6 +129,7 @@ export default function EquipmentInventory() {
       stock_quantity: item.stock_quantity?.toString() || '',
       min_stock_level: item.min_stock_level?.toString() || '',
       unit_cost: item.unit_cost?.toString() || '',
+      sellingcost: item.sellingcost?.toString() || '',
       description: item.description || ''
     });
     setShowForm(true);
@@ -139,6 +142,7 @@ export default function EquipmentInventory() {
       stock_quantity: formData.stock_quantity ? parseFloat(formData.stock_quantity) : 0,
       min_stock_level: formData.min_stock_level ? parseFloat(formData.min_stock_level) : 0,
       unit_cost: formData.unit_cost ? parseFloat(formData.unit_cost) : 0,
+      sellingcost: formData.sellingcost ? parseFloat(formData.sellingcost) : 0,
       status: formData.stock_quantity <= 0 ? 'out_of_stock' :
       formData.stock_quantity <= formData.min_stock_level ? 'low_stock' : 'in_stock'
     };
@@ -252,6 +256,7 @@ export default function EquipmentInventory() {
                   <th data-source-location="pages/EquipmentInventory:246:18" data-dynamic-content="false" className="text-left px-4 py-3 text-sm font-medium text-gray-600">Category</th>
                   <th data-source-location="pages/EquipmentInventory:247:18" data-dynamic-content="false" className="text-left px-4 py-3 text-sm font-medium text-gray-600">Stock</th>
                   <th data-source-location="pages/EquipmentInventory:248:18" data-dynamic-content="false" className="text-left px-4 py-3 text-sm font-medium text-gray-600">Unit Cost</th>
+                  <th data-source-location="pages/EquipmentInventory:248:18" data-dynamic-content="false" className="text-left px-4 py-3 text-sm font-medium text-gray-600">Billable Cost</th>
                   <th data-source-location="pages/EquipmentInventory:249:18" data-dynamic-content="false" className="text-left px-4 py-3 text-sm font-medium text-gray-600">Status</th>
                   <th data-source-location="pages/EquipmentInventory:250:18" data-dynamic-content="false" className="text-left px-4 py-3 text-sm font-medium text-gray-600"></th>
                 </tr>
@@ -292,6 +297,9 @@ export default function EquipmentInventory() {
                       </td>
                       <td data-source-location="pages/EquipmentInventory:288:22" data-dynamic-content="true" className="px-4 py-3 text-sm text-gray-600">
                         ${item.unit_cost?.toFixed(2) || '0.00'}
+                      </td>
+                      <td data-source-location="pages/EquipmentInventory:288:22" data-dynamic-content="true" className="px-4 py-3 text-sm text-gray-600">
+                        ${item.sellingcost?.toFixed(2) || '0.00'}
                       </td>
                       <td data-source-location="pages/EquipmentInventory:291:22" data-dynamic-content="true" className="px-4 py-3">
                         <Badge data-source-location="pages/EquipmentInventory:292:24" data-dynamic-content="true" className={`
@@ -408,15 +416,25 @@ export default function EquipmentInventory() {
               </div>
             </div>
 
-            <div data-source-location="pages/EquipmentInventory:405:12" data-dynamic-content="true">
-              <Label data-source-location="pages/EquipmentInventory:406:14" data-dynamic-content="false">Unit Cost ($)</Label>
-              <Input data-source-location="pages/EquipmentInventory:407:14" data-dynamic-content="false"
-              type="number"
-              step="0.01"
-              value={formData.unit_cost}
-              onChange={(e) => setFormData((prev) => ({ ...prev, unit_cost: e.target.value }))}
-              placeholder="5.99" />
-
+            <div data-source-location="pages/EquipmentInventory:405:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
+              <div data-source-location="pages/EquipmentInventory:405:14" data-dynamic-content="true">
+                <Label data-source-location="pages/EquipmentInventory:406:16" data-dynamic-content="false">Unit Cost ($)</Label>
+                <Input data-source-location="pages/EquipmentInventory:407:16" data-dynamic-content="false"
+                type="number"
+                step="0.01"
+                value={formData.unit_cost}
+                onChange={(e) => setFormData((prev) => ({ ...prev, unit_cost: e.target.value }))}
+                placeholder="5.99" />
+              </div>
+              <div data-source-location="pages/EquipmentInventory:405:14" data-dynamic-content="true">
+                <Label data-source-location="pages/EquipmentInventory:406:16" data-dynamic-content="false">Billable Cost ($)</Label>
+                <Input data-source-location="pages/EquipmentInventory:407:16" data-dynamic-content="false"
+                type="number"
+                step="0.01"
+                value={formData.sellingcost}
+                onChange={(e) => setFormData((prev) => ({ ...prev, sellingcost: e.target.value }))}
+                placeholder="7.99" />
+              </div>
             </div>
 
             <div data-source-location="pages/EquipmentInventory:416:12" data-dynamic-content="true">
