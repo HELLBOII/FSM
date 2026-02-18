@@ -24,7 +24,8 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue } from
+  SelectValue,
+  SelectSeparator } from
 "@/components/ui/select";
 import {
   Dialog,
@@ -500,13 +501,14 @@ export default function Technicians() {
                     <SelectTrigger data-source-location="pages/Technicians:349:16" data-dynamic-content="false">
                       <SelectValue data-source-location="pages/Technicians:350:18" data-dynamic-content="false" placeholder="Add specialization..." />
                     </SelectTrigger>
-                    <SelectContent data-source-location="pages/Technicians:352:16" data-dynamic-content="true">
+                    <SelectContent data-source-location="pages/Technicians:352:16" data-dynamic-content="true" className="max-h-[300px]">
                       {availableSpecializations.map((spec) =>
                       <SelectItem data-source-location="pages/Technicians:354:20" data-dynamic-content="true" key={spec} value={spec}>{spec}</SelectItem>
                       )}
+                      <SelectSeparator />
                       <SelectItem data-source-location="pages/Technicians:354:20" data-dynamic-content="true" value="__add_new__" className="text-primary font-medium">
                         <Plus className="w-4 h-4 inline mr-2" />
-                        Add New Option
+                        Add new Specialization
                       </SelectItem>
                     </SelectContent>
                   </Select>
