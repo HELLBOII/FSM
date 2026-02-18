@@ -25,7 +25,8 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue } from
+  SelectValue,
+  SelectSeparator } from
 "@/components/ui/select";
 import {
   Dialog,
@@ -532,13 +533,14 @@ export default function Clients() {
                     <SelectTrigger data-source-location="pages/Clients:394:16" data-dynamic-content="false" className="border-primary/30 focus:ring-primary focus:border-primary">
                       <SelectValue data-source-location="pages/Clients:395:18" data-dynamic-content="false" placeholder="Add system type..." />
                     </SelectTrigger>
-                    <SelectContent data-source-location="pages/Clients:397:16" data-dynamic-content="true">
+                    <SelectContent data-source-location="pages/Clients:397:16" data-dynamic-content="true" className="max-h-[300px]">
                       {availableIrrigationSystems.map((sys) =>
                       <SelectItem data-source-location="pages/Clients:399:20" data-dynamic-content="true" key={sys} value={sys}>{sys}</SelectItem>
                       )}
+                      <SelectSeparator />
                       <SelectItem data-source-location="pages/Clients:399:20" data-dynamic-content="true" value="__add_new__" className="text-primary font-medium">
                         <Plus className="w-4 h-4 inline mr-2" />
-                        Add New Option
+                        Add new Irrigation System
                       </SelectItem>
                     </SelectContent>
                   </Select>
