@@ -271,9 +271,14 @@ export default function TechnicianProfile() {
         <span className="text-red-600">Log Out</span>
       </Button>
 
-      <p data-source-location="pages/TechnicianProfile:242:6" data-dynamic-content="false" className="text-center text-sm text-gray-400">
-        Powered by Techsigaram
-      </p>
+      <a
+        href="https://robertsqi.com/"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-center text-sm text-gray-400 hover:text-gray-600 block"
+      >
+        Powered by Roberts Quality Irrigation LLC
+      </a>
 
       {/* Logout Confirmation Dialog */}
       <AlertDialog open={showLogoutDialog} onOpenChange={setShowLogoutDialog}>

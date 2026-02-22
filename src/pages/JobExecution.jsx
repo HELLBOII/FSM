@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { serviceRequestService, workReportService, equipmentService, storageService } from '@/services';
+import { serviceRequestService, workReportService, equipmentService, storageService, tasksService } from '@/services';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -45,17 +45,6 @@ import {
 import LoadingSpinner from '@/components/common/LoadingSpinner';
 import { toast } from 'sonner';
 
-const defaultTasks = [
-'Inspect irrigation system',
-'Check water pressure',
-'Inspect pipes for leaks',
-'Clean filters',
-'Test valves',
-'Check controller settings',
-'Verify water flow',
-'Document findings'];
-
-
 export default function JobExecution() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -71,7 +60,7 @@ export default function JobExecution() {
   const [photoType, setPhotoType] = useState('before');
 
   const [formData, setFormData] = useState({
-    tasks: defaultTasks.map((task) => ({ task, completed: false, notes: '' })),
+    tasks: [],
     equipment: [],
     water_flow_reading: '',
     pressure_reading: '',
@@ -100,12 +89,27 @@ export default function JobExecution() {
     queryFn: () => equipmentService.list()
   });
 
-  // Load existing report data
+  const { data: dbTasks = [] } = useQuery({
+    queryKey: ['tasks'],
+    queryFn: () => tasksService.list()
+  });
+
+  const [showAddTaskDialog, setShowAddTaskDialog] = useState(false);
+  const [newTaskLabel, setNewTaskLabel] = useState('');
+  const [addingTask, setAddingTask] = useState(false);
+  const tasksInitializedFromDb = useRef(false);
+
+  // Load existing report data or default tasks from DB
   useEffect(() => {
     if (workReport) {
+      tasksInitializedFromDb.current = true;
       setFormData((prev) => ({
         ...prev,
-        tasks: workReport.tasks_completed?.length > 0 ? workReport.tasks_completed : prev.tasks,
+        tasks: workReport.tasks_completed?.length > 0
+          ? workReport.tasks_completed
+          : dbTasks.length > 0
+            ? dbTasks.map((t) => ({ task: t.label, completed: false, notes: '' }))
+            : prev.tasks,
         equipment: workReport.equipment_used || [],
         water_flow_reading: workReport.water_flow_reading?.toString() || '',
         pressure_reading: workReport.pressure_reading?.toString() || '',
@@ -113,8 +117,14 @@ export default function JobExecution() {
         before_photos: workReport.before_photos || [],
         after_photos: workReport.after_photos || []
       }));
+    } else if (dbTasks.length > 0 && !tasksInitializedFromDb.current) {
+      tasksInitializedFromDb.current = true;
+      setFormData((prev) => ({
+        ...prev,
+        tasks: dbTasks.map((t) => ({ task: t.label, completed: false, notes: '' }))
+      }));
     }
-  }, [workReport]);
+  }, [workReport, dbTasks]);
 
   const updateReportMutation = useMutation({
     mutationFn: (data) => workReportService.update(workReport?.id || reportId, data),
@@ -196,6 +206,30 @@ export default function JobExecution() {
     }));
   };
 
+  const handleAddTask = async () => {
+    const label = newTaskLabel?.trim();
+    if (!label) {
+      toast.error('Enter a task name');
+      return;
+    }
+    setAddingTask(true);
+    try {
+      await tasksService.create({ label });
+      setFormData((prev) => ({
+        ...prev,
+        tasks: [...prev.tasks, { task: label, completed: false, notes: '' }]
+      }));
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      setNewTaskLabel('');
+      setShowAddTaskDialog(false);
+      toast.success('Task added');
+    } catch (err) {
+      toast.error('Failed to add task');
+    } finally {
+      setAddingTask(false);
+    }
+  };
+
   const handleSaveDraft = async () => {
     if (!workReport?.id && !reportId) {
       toast.error('No work report found');
@@ -216,11 +250,6 @@ export default function JobExecution() {
   };
 
   const handleSubmit = async () => {
-    if (formData.after_photos.length === 0) {
-      toast.error('Please add at least one after photo');
-      return;
-    }
-
     setIsSubmitting(true);
     try {
       // Update work report
@@ -358,20 +387,33 @@ export default function JobExecution() {
                 </CardContent>
               </Card>
           )}
+            {/* Fixed bottom Add task - only when on Tasks tab */}
+            <div className="fixed bottom-28 left-0 right-0 p-4 bg-white border-t z-10 flex justify-center">
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2"
+                onClick={() => setShowAddTaskDialog(true)}
+              >
+                <Plus className="w-4 h-4" />
+                Add task
+              </Button>
+            </div>
           </motion.div>
         }
 
-        {/* Photos Section */}
+        {/* Photos Section - Before and After in 2 cols */}
         {activeSection === 'photos' &&
         <motion.div data-source-location="pages/JobExecution:366:10" data-dynamic-content="true"
         initial={{ opacity: 0, x: -20 }}
         animate={{ opacity: 1, x: 0 }}
-        className="space-y-6">
+        className="space-y-4">
 
+            <div className="grid grid-cols-2 gap-4">
             {/* Before Photos */}
             <div data-source-location="pages/JobExecution:372:12" data-dynamic-content="true">
               <Label data-source-location="pages/JobExecution:373:14" data-dynamic-content="false" className="text-base font-semibold mb-3 block">Before Photos</Label>
-              <div data-source-location="pages/JobExecution:374:14" data-dynamic-content="true" className="grid grid-cols-3 gap-2">
+              <div data-source-location="pages/JobExecution:374:14" data-dynamic-content="true" className="grid grid-cols-2 gap-2">
                 {formData.before_photos.map((photo, idx) =>
               <div data-source-location="pages/JobExecution:376:18" data-dynamic-content="true" key={idx} className="relative group aspect-square">
                     <img data-source-location="pages/JobExecution:377:20" data-dynamic-content="false" src={photo} alt={`Before ${idx + 1}`} className="w-full h-full object-cover rounded-lg" />
@@ -405,8 +447,8 @@ export default function JobExecution() {
 
             {/* After Photos */}
             <div data-source-location="pages/JobExecution:407:12" data-dynamic-content="true">
-              <Label data-source-location="pages/JobExecution:408:14" data-dynamic-content="false" className="text-base font-semibold mb-3 block">After Photos *</Label>
-              <div data-source-location="pages/JobExecution:409:14" data-dynamic-content="true" className="grid grid-cols-3 gap-2">
+              <Label data-source-location="pages/JobExecution:408:14" data-dynamic-content="false" className="text-base font-semibold mb-3 block">After Photos</Label>
+              <div data-source-location="pages/JobExecution:409:14" data-dynamic-content="true" className="grid grid-cols-2 gap-2">
                 {formData.after_photos.map((photo, idx) =>
               <div data-source-location="pages/JobExecution:411:18" data-dynamic-content="true" key={idx} className="relative group aspect-square">
                     <img data-source-location="pages/JobExecution:412:20" data-dynamic-content="false" src={photo} alt={`After ${idx + 1}`} className="w-full h-full object-cover rounded-lg" />
@@ -436,6 +478,7 @@ export default function JobExecution() {
                 }
                 </button>
               </div>
+            </div>
             </div>
 
             <input data-source-location="pages/JobExecution:441:12" data-dynamic-content="false"
@@ -567,11 +610,40 @@ export default function JobExecution() {
         }
       </div>
 
+      {/* Add task dialog */}
+      <Dialog open={showAddTaskDialog} onOpenChange={setShowAddTaskDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add task</DialogTitle>
+            <DialogDescription>Add a task to this job. It will be saved as a default for future jobs.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="new-task-label">Task name</Label>
+              <Input
+                id="new-task-label"
+                value={newTaskLabel}
+                onChange={(e) => setNewTaskLabel(e.target.value)}
+                placeholder="e.g. Inspect pump"
+                onKeyDown={(e) => e.key === 'Enter' && handleAddTask()}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setShowAddTaskDialog(false)}>Cancel</Button>
+            <Button onClick={handleAddTask} disabled={addingTask || !newTaskLabel?.trim()}>
+              {addingTask ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4 mr-1" />}
+              Save to list
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Fixed Bottom Action */}
       <div data-source-location="pages/JobExecution:571:6" data-dynamic-content="true" className="fixed bottom-20 left-0 right-0 p-4 bg-white border-t">
         <Button data-source-location="pages/JobExecution:572:8" data-dynamic-content="true"
         onClick={handleSubmit}
-        disabled={isSubmitting || formData.after_photos.length === 0}
+        disabled={isSubmitting}
         className="w-full h-14 text-lg bg-primary hover:bg-primary/90 text-primary-foreground">
 
           {isSubmitting ?
@@ -586,11 +658,6 @@ export default function JobExecution() {
             </>
           }
         </Button>
-        {formData.after_photos.length === 0 &&
-        <p data-source-location="pages/JobExecution:590:10" data-dynamic-content="false" className="text-center text-sm text-red-500 mt-2">
-            Please add at least one after photo before submitting
-          </p>
-        }
       </div>
     </div>);
 

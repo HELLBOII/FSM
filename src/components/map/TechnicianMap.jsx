@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import { cn } from "@/lib/utils";
 import StatusBadge from '@/components/ui/StatusBadge';
 import 'leaflet/dist/leaflet.css';
@@ -47,6 +47,18 @@ const createTechnicianIcon = (status) => {
   });
 };
 
+// Component to update map center when selectedLocation changes
+function ChangeMapView({ center }) {
+  const map = useMap();
+  useEffect(() => {
+    if (center && center[0] && center[1]) {
+      // Just pan to the location without changing zoom level
+      map.panTo(center, { animate: true, duration: 0.5 });
+    }
+  }, [center, map]);
+  return null;
+}
+
 const createJobIcon = (priority) => {
   const colors = {
     urgent: '#ef4444',
@@ -87,7 +99,8 @@ export default function TechnicianMap({
   zoom = 8,
   onTechnicianClick,
   onJobClick,
-  className
+  className,
+  selectedLocation
 }) {
   // Auto-calculate center based on data, default to Southwest US
   const defaultCenter = [34.5, -115.0]; // Southwest US region
@@ -117,12 +130,38 @@ export default function TechnicianMap({
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         
+        {/* Update map view when selectedLocation changes */}
+        {selectedLocation && <ChangeMapView center={selectedLocation} />}
+        
         {/* Technician markers */}
-        {technicians.map((tech) => (
-          tech.current_location?.lat && (
+        {technicians.map((tech, index) => {
+          if (!tech.current_location?.lat) return null;
+          
+          // Check if there are multiple technicians at the same location
+          const sameLocationTechs = technicians.filter(t => 
+            t.current_location?.lat &&
+            Math.abs(t.current_location.lat - tech.current_location.lat) < 0.0001 &&
+            Math.abs(t.current_location.lng - tech.current_location.lng) < 0.0001
+          );
+          
+          // Add small offset for overlapping markers (spiral pattern)
+          let offsetLat = 0;
+          let offsetLng = 0;
+          if (sameLocationTechs.length > 1) {
+            const sameIndex = sameLocationTechs.findIndex(t => t.id === tech.id);
+            const angle = (sameIndex * 360) / sameLocationTechs.length;
+            const radius = 0.0003; // ~30 meters offset
+            offsetLat = radius * Math.cos(angle * Math.PI / 180);
+            offsetLng = radius * Math.sin(angle * Math.PI / 180);
+          }
+          
+          return (
             <Marker
               key={tech.id}
-              position={[tech.current_location.lat, tech.current_location.lng]}
+              position={[
+                tech.current_location.lat + offsetLat,
+                tech.current_location.lng + offsetLng
+              ]}
               icon={createTechnicianIcon(tech.availability_status)}
               eventHandlers={{
                 click: () => onTechnicianClick?.(tech)
@@ -145,8 +184,8 @@ export default function TechnicianMap({
                 </div>
               </Popup>
             </Marker>
-          )
-        ))}
+          );
+        })}
         
         {/* Job markers */}
         {jobs.map((job) => (

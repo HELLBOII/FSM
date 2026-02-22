@@ -10,4 +10,7 @@ export { technicianGoalService } from './technicianGoalService';
 export { storageService } from './storageService';
 export { navigationLogService } from './navigationLogService';
 export { emailService } from './emailService';
+export { irrigationSystemsService } from './irrigationSystemsService';
+export { specializationsService } from './specializationsService';
+export { tasksService } from './tasksService';
 

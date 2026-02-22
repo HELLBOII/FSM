@@ -111,7 +111,7 @@ export default function ServiceRequests() {
       // TODO: Load and show specific request
     }}, []);
 
-  const { data: requests = [], isLoading, refetch } = useQuery({
+  const { data: requests = [], isLoading, isFetching, refetch } = useQuery({
     queryKey: ['serviceRequests'],
     queryFn: () => serviceRequestService.list('created_at', 'desc', 200)
   });
@@ -201,12 +201,12 @@ export default function ServiceRequests() {
 
   const hasActiveFilters = searchQuery || statusFilter !== 'all' || priorityFilter !== 'all' || irrigationFilter !== 'all';
 
-  if (isLoading) {
+  // Show loading indicator while data is being fetched (initial load or refetch)
+  if (isLoading || (isFetching && requests.length === 0)) {
     return (
       <div data-source-location="pages/ServiceRequests:201:6" data-dynamic-content="false" className="flex items-center justify-center min-h-[60vh]">
         <LoadingSpinner data-source-location="pages/ServiceRequests:202:8" data-dynamic-content="false" size="lg" text="Loading requests..." />
       </div>);
-
   }
 
   return (

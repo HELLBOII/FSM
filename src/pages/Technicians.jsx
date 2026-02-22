@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { technicianService } from '@/services';
+import React, { useState, useEffect, useMemo } from 'react';
+import { technicianService, specializationsService } from '@/services';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -17,13 +17,15 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue } from
+  SelectValue,
+  SelectSeparator } from
 "@/components/ui/select";
 import {
   Dialog,
@@ -61,19 +63,78 @@ export default function Technicians() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [showForm, setShowForm] = useState(false);
   const [selectedTech, setSelectedTech] = useState(null);
+  const [showAddSpecializationDialog, setShowAddSpecializationDialog] = useState(false);
+  const [newSpecialization, setNewSpecialization] = useState('');
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
     email: '',
     employee_id: '',
     specializations: [],
-    status: 'active'
+    status: 'active',
+    latitude: '',
+    longitude: '',
+    address: '',
+    city: '',
+    state: '',
+    zipcode: '',
+    country: ''
   });
 
   const { data: technicians = [], isLoading } = useQuery({
     queryKey: ['technicians'],
     queryFn: () => technicianService.list()
   });
+
+  const { data: dbSpecializations = [], isLoading: isLoadingSpecializations } = useQuery({
+    queryKey: ['specializations'],
+    queryFn: () => specializationsService.list()
+  });
+
+  // Get all unique specializations from database and combine with hardcoded ones
+  const availableSpecializations = useMemo(() => {
+    const dbSystemNames = dbSpecializations.map(sys => sys.specializations);
+    const technicianSystems = technicians.flatMap(tech => tech.specializations || []);
+    const allSystems = [...new Set([...specializations, ...dbSystemNames, ...technicianSystems])];
+    return allSystems.sort();
+  }, [technicians, dbSpecializations]);
+
+  const createSpecializationMutation = useMutation({
+    mutationFn: (data) => specializationsService.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['specializations'] });
+      setNewSpecialization('');
+      setShowAddSpecializationDialog(false);
+      toast.success('Specialization added successfully');
+    },
+    onError: (error) => {
+      toast.error('Failed to add specialization: ' + error.message);
+    }
+  });
+
+  const handleAddSpecialization = async () => {
+    const specializationName = newSpecialization.trim();
+    if (specializationName && !availableSpecializations.includes(specializationName)) {
+      // Check if it already exists in database
+      try {
+        const existing = await specializationsService.getByName(specializationName);
+        if (existing) {
+          toast.error('This specialization already exists');
+          return;
+        }
+      } catch (error) {
+        // If error is not "not found", rethrow it
+        if (error.code !== 'PGRST116') {
+          throw error;
+        }
+      }
+
+      // Create new specialization in database
+      await createSpecializationMutation.mutateAsync({
+        specializations: specializationName
+      });
+    }
+  };
 
   const createMutation = useMutation({
     mutationFn: (data) => technicianService.create(data),
@@ -108,7 +169,14 @@ export default function Technicians() {
       email: '',
       employee_id: '',
       specializations: [],
-      status: 'active'
+      status: 'active',
+      latitude: '',
+      longitude: '',
+      address: '',
+      city: '',
+      state: '',
+      zipcode: '',
+      country: ''
     });
   };
 
@@ -120,17 +188,28 @@ export default function Technicians() {
       email: tech.email || '',
       employee_id: tech.employee_id || '',
       specializations: tech.specializations || [],
-      status: tech.status || 'active'
+      status: tech.status || 'active',
+      latitude: tech.latitude || '',
+      longitude: tech.longitude || '',
+      address: tech.address || '',
+      city: tech.city || '',
+      state: tech.state || '',
+      zipcode: tech.zipcode || '',
+      country: tech.country || ''
     });
     setShowForm(true);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const submitData = {
+      ...formData
+    };
+    
     if (selectedTech) {
-      await updateMutation.mutateAsync({ id: selectedTech.id, data: formData });
+      await updateMutation.mutateAsync({ id: selectedTech.id, data: submitData });
     } else {
-      await createMutation.mutateAsync(formData);
+      await createMutation.mutateAsync(submitData);
     }
   };
 
@@ -287,7 +366,7 @@ export default function Technicians() {
 
       {/* Form Dialog */}
       <Dialog data-source-location="pages/Technicians:283:6" data-dynamic-content="true" open={showForm} onOpenChange={(open) => {if (!open) resetForm();}}>
-        <DialogContent data-source-location="pages/Technicians:284:8" data-dynamic-content="true" className="max-w-md">
+        <DialogContent data-source-location="pages/Technicians:284:8" data-dynamic-content="true" className="max-w-4xl max-h-[95vh] overflow-y-auto">
           <DialogHeader data-source-location="pages/Technicians:285:10" data-dynamic-content="true">
             <DialogTitle data-source-location="pages/Technicians:286:12" data-dynamic-content="true">
               {selectedTech ? 'Edit Technician' : 'Add Technician'}
@@ -298,101 +377,175 @@ export default function Technicians() {
           </DialogHeader>
 
           <form data-source-location="pages/Technicians:294:10" data-dynamic-content="true" onSubmit={handleSubmit} className="space-y-4">
-            <div data-source-location="pages/Technicians:295:12" data-dynamic-content="true">
-              <Label data-source-location="pages/Technicians:296:14" data-dynamic-content="false">Full Name</Label>
-              <Input data-source-location="pages/Technicians:297:14" data-dynamic-content="false"
-              value={formData.name}
-              onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
-              placeholder="John Smith"
-              required />
-
-            </div>
-
-            <div data-source-location="pages/Technicians:305:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
-              <div data-source-location="pages/Technicians:306:14" data-dynamic-content="true">
-                <Label data-source-location="pages/Technicians:307:16" data-dynamic-content="false">Employee ID</Label>
-                <Input data-source-location="pages/Technicians:308:16" data-dynamic-content="false"
-                value={formData.employee_id}
-                onChange={(e) => setFormData((prev) => ({ ...prev, employee_id: e.target.value }))}
-                placeholder="EMP-001"
-                required />
-
-              </div>
-              <div data-source-location="pages/Technicians:315:14" data-dynamic-content="true">
-                <Label data-source-location="pages/Technicians:316:16" data-dynamic-content="false">Phone</Label>
-                <Input data-source-location="pages/Technicians:317:16" data-dynamic-content="false"
-                value={formData.phone}
-                onChange={(e) => setFormData((prev) => ({ ...prev, phone: e.target.value }))}
-                placeholder="+1 234 567 8900"
-                required />
-
-              </div>
-            </div>
-
-            <div data-source-location="pages/Technicians:326:12" data-dynamic-content="true">
-              <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">Email</Label>
-              <Input data-source-location="pages/Technicians:328:14" data-dynamic-content="false"
-              type="email"
-              value={formData.email}
-              onChange={(e) => setFormData((prev) => ({ ...prev, email: e.target.value }))}
-              placeholder="john@example.com" />
-
-            </div>
-
-            <div data-source-location="pages/Technicians:336:12" data-dynamic-content="true">
-              <Label data-source-location="pages/Technicians:337:14" data-dynamic-content="false">Specializations</Label>
-              <Select data-source-location="pages/Technicians:338:14" data-dynamic-content="true"
-              value={formData.specializations[0] || ''}
-              onValueChange={(v) => {
-                if (!formData.specializations.includes(v)) {
-                  setFormData((prev) => ({
-                    ...prev,
-                    specializations: [...prev.specializations, v]
-                  }));
-                }
-              }}>
-
-                <SelectTrigger data-source-location="pages/Technicians:349:16" data-dynamic-content="false">
-                  <SelectValue data-source-location="pages/Technicians:350:18" data-dynamic-content="false" placeholder="Add specialization..." />
-                </SelectTrigger>
-                <SelectContent data-source-location="pages/Technicians:352:16" data-dynamic-content="true">
-                  {specializations.map((spec) =>
-                  <SelectItem data-source-location="pages/Technicians:354:20" data-dynamic-content="true" key={spec} value={spec}>{spec}</SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
-              {formData.specializations.length > 0 &&
-              <div data-source-location="pages/Technicians:359:16" data-dynamic-content="true" className="flex flex-wrap gap-1 mt-2">
-                  {formData.specializations.map((spec, idx) =>
-                <Badge data-source-location="pages/Technicians:361:20" data-dynamic-content="true"
-                key={idx}
-                className="bg-primary text-primary-foreground cursor-pointer hover:bg-primary/90 transition-colors"
-                onClick={() => setFormData((prev) => ({
-                  ...prev,
-                  specializations: prev.specializations.filter((_, i) => i !== idx)
-                }))}>
-
-                      {spec} ×
-                    </Badge>
-                )}
+            <div data-source-location="pages/Technicians:295:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
+              {/* Left Column */}
+              <div data-source-location="pages/Technicians:295:12" data-dynamic-content="true" className="space-y-4">
+                <div data-source-location="pages/Technicians:295:12" data-dynamic-content="true">
+                  <Label data-source-location="pages/Technicians:296:14" data-dynamic-content="false">Full Name</Label>
+                  <Input data-source-location="pages/Technicians:297:14" data-dynamic-content="false"
+                  value={formData.name}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
+                  placeholder="John Smith"
+                  required />
                 </div>
-              }
-            </div>
 
-            <div data-source-location="pages/Technicians:377:12" data-dynamic-content="true">
-              <Label data-source-location="pages/Technicians:378:14" data-dynamic-content="false">Status</Label>
-              <Select data-source-location="pages/Technicians:379:14" data-dynamic-content="false"
-              value={formData.status}
-              onValueChange={(v) => setFormData((prev) => ({ ...prev, status: v }))}>
+                <div data-source-location="pages/Technicians:306:14" data-dynamic-content="true">
+                  <Label data-source-location="pages/Technicians:307:16" data-dynamic-content="false">Employee ID</Label>
+                  <Input data-source-location="pages/Technicians:308:16" data-dynamic-content="false"
+                  value={formData.employee_id}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, employee_id: e.target.value }))}
+                  placeholder="EMP-001"
+                  required />
+                </div>
 
-                <SelectTrigger data-source-location="pages/Technicians:383:16" data-dynamic-content="false">
-                  <SelectValue data-source-location="pages/Technicians:384:18" data-dynamic-content="false" />
-                </SelectTrigger>
-                <SelectContent data-source-location="pages/Technicians:386:16" data-dynamic-content="false">
-                  <SelectItem data-source-location="pages/Technicians:387:18" data-dynamic-content="false" value="active">Active</SelectItem>
-                  <SelectItem data-source-location="pages/Technicians:388:18" data-dynamic-content="false" value="inactive">Inactive</SelectItem>
-                </SelectContent>
-              </Select>
+                <div data-source-location="pages/Technicians:315:14" data-dynamic-content="true">
+                  <Label data-source-location="pages/Technicians:316:16" data-dynamic-content="false">Phone</Label>
+                  <Input data-source-location="pages/Technicians:317:16" data-dynamic-content="false"
+                  value={formData.phone}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, phone: e.target.value }))}
+                  placeholder="+1 234 567 8900"
+                  required />
+                </div>
+
+                <div data-source-location="pages/Technicians:326:12" data-dynamic-content="true">
+                  <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">Email</Label>
+                  <Input data-source-location="pages/Technicians:328:14" data-dynamic-content="false"
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, email: e.target.value }))}
+                  placeholder="john@example.com" />
+                </div>
+
+                <div data-source-location="pages/Technicians:326:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
+                  <div data-source-location="pages/Technicians:326:14" data-dynamic-content="true">
+                    <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">Latitude</Label>
+                    <Input data-source-location="pages/Technicians:328:14" data-dynamic-content="false"
+                    type="number"
+                    step="any"
+                    value={formData.latitude}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, latitude: e.target.value }))}
+                    placeholder="36.0800" />
+                  </div>
+                  <div data-source-location="pages/Technicians:326:14" data-dynamic-content="true">
+                    <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">Longitude</Label>
+                    <Input data-source-location="pages/Technicians:328:14" data-dynamic-content="false"
+                    type="number"
+                    step="any"
+                    value={formData.longitude}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, longitude: e.target.value }))}
+                    placeholder="-115.1522" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column */}
+              <div data-source-location="pages/Technicians:295:12" data-dynamic-content="true" className="space-y-4">
+                <div data-source-location="pages/Technicians:326:12" data-dynamic-content="true">
+                  <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">Street Address</Label>
+                  <Textarea data-source-location="pages/Technicians:328:14" data-dynamic-content="false"
+                  value={formData.address}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, address: e.target.value }))}
+                  placeholder="Street address"
+                  rows={2} />
+                </div>
+
+                <div data-source-location="pages/Technicians:326:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
+                  <div data-source-location="pages/Technicians:326:14" data-dynamic-content="true">
+                    <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">City</Label>
+                    <Input data-source-location="pages/Technicians:328:14" data-dynamic-content="false"
+                    value={formData.city}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, city: e.target.value }))}
+                    placeholder="City" />
+                  </div>
+                  <div data-source-location="pages/Technicians:326:14" data-dynamic-content="true">
+                    <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">State</Label>
+                    <Input data-source-location="pages/Technicians:328:14" data-dynamic-content="false"
+                    value={formData.state}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, state: e.target.value }))}
+                    placeholder="State" />
+                  </div>
+                </div>
+
+                <div data-source-location="pages/Technicians:326:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
+                  <div data-source-location="pages/Technicians:326:14" data-dynamic-content="true">
+                    <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">Zipcode</Label>
+                    <Input data-source-location="pages/Technicians:328:14" data-dynamic-content="false"
+                    value={formData.zipcode}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, zipcode: e.target.value }))}
+                    placeholder="Zipcode" />
+                  </div>
+                  <div data-source-location="pages/Technicians:326:14" data-dynamic-content="true">
+                    <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">Country</Label>
+                    <Input data-source-location="pages/Technicians:328:14" data-dynamic-content="false"
+                    value={formData.country}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, country: e.target.value }))}
+                    placeholder="Country" />
+                  </div>
+                </div>
+
+                <div data-source-location="pages/Technicians:336:12" data-dynamic-content="true">
+                  <Label data-source-location="pages/Technicians:337:14" data-dynamic-content="false">Specializations</Label>
+                  <Select data-source-location="pages/Technicians:338:14" data-dynamic-content="true"
+                  value=""
+                  onValueChange={(v) => {
+                    if (v === '__add_new__') {
+                      setShowAddSpecializationDialog(true);
+                    } else if (v && !formData.specializations.includes(v)) {
+                      setFormData((prev) => ({
+                        ...prev,
+                        specializations: [...prev.specializations, v]
+                      }));
+                    }
+                  }}>
+
+                    <SelectTrigger data-source-location="pages/Technicians:349:16" data-dynamic-content="false">
+                      <SelectValue data-source-location="pages/Technicians:350:18" data-dynamic-content="false" placeholder="Add specialization..." />
+                    </SelectTrigger>
+                    <SelectContent data-source-location="pages/Technicians:352:16" data-dynamic-content="true" className="max-h-[300px]">
+                      {availableSpecializations.map((spec) =>
+                      <SelectItem data-source-location="pages/Technicians:354:20" data-dynamic-content="true" key={spec} value={spec}>{spec}</SelectItem>
+                      )}
+                      <SelectSeparator />
+                      <SelectItem data-source-location="pages/Technicians:354:20" data-dynamic-content="true" value="__add_new__" className="text-primary font-medium">
+                        <Plus className="w-4 h-4 inline mr-2" />
+                        Add new Specialization
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {formData.specializations.length > 0 &&
+                  <div data-source-location="pages/Technicians:359:16" data-dynamic-content="true" className="flex flex-wrap gap-1 mt-2">
+                      {formData.specializations.map((spec, idx) =>
+                    <Badge data-source-location="pages/Technicians:361:20" data-dynamic-content="true"
+                    key={idx}
+                    className="bg-primary text-primary-foreground cursor-pointer hover:bg-primary/90 transition-colors"
+                    onClick={() => setFormData((prev) => ({
+                      ...prev,
+                      specializations: prev.specializations.filter((_, i) => i !== idx)
+                    }))}>
+
+                        {spec} ×
+                      </Badge>
+                    )}
+                    </div>
+                  }
+                </div>
+
+                <div data-source-location="pages/Technicians:377:12" data-dynamic-content="true">
+                  <Label data-source-location="pages/Technicians:378:14" data-dynamic-content="false">Status</Label>
+                  <Select data-source-location="pages/Technicians:379:14" data-dynamic-content="false"
+                  value={formData.status}
+                  onValueChange={(v) => setFormData((prev) => ({ ...prev, status: v }))}>
+
+                    <SelectTrigger data-source-location="pages/Technicians:383:16" data-dynamic-content="false">
+                      <SelectValue data-source-location="pages/Technicians:384:18" data-dynamic-content="false" />
+                    </SelectTrigger>
+                    <SelectContent data-source-location="pages/Technicians:386:16" data-dynamic-content="false">
+                      <SelectItem data-source-location="pages/Technicians:387:18" data-dynamic-content="false" value="active">Active</SelectItem>
+                      <SelectItem data-source-location="pages/Technicians:388:18" data-dynamic-content="false" value="inactive">Inactive</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </div>
 
             <div data-source-location="pages/Technicians:393:12" data-dynamic-content="true" className="flex gap-3 pt-4">
@@ -408,6 +561,56 @@ export default function Technicians() {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add New Specialization Dialog */}
+      <Dialog open={showAddSpecializationDialog} onOpenChange={setShowAddSpecializationDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add New Specialization</DialogTitle>
+            <DialogDescription>
+              Add a new specialization type to the available options
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Specialization Name</Label>
+              <Input
+                value={newSpecialization}
+                onChange={(e) => setNewSpecialization(e.target.value)}
+                placeholder="e.g., Smart Controller Setup"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddSpecialization();
+                  }
+                }}
+              />
+            </div>
+            <div className="flex gap-3 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1"
+                onClick={() => {
+                  setShowAddSpecializationDialog(false);
+                  setNewSpecialization('');
+                }}
+                disabled={createSpecializationMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground"
+                onClick={handleAddSpecialization}
+                disabled={!newSpecialization.trim() || availableSpecializations.includes(newSpecialization.trim()) || createSpecializationMutation.isPending}
+              >
+                {createSpecializationMutation.isPending ? 'Adding...' : 'Add Specialization'}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>);

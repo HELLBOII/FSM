@@ -254,6 +254,52 @@ CREATE POLICY "Allow authenticated users to delete equipment" ON equipment
   FOR DELETE USING (auth.role() = 'authenticated');
 
 -- ============================================
+-- 5b. TASKS TABLE (default job execution tasks template)
+-- ============================================
+CREATE TABLE IF NOT EXISTS tasks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  label TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_sort_order ON tasks(sort_order);
+
+ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow authenticated users to view all tasks" ON tasks;
+DROP POLICY IF EXISTS "Allow authenticated users to insert tasks" ON tasks;
+DROP POLICY IF EXISTS "Allow authenticated users to update tasks" ON tasks;
+DROP POLICY IF EXISTS "Allow authenticated users to delete tasks" ON tasks;
+
+CREATE POLICY "Allow authenticated users to view all tasks" ON tasks
+  FOR SELECT USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Allow authenticated users to insert tasks" ON tasks
+  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+CREATE POLICY "Allow authenticated users to update tasks" ON tasks
+  FOR UPDATE USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Allow authenticated users to delete tasks" ON tasks
+  FOR DELETE USING (auth.role() = 'authenticated');
+
+-- Seed default tasks (only if table is empty)
+INSERT INTO tasks (label, sort_order)
+SELECT v.label, v.sort_order FROM (VALUES
+  ('Inspect irrigation system', 1),
+  ('Check water pressure', 2),
+  ('Inspect pipes for leaks', 3),
+  ('Clean filters', 4),
+  ('Test valves', 5),
+  ('Check controller settings', 6),
+  ('Verify water flow', 7),
+  ('Document findings', 8)
+) AS v(label, sort_order)
+WHERE NOT EXISTS (SELECT 1 FROM tasks LIMIT 1);
+
+-- ============================================
 -- 6. CHAT MESSAGES TABLE
 -- ============================================
 CREATE TABLE IF NOT EXISTS chat_messages (
@@ -490,6 +536,96 @@ BEGIN
     END IF;
   END IF;
 END $$;
+
+-- ============================================
+-- 8. IRRIGATION SYSTEMS TABLE
+-- ============================================
+CREATE TABLE IF NOT EXISTS irrigation_systems (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  irrigation_systems TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Create index for irrigation_systems table
+CREATE INDEX IF NOT EXISTS idx_irrigation_systems_name ON irrigation_systems(irrigation_systems);
+
+-- Enable RLS on irrigation_systems table
+ALTER TABLE irrigation_systems ENABLE ROW LEVEL SECURITY;
+
+-- Drop existing policies if they exist
+DROP POLICY IF EXISTS "Allow authenticated users to view all irrigation_systems" ON irrigation_systems;
+DROP POLICY IF EXISTS "Allow authenticated users to insert irrigation_systems" ON irrigation_systems;
+DROP POLICY IF EXISTS "Allow authenticated users to update irrigation_systems" ON irrigation_systems;
+DROP POLICY IF EXISTS "Allow authenticated users to delete irrigation_systems" ON irrigation_systems;
+
+-- Create RLS policies for irrigation_systems table
+CREATE POLICY "Allow authenticated users to view all irrigation_systems" ON irrigation_systems
+  FOR SELECT USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Allow authenticated users to insert irrigation_systems" ON irrigation_systems
+  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+CREATE POLICY "Allow authenticated users to update irrigation_systems" ON irrigation_systems
+  FOR UPDATE USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Allow authenticated users to delete irrigation_systems" ON irrigation_systems
+  FOR DELETE USING (auth.role() = 'authenticated');
+
+-- Insert default irrigation systems
+INSERT INTO irrigation_systems (irrigation_systems) VALUES
+  ('Drip Irrigation'),
+  ('Sprinkler System'),
+  ('Center Pivot'),
+  ('Flood Irrigation'),
+  ('Micro Sprinkler'),
+  ('Subsurface Drip')
+ON CONFLICT (irrigation_systems) DO NOTHING;
+
+-- ============================================
+-- 9. SPECIALIZATIONS TABLE
+-- ============================================
+CREATE TABLE IF NOT EXISTS specializations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  specializations TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Create index for specializations table
+CREATE INDEX IF NOT EXISTS idx_specializations_name ON specializations(specializations);
+
+-- Enable RLS on specializations table
+ALTER TABLE specializations ENABLE ROW LEVEL SECURITY;
+
+-- Drop existing policies if they exist
+DROP POLICY IF EXISTS "Allow authenticated users to view all specializations" ON specializations;
+DROP POLICY IF EXISTS "Allow authenticated users to insert specializations" ON specializations;
+DROP POLICY IF EXISTS "Allow authenticated users to update specializations" ON specializations;
+DROP POLICY IF EXISTS "Allow authenticated users to delete specializations" ON specializations;
+
+-- Create RLS policies for specializations table
+CREATE POLICY "Allow authenticated users to view all specializations" ON specializations
+  FOR SELECT USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Allow authenticated users to insert specializations" ON specializations
+  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+CREATE POLICY "Allow authenticated users to update specializations" ON specializations
+  FOR UPDATE USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Allow authenticated users to delete specializations" ON specializations
+  FOR DELETE USING (auth.role() = 'authenticated');
+
+-- Insert default specializations
+INSERT INTO specializations (specializations) VALUES
+  ('Drip Irrigation'),
+  ('Sprinkler Systems'),
+  ('Center Pivot'),
+  ('Pump Repair'),
+  ('Controller Programming'),
+  ('Water Management')
+ON CONFLICT (specializations) DO NOTHING;
 
 -- ============================================
 -- SUCCESS MESSAGE

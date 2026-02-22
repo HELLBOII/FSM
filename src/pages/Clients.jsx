@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { clientService, serviceRequestService } from '@/services';
+import React, { useState, useEffect } from 'react';
+import { clientService, serviceRequestService, irrigationSystemsService } from '@/services';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -25,7 +25,8 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue } from
+  SelectValue,
+  SelectSeparator } from
 "@/components/ui/select";
 import {
   Dialog,
@@ -63,6 +64,8 @@ export default function Clients() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [showForm, setShowForm] = useState(false);
   const [selectedClient, setSelectedClient] = useState(null);
+  const [showAddIrrigationDialog, setShowAddIrrigationDialog] = useState(false);
+  const [newIrrigationSystem, setNewIrrigationSystem] = useState('');
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
@@ -71,6 +74,10 @@ export default function Clients() {
     longitude: '',
     farm_name: '',
     address: '',
+    city: '',
+    state: '',
+    zipcode: '',
+    country: '',
     total_acreage: '',
     irrigation_systems: [],
     notes: '',
@@ -81,6 +88,58 @@ export default function Clients() {
     queryKey: ['clients'],
     queryFn: () => clientService.list()
   });
+
+  const { data: dbIrrigationSystems = [], isLoading: isLoadingIrrigationSystems } = useQuery({
+    queryKey: ['irrigationSystems'],
+    queryFn: () => irrigationSystemsService.list()
+  });
+
+  // Get all unique irrigation systems from database and combine with hardcoded ones
+  const getAllIrrigationSystems = (clientsData = [], dbSystems = []) => {
+    const dbSystemNames = dbSystems.map(sys => sys.irrigation_systems);
+    const clientSystems = clientsData.flatMap(client => client.irrigation_systems || []);
+    const allSystems = [...new Set([...irrigationSystems, ...dbSystemNames, ...clientSystems])];
+    return allSystems.sort();
+  };
+
+  const availableIrrigationSystems = getAllIrrigationSystems(clients, dbIrrigationSystems);
+
+  const createIrrigationSystemMutation = useMutation({
+    mutationFn: (data) => irrigationSystemsService.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['irrigationSystems'] });
+      setNewIrrigationSystem('');
+      setShowAddIrrigationDialog(false);
+      toast.success('Irrigation system added successfully');
+    },
+    onError: (error) => {
+      toast.error('Failed to add irrigation system: ' + error.message);
+    }
+  });
+
+  const handleAddIrrigationSystem = async () => {
+    const systemName = newIrrigationSystem.trim();
+    if (systemName && !availableIrrigationSystems.includes(systemName)) {
+      // Check if it already exists in database
+      try {
+        const existing = await irrigationSystemsService.getByName(systemName);
+        if (existing) {
+          toast.error('This irrigation system already exists');
+          return;
+        }
+      } catch (error) {
+        // If error is not "not found", rethrow it
+        if (error.code !== 'PGRST116') {
+          throw error;
+        }
+      }
+
+      // Create new irrigation system in database
+      await createIrrigationSystemMutation.mutateAsync({
+        irrigation_systems: systemName
+      });
+    }
+  };
 
   const { data: requests = [] } = useQuery({
     queryKey: ['serviceRequests'],
@@ -122,6 +181,10 @@ export default function Clients() {
       longitude: '',
       farm_name: '',
       address: '',
+      city: '',
+      state: '',
+      zipcode: '',
+      country: '',
       total_acreage: '',
       irrigation_systems: [],
       notes: '',
@@ -139,6 +202,10 @@ export default function Clients() {
       longitude: client.location?.lng?.toString() || client.longitude?.toString() || '',
       farm_name: client.farm_name || '',
       address: client.address || '',
+      city: client.city || '',
+      state: client.state || '',
+      zipcode: client.zipcode || '',
+      country: client.country || '',
       total_acreage: client.total_acreage?.toString() || '',
       irrigation_systems: client.irrigation_systems || [],
       notes: client.notes || '',
@@ -324,7 +391,7 @@ export default function Clients() {
 
       {/* Form Dialog */}
       <Dialog data-source-location="pages/Clients:308:6" data-dynamic-content="true" open={showForm} onOpenChange={(open) => {if (!open) resetForm();}}>
-        <DialogContent data-source-location="pages/Clients:309:8" data-dynamic-content="true" className="max-w-2xl max-h-[95vh] overflow-y-auto">
+        <DialogContent data-source-location="pages/Clients:309:8" data-dynamic-content="true" className="max-w-4xl max-h-[95vh] overflow-y-auto">
           <DialogHeader data-source-location="pages/Clients:310:10" data-dynamic-content="true">
             <DialogTitle data-source-location="pages/Clients:311:12" data-dynamic-content="true">
               {selectedClient ? 'Edit Client' : 'Add Client'}
@@ -335,154 +402,191 @@ export default function Clients() {
           </DialogHeader>
 
           <form data-source-location="pages/Clients:319:10" data-dynamic-content="true" onSubmit={handleSubmit} className="space-y-4">
-            {/* Client Name and Farm Name - 2 columns */}
             <div data-source-location="pages/Clients:320:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
-              <div data-source-location="pages/Clients:320:12" data-dynamic-content="true">
-                <Label data-source-location="pages/Clients:321:14" data-dynamic-content="false">Client Name</Label>
-                <Input data-source-location="pages/Clients:322:14" data-dynamic-content="false"
-                value={formData.name}
-                onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
-                placeholder="John Farmer"
-                required />
+              {/* Left Column */}
+              <div data-source-location="pages/Clients:320:12" data-dynamic-content="true" className="space-y-4">
+                <div data-source-location="pages/Clients:320:12" data-dynamic-content="true">
+                  <Label data-source-location="pages/Clients:321:14" data-dynamic-content="false">Client Name</Label>
+                  <Input data-source-location="pages/Clients:322:14" data-dynamic-content="false"
+                  value={formData.name}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
+                  placeholder="John Farmer"
+                  required />
+                </div>
+
+                <div data-source-location="pages/Clients:330:12" data-dynamic-content="true">
+                  <Label data-source-location="pages/Clients:331:14" data-dynamic-content="false">Farm Name</Label>
+                  <Input data-source-location="pages/Clients:332:14" data-dynamic-content="false"
+                  value={formData.farm_name}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, farm_name: e.target.value }))}
+                  placeholder="Green Acres Farm"
+                  required />
+                </div>
+
+                <div data-source-location="pages/Clients:341:14" data-dynamic-content="true">
+                  <Label data-source-location="pages/Clients:342:16" data-dynamic-content="false">Phone</Label>
+                  <Input data-source-location="pages/Clients:343:16" data-dynamic-content="false"
+                  value={formData.phone}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, phone: e.target.value }))}
+                  placeholder="+1 234 567 8900"
+                  required />
+                </div>
+
+                <div data-source-location="pages/Clients:350:14" data-dynamic-content="true">
+                  <Label data-source-location="pages/Clients:351:16" data-dynamic-content="false">Total Acreage</Label>
+                  <Input data-source-location="pages/Clients:352:16" data-dynamic-content="false"
+                  type="number"
+                  value={formData.total_acreage}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, total_acreage: e.target.value }))}
+                  placeholder="50" />
+                </div>
+
+                <div data-source-location="pages/Clients:361:12" data-dynamic-content="true">
+                  <Label data-source-location="pages/Clients:362:14" data-dynamic-content="false">Email</Label>
+                  <Input data-source-location="pages/Clients:363:14" data-dynamic-content="false"
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, email: e.target.value }))}
+                  placeholder="john@farm.com" />
+                </div>
+
+                <div data-source-location="pages/Clients:361:12" data-dynamic-content="true">
+                  <Label data-source-location="pages/Clients:362:14" data-dynamic-content="false">Latitude</Label>
+                  <Input data-source-location="pages/Clients:363:14" data-dynamic-content="false"
+                  type="number"
+                  step="any"
+                  value={formData.latitude}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, latitude: e.target.value }))}
+                  placeholder="36.0800" />
+                </div>
+                <div data-source-location="pages/Clients:361:12" data-dynamic-content="true">
+                  <Label data-source-location="pages/Clients:362:14" data-dynamic-content="false">Longitude</Label>
+                  <Input data-source-location="pages/Clients:363:14" data-dynamic-content="false"
+                  type="number"
+                  step="any"
+                  value={formData.longitude}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, longitude: e.target.value }))}
+                  placeholder="-115.1522" />
+                </div>
               </div>
 
-              <div data-source-location="pages/Clients:330:12" data-dynamic-content="true">
-                <Label data-source-location="pages/Clients:331:14" data-dynamic-content="false">Farm Name</Label>
-                <Input data-source-location="pages/Clients:332:14" data-dynamic-content="false"
-                value={formData.farm_name}
-                onChange={(e) => setFormData((prev) => ({ ...prev, farm_name: e.target.value }))}
-                placeholder="Green Acres Farm"
-                required />
-              </div>
-            </div>
+              {/* Right Column */}
+              <div data-source-location="pages/Clients:320:12" data-dynamic-content="true" className="space-y-4">
+                <div data-source-location="pages/Clients:371:12" data-dynamic-content="true">
+                  <Label data-source-location="pages/Clients:372:14" data-dynamic-content="false">Street Address</Label>
+                  <Textarea data-source-location="pages/Clients:373:14" data-dynamic-content="false"
+                  value={formData.address}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, address: e.target.value }))}
+                  placeholder="Street address"
+                  rows={2} />
+                </div>
 
-            <div data-source-location="pages/Clients:340:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
-              <div data-source-location="pages/Clients:341:14" data-dynamic-content="true">
-                <Label data-source-location="pages/Clients:342:16" data-dynamic-content="false">Phone</Label>
-                <Input data-source-location="pages/Clients:343:16" data-dynamic-content="false"
-                value={formData.phone}
-                onChange={(e) => setFormData((prev) => ({ ...prev, phone: e.target.value }))}
-                placeholder="+1 234 567 8900"
-                required />
-
-              </div>
-              <div data-source-location="pages/Clients:350:14" data-dynamic-content="true">
-                <Label data-source-location="pages/Clients:351:16" data-dynamic-content="false">Total Acreage</Label>
-                <Input data-source-location="pages/Clients:352:16" data-dynamic-content="false"
-                type="number"
-                value={formData.total_acreage}
-                onChange={(e) => setFormData((prev) => ({ ...prev, total_acreage: e.target.value }))}
-                placeholder="50" />
-
-              </div>
-            </div>
-
-            <div data-source-location="pages/Clients:361:12" data-dynamic-content="true" className="grid grid-cols-3 gap-4">
-              <div data-source-location="pages/Clients:361:12" data-dynamic-content="true">
-                <Label data-source-location="pages/Clients:362:14" data-dynamic-content="false">Email</Label>
-                <Input data-source-location="pages/Clients:363:14" data-dynamic-content="false"
-                type="email"
-                value={formData.email}
-                onChange={(e) => setFormData((prev) => ({ ...prev, email: e.target.value }))}
-                placeholder="john@farm.com" />
-              </div>
-              <div data-source-location="pages/Clients:361:12" data-dynamic-content="true">
-                <Label data-source-location="pages/Clients:362:14" data-dynamic-content="false">Latitude</Label>
-                <Input data-source-location="pages/Clients:363:14" data-dynamic-content="false"
-                type="number"
-                step="any"
-                value={formData.latitude}
-                onChange={(e) => setFormData((prev) => ({ ...prev, latitude: e.target.value }))}
-                placeholder="36.0800" />
-              </div>
-              <div data-source-location="pages/Clients:361:12" data-dynamic-content="true">
-                <Label data-source-location="pages/Clients:362:14" data-dynamic-content="false">Longitude</Label>
-                <Input data-source-location="pages/Clients:363:14" data-dynamic-content="false"
-                type="number"
-                step="any"
-                value={formData.longitude}
-                onChange={(e) => setFormData((prev) => ({ ...prev, longitude: e.target.value }))}
-                placeholder="-115.1522" />
-              </div>
-            </div>
-
-            <div data-source-location="pages/Clients:371:12" data-dynamic-content="true">
-              <Label data-source-location="pages/Clients:372:14" data-dynamic-content="false">Address</Label>
-              <Textarea data-source-location="pages/Clients:373:14" data-dynamic-content="false"
-              value={formData.address}
-              onChange={(e) => setFormData((prev) => ({ ...prev, address: e.target.value }))}
-              placeholder="Farm location address"
-              rows={2} />
-
-            </div>
-
-            {/* Irrigation Systems and Status - 2 columns */}
-            <div data-source-location="pages/Clients:381:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
-              <div data-source-location="pages/Clients:381:12" data-dynamic-content="true">
-                <Label data-source-location="pages/Clients:382:14" data-dynamic-content="false">Irrigation Systems</Label>
-                <Select data-source-location="pages/Clients:383:14" data-dynamic-content="true"
-                value=""
-                onValueChange={(v) => {
-                  if (v && !formData.irrigation_systems.includes(v)) {
-                    setFormData((prev) => ({
-                      ...prev,
-                      irrigation_systems: [...prev.irrigation_systems, v]
-                    }));
-                  }
-                }}>
-
-                  <SelectTrigger data-source-location="pages/Clients:394:16" data-dynamic-content="false" className="border-primary/30 focus:ring-primary focus:border-primary">
-                    <SelectValue data-source-location="pages/Clients:395:18" data-dynamic-content="false" placeholder="Add system type..." />
-                  </SelectTrigger>
-                  <SelectContent data-source-location="pages/Clients:397:16" data-dynamic-content="true">
-                    {irrigationSystems.map((sys) =>
-                    <SelectItem data-source-location="pages/Clients:399:20" data-dynamic-content="true" key={sys} value={sys}>{sys}</SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
-                {formData.irrigation_systems.length > 0 &&
-                <div data-source-location="pages/Clients:404:16" data-dynamic-content="true" className="flex flex-wrap gap-1 mt-2">
-                    {formData.irrigation_systems.map((sys, idx) =>
-                  <Badge data-source-location="pages/Clients:406:20" data-dynamic-content="true"
-                  key={idx}
-                  className="bg-primary text-primary-foreground cursor-pointer hover:bg-primary/90 transition-colors"
-                  onClick={() => setFormData((prev) => ({
-                    ...prev,
-                    irrigation_systems: prev.irrigation_systems.filter((_, i) => i !== idx)
-                  }))}>
-
-                        {sys} ×
-                      </Badge>
-                  )}
+                <div data-source-location="pages/Clients:371:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
+                  <div data-source-location="pages/Clients:371:12" data-dynamic-content="true">
+                    <Label data-source-location="pages/Clients:372:14" data-dynamic-content="false">City</Label>
+                    <Input data-source-location="pages/Clients:373:14" data-dynamic-content="false"
+                    value={formData.city}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, city: e.target.value }))}
+                    placeholder="City" />
                   </div>
-                }
+                  <div data-source-location="pages/Clients:371:12" data-dynamic-content="true">
+                    <Label data-source-location="pages/Clients:372:14" data-dynamic-content="false">State</Label>
+                    <Input data-source-location="pages/Clients:373:14" data-dynamic-content="false"
+                    value={formData.state}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, state: e.target.value }))}
+                    placeholder="State" />
+                  </div>
+                </div>
+
+                <div data-source-location="pages/Clients:371:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
+                  <div data-source-location="pages/Clients:371:12" data-dynamic-content="true">
+                    <Label data-source-location="pages/Clients:372:14" data-dynamic-content="false">Zipcode</Label>
+                    <Input data-source-location="pages/Clients:373:14" data-dynamic-content="false"
+                    value={formData.zipcode}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, zipcode: e.target.value }))}
+                    placeholder="Zipcode" />
+                  </div>
+                  <div data-source-location="pages/Clients:371:12" data-dynamic-content="true">
+                    <Label data-source-location="pages/Clients:372:14" data-dynamic-content="false">Country</Label>
+                    <Input data-source-location="pages/Clients:373:14" data-dynamic-content="false"
+                    value={formData.country}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, country: e.target.value }))}
+                    placeholder="Country" />
+                  </div>
+                </div>
+
+                <div data-source-location="pages/Clients:381:12" data-dynamic-content="true">
+                  <Label data-source-location="pages/Clients:382:14" data-dynamic-content="false">Irrigation Systems</Label>
+                  <Select data-source-location="pages/Clients:383:14" data-dynamic-content="true"
+                  value=""
+                  onValueChange={(v) => {
+                    if (v === '__add_new__') {
+                      setShowAddIrrigationDialog(true);
+                    } else if (v && !formData.irrigation_systems.includes(v)) {
+                      setFormData((prev) => ({
+                        ...prev,
+                        irrigation_systems: [...prev.irrigation_systems, v]
+                      }));
+                    }
+                  }}>
+
+                    <SelectTrigger data-source-location="pages/Clients:394:16" data-dynamic-content="false" className="border-primary/30 focus:ring-primary focus:border-primary">
+                      <SelectValue data-source-location="pages/Clients:395:18" data-dynamic-content="false" placeholder="Add system type..." />
+                    </SelectTrigger>
+                    <SelectContent data-source-location="pages/Clients:397:16" data-dynamic-content="true" className="max-h-[300px]">
+                      {availableIrrigationSystems.map((sys) =>
+                      <SelectItem data-source-location="pages/Clients:399:20" data-dynamic-content="true" key={sys} value={sys}>{sys}</SelectItem>
+                      )}
+                      <SelectSeparator />
+                      <SelectItem data-source-location="pages/Clients:399:20" data-dynamic-content="true" value="__add_new__" className="text-primary font-medium">
+                        <Plus className="w-4 h-4 inline mr-2" />
+                        Add new Irrigation System
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {formData.irrigation_systems.length > 0 &&
+                  <div data-source-location="pages/Clients:404:16" data-dynamic-content="true" className="flex flex-wrap gap-1 mt-2">
+                      {formData.irrigation_systems.map((sys, idx) =>
+                    <Badge data-source-location="pages/Clients:406:20" data-dynamic-content="true"
+                    key={idx}
+                    className="bg-primary text-primary-foreground cursor-pointer hover:bg-primary/90 transition-colors"
+                    onClick={() => setFormData((prev) => ({
+                      ...prev,
+                      irrigation_systems: prev.irrigation_systems.filter((_, i) => i !== idx)
+                    }))}>
+
+                          {sys} ×
+                        </Badge>
+                    )}
+                    </div>
+                  }
+                </div>
+
+                <div data-source-location="pages/Clients:432:12" data-dynamic-content="true">
+                  <Label data-source-location="pages/Clients:433:14" data-dynamic-content="false">Status</Label>
+                  <Select data-source-location="pages/Clients:434:14" data-dynamic-content="false"
+                  value={formData.status}
+                  onValueChange={(v) => setFormData((prev) => ({ ...prev, status: v }))}>
+
+                    <SelectTrigger data-source-location="pages/Clients:438:16" data-dynamic-content="false" className="border-primary/30 focus:ring-primary focus:border-primary">
+                      <SelectValue data-source-location="pages/Clients:439:18" data-dynamic-content="false" />
+                    </SelectTrigger>
+                    <SelectContent data-source-location="pages/Clients:441:16" data-dynamic-content="false">
+                      <SelectItem data-source-location="pages/Clients:442:18" data-dynamic-content="false" value="active">Active</SelectItem>
+                      <SelectItem data-source-location="pages/Clients:443:18" data-dynamic-content="false" value="inactive">Inactive</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div data-source-location="pages/Clients:422:12" data-dynamic-content="true">
+                  <Label data-source-location="pages/Clients:423:14" data-dynamic-content="false">Notes</Label>
+                  <Textarea data-source-location="pages/Clients:424:14" data-dynamic-content="false"
+                  value={formData.notes}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, notes: e.target.value }))}
+                  placeholder="Additional notes..."
+                  rows={2} />
+                </div>
               </div>
-
-              <div data-source-location="pages/Clients:432:12" data-dynamic-content="true">
-                <Label data-source-location="pages/Clients:433:14" data-dynamic-content="false">Status</Label>
-                <Select data-source-location="pages/Clients:434:14" data-dynamic-content="false"
-                value={formData.status}
-                onValueChange={(v) => setFormData((prev) => ({ ...prev, status: v }))}>
-
-                  <SelectTrigger data-source-location="pages/Clients:438:16" data-dynamic-content="false" className="border-primary/30 focus:ring-primary focus:border-primary">
-                    <SelectValue data-source-location="pages/Clients:439:18" data-dynamic-content="false" />
-                  </SelectTrigger>
-                  <SelectContent data-source-location="pages/Clients:441:16" data-dynamic-content="false">
-                    <SelectItem data-source-location="pages/Clients:442:18" data-dynamic-content="false" value="active">Active</SelectItem>
-                    <SelectItem data-source-location="pages/Clients:443:18" data-dynamic-content="false" value="inactive">Inactive</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div data-source-location="pages/Clients:422:12" data-dynamic-content="true">
-              <Label data-source-location="pages/Clients:423:14" data-dynamic-content="false">Notes</Label>
-              <Textarea data-source-location="pages/Clients:424:14" data-dynamic-content="false"
-              value={formData.notes}
-              onChange={(e) => setFormData((prev) => ({ ...prev, notes: e.target.value }))}
-              placeholder="Additional notes..."
-              rows={2} />
-
             </div>
 
             <div data-source-location="pages/Clients:448:12" data-dynamic-content="true" className="flex gap-3 pt-4">
@@ -498,6 +602,56 @@ export default function Clients() {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add New Irrigation System Dialog */}
+      <Dialog open={showAddIrrigationDialog} onOpenChange={setShowAddIrrigationDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add New Irrigation System</DialogTitle>
+            <DialogDescription>
+              Add a new irrigation system type to the available options
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Irrigation System Name</Label>
+              <Input
+                value={newIrrigationSystem}
+                onChange={(e) => setNewIrrigationSystem(e.target.value)}
+                placeholder="e.g., Smart Drip System"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddIrrigationSystem();
+                  }
+                }}
+              />
+            </div>
+            <div className="flex gap-3 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1"
+                onClick={() => {
+                  setShowAddIrrigationDialog(false);
+                  setNewIrrigationSystem('');
+                }}
+                disabled={createIrrigationSystemMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground"
+                onClick={handleAddIrrigationSystem}
+                disabled={!newIrrigationSystem.trim() || availableIrrigationSystems.includes(newIrrigationSystem.trim()) || createIrrigationSystemMutation.isPending}
+              >
+                {createIrrigationSystemMutation.isPending ? 'Adding...' : 'Add System'}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>);

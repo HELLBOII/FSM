@@ -69,7 +69,6 @@ async function sendEmailHandler(req, res) {
     });
   }
 }
-
 // Export for different frameworks
 module.exports = sendEmailHandler;
 
@@ -93,4 +92,5 @@ module.exports = sendEmailHandler;
  *   return sendEmailHandler(req, res);
  * }
  */
+
 
