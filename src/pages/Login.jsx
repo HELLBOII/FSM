@@ -134,11 +134,11 @@ export default function LoginPage() {
         const userRole = result?.user?.user_metadata?.user_role;
 
         if (userRole === "technician") {
-          navigate("/TechnicianHome");
+          navigate("/TechnicianHome", { replace: true });
         } else if (userRole === "admin" || userRole === "supervisor") {
-          navigate("/AdminDashboard");
+          navigate("/AdminDashboard", { replace: true });
         } else {
-          navigate("/RoleSelection");
+          navigate("/RoleSelection", { replace: true });
         }
       } else {
         toast.error("Login failed: No user data received");
@@ -204,11 +204,11 @@ export default function LoginPage() {
           const userRole = result?.user?.user_metadata?.user_role;
 
           if (userRole === "technician") {
-            navigate("/TechnicianHome");
+            navigate("/TechnicianHome", { replace: true });
           } else if (userRole === "admin" || userRole === "supervisor") {
-            navigate("/AdminDashboard");
+            navigate("/AdminDashboard", { replace: true });
           } else {
-            navigate("/RoleSelection");
+            navigate("/RoleSelection", { replace: true });
           }
         } else {
           toast.info("Please check your email to verify your account before signing in.");
@@ -239,8 +239,8 @@ export default function LoginPage() {
           <div className={`flex items-center justify-center ${isSignup ? "mb-4 sm:mb-6" : "mb-3 sm:mb-4"}`}>
             <img 
               src="/images/logofull.png" 
-              alt="Techsigaram Logo" 
-              className="h-20 sm:h-24 w-auto object-contain"
+              alt="Roberts Quality Irrigation LLC Logo" 
+              className="h-24 sm:h-28 w-auto object-contain"
             />
           </div>
 
@@ -250,7 +250,7 @@ export default function LoginPage() {
               {isSignup ? "Create Account" : "Sign In"}
             </h1>
             <p className={`${isSignup ? "text-sm sm:text-base" : "text-xs sm:text-sm"} text-gray-600 dark:text-gray-400`}>
-              {isSignup ? "Join Techsigaram to manage your field operations" : "Welcome back! Please sign in to continue"}
+              {isSignup ? "Join Roberts Quality Irrigation LLC to manage your field operations" : "Welcome back! Please sign in to continue"}
             </p>
           </div>
 
@@ -404,7 +404,7 @@ export default function LoginPage() {
             </Button>
 
             {/* Toggle Sign In/Sign Up */}
-            <div className={`text-center ${isSignup ? "mt-3 sm:mt-4" : "mt-2 sm:mt-3"}`}>
+            {/* <div className={`text-center ${isSignup ? "mt-3 sm:mt-4" : "mt-2 sm:mt-3"}`}>
               <p className="text-sm text-gray-600 dark:text-gray-400">
                 {isSignup ? "Already have an account?" : "Don't have an account?"}
                 {" "}
@@ -422,14 +422,14 @@ export default function LoginPage() {
                   {isSignup ? "Sign in" : "Sign up"}
                 </button>
               </p>
-            </div>
+            </div> */}
           </form>
 
           {/* Copyright */}
           <div className="mt-4 sm:mt-6 text-center">
             <p className="text-xs text-gray-400 flex items-center justify-center gap-1">
               <span>©</span>
-              <span>Copyright {new Date().getFullYear()} Techsigaram</span>
+              <span>Copyright {new Date().getFullYear()} Roberts Quality Irrigation LLC</span>
             </p>
           </div>
         </div>

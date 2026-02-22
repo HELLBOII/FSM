@@ -18,6 +18,7 @@ import TechnicianDashboard from './pages/TechnicianDashboard';
 import TechnicianHome from './pages/TechnicianHome';
 import TechnicianJobs from './pages/TechnicianJobs';
 import TechnicianNavigation from './pages/TechnicianNavigation';
+import TechnicianEquipment from './pages/TechnicianEquipment';
 import TechnicianProfile from './pages/TechnicianProfile';
 import Technicians from './pages/Technicians';
 import WorkReports from './pages/WorkReports';
@@ -44,6 +45,7 @@ export const pagesConfig = {
     TechnicianJobs,
     TechnicianNavigation,
     TechnicianProfile,
+    TechnicianEquipment,
     Technicians,
     WorkReports
   },

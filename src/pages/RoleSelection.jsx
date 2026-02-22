@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/AuthContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Button } from "@/components/ui/button";
@@ -81,6 +82,7 @@ const colorClasses = {
 export default function RoleSelection() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { checkUserAuth } = useAuth();
   const [selectedRole, setSelectedRole] = useState(null);
 
   const { data: user, isLoading: userLoading } = useQuery({
@@ -88,7 +90,9 @@ export default function RoleSelection() {
     queryFn: async () => {
       const { data: { user }, error } = await supabase.auth.getUser();
       if (error) throw error;
-      return user;
+      // Role is stored in user_metadata by updateUser({ data: { user_role } })
+      const userRole = user?.user_metadata?.user_role;
+      return user ? { ...user, user_role: userRole } : null;
     }
   });
 
@@ -122,8 +126,12 @@ export default function RoleSelection() {
     if (!selectedRole) return;
 
     await updateRoleMutation.mutateAsync(selectedRole);
+    // Refresh auth state so ProtectedRoute sees the new role before navigating
+    await checkUserAuth();
     const role = roles.find((r) => r.id === selectedRole);
-    navigate(createPageUrl(role.redirect));
+    if (role) {
+      navigate(createPageUrl(role.redirect), { replace: true });
+    }
   };
 
   if (userLoading) {

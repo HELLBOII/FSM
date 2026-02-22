@@ -519,6 +519,7 @@ export default function Clients() {
                   <Label data-source-location="pages/Clients:382:14" data-dynamic-content="false">Irrigation Systems</Label>
                   <Select data-source-location="pages/Clients:383:14" data-dynamic-content="true"
                   value=""
+                  modal={false}
                   onValueChange={(v) => {
                     if (v === '__add_new__') {
                       setShowAddIrrigationDialog(true);

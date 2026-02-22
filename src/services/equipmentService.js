@@ -21,6 +21,65 @@ export const equipmentService = {
   },
 
   /**
+   * Get equipment with server-side pagination and optional filters
+   * @param {Object} opts - { page, pageSize, search, category, orderBy, orderDirection }
+   * @returns {Promise<{ data: Array, total: number }>}
+   */
+  async listPaginated(opts = {}) {
+    const {
+      page = 1,
+      pageSize = 10,
+      search = '',
+      category = '',
+      orderBy = 'created_at',
+      orderDirection = 'desc'
+    } = opts;
+
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    let query = supabase
+      .from('equipment')
+      .select('*', { count: 'exact' })
+      .order(orderBy, { ascending: orderDirection === 'asc' });
+
+    if (search && search.trim()) {
+      const term = search.trim();
+      query = query.or(`name.ilike.%${term}%,sku.ilike.%${term}%`);
+    }
+    if (category && category !== 'all') {
+      query = query.eq('category', category);
+    }
+
+    const { data, error, count } = await query.range(from, to);
+
+    if (error) throw error;
+    return { data: data || [], total: count ?? 0 };
+  },
+
+  /**
+   * Get equipment counts for alerts (total, low stock, out of stock)
+   * @returns {Promise<{ total: number, lowStockCount: number, outOfStockCount: number }>}
+   */
+  async getCounts() {
+    const [totalRes, lowRes, outRes] = await Promise.all([
+      supabase.from('equipment').select('*', { count: 'exact', head: true }),
+      supabase.from('equipment').select('*', { count: 'exact', head: true }).eq('status', 'low_stock'),
+      supabase.from('equipment').select('*', { count: 'exact', head: true }).eq('status', 'out_of_stock')
+    ]);
+
+    if (totalRes.error) throw totalRes.error;
+    if (lowRes.error) throw lowRes.error;
+    if (outRes.error) throw outRes.error;
+
+    return {
+      total: totalRes.count ?? 0,
+      lowStockCount: lowRes.count ?? 0,
+      outOfStockCount: outRes.count ?? 0
+    };
+  },
+
+  /**
    * Get a single equipment by ID
    * @param {string} id
    * @returns {Promise<Object>}

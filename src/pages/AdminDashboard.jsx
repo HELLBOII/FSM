@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { serviceRequestService, technicianService, workReportService } from '@/services';
-import { useQuery } from '@tanstack/react-query';
+import { serviceRequestService, technicianService, workReportService, clientService } from '@/services';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import {
   FileText,
@@ -15,8 +15,9 @@ import {
   CheckCircle,
   ArrowRight,
   Droplets,
-  Activity } from
-'lucide-react';
+  Activity,
+  Expand,
+} from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -24,12 +25,25 @@ import StatCard from '@/components/ui/StatCard';
 import TechnicianPerformanceCard from '@/components/dashboard/TechnicianPerformanceCard';
 import StatusBadge from '@/components/ui/StatusBadge';
 import JobCard from '@/components/ui/JobCard';
-import TechnicianMap from '@/components/map/TechnicianMap';
+import DashboardMap from '@/components/map/DashboardMap';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
+import ServiceRequestForm from '@/components/forms/ServiceRequestForm';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { toast } from 'sonner';
 import { format } from 'date-fns';
 
 export default function AdminDashboard() {
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('overview');
+  const [showServiceRequestDialog, setShowServiceRequestDialog] = useState(false);
+  const [clientForServiceRequest, setClientForServiceRequest] = useState(null);
+  const [mapFullScreen, setMapFullScreen] = useState(false);
 
   const { data: requests = [], isLoading: requestsLoading } = useQuery({
     queryKey: ['serviceRequests'],
@@ -51,6 +65,55 @@ export default function AdminDashboard() {
     queryFn: () => workReportService.list('created_at', 'desc')
   });
 
+  const { data: clients = [] } = useQuery({
+    queryKey: ['clients'],
+    queryFn: () => clientService.list()
+  });
+
+  const createRequestMutation = useMutation({
+    mutationFn: (data) => serviceRequestService.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['serviceRequests'] });
+      toast.success('Service request created');
+      setShowServiceRequestDialog(false);
+      setClientForServiceRequest(null);
+    },
+    onError: (err) => {
+      toast.error(err.message || 'Failed to create service request');
+    },
+  });
+
+  const handleCreateServiceRequestFromMap = (job) => {
+    const client = clients.find((c) => c.id === job.id);
+    if (client) {
+      setClientForServiceRequest(client);
+      setShowServiceRequestDialog(true);
+    }
+  };
+
+  // Clients with location for map (same format as LiveTracking clients map)
+  const clientsForMap = clients
+    .filter(client => {
+      const lat = client.location?.lat ?? client.latitude;
+      const lng = client.location?.lng ?? client.longitude;
+      return lat != null && lng != null && !isNaN(Number(lat)) && !isNaN(Number(lng));
+    })
+    .map(client => {
+      const lat = client.location?.lat ?? client.latitude;
+      const lng = client.location?.lng ?? client.longitude;
+      return {
+        id: client.id,
+        client_name: client.name,
+        farm_name: client.farm_name,
+        location: {
+          lat: parseFloat(lat),
+          lng: parseFloat(lng),
+          address: client.address || ''
+        },
+        priority: 'medium'
+      };
+    });
+
   // Calculate stats
   const stats = {
     total: requests.length,
@@ -70,43 +133,6 @@ export default function AdminDashboard() {
   const activeTechnicians = technicians.filter((t) =>
   t.availability_status !== 'offline' && t.current_location?.lat
   );
-
-  // Sample US job locations for demo
-  const sampleJobs = [
-  {
-    id: 'job-1',
-    request_number: 'SR-2024-001',
-    client_name: 'Green Valley Farms',
-    location: { lat: 36.0800, lng: -115.1522, address: 'Henderson, NV' },
-    status: 'in_progress',
-    priority: 'high',
-    irrigation_type: 'drip'
-  },
-  {
-    id: 'job-2',
-    request_number: 'SR-2024-002',
-    client_name: 'Desert Bloom Agriculture',
-    location: { lat: 33.5100, lng: -112.1400, address: 'Glendale, AZ' },
-    status: 'scheduled',
-    priority: 'medium',
-    irrigation_type: 'sprinkler'
-  },
-  {
-    id: 'job-3',
-    request_number: 'SR-2024-003',
-    client_name: 'Sunshine Orchards',
-    location: { lat: 34.1000, lng: -118.3000, address: 'Beverly Hills, CA' },
-    status: 'assigned',
-    priority: 'urgent',
-    irrigation_type: 'center_pivot'
-  }];
-
-
-  const activeJobs = [
-  ...requests.filter((r) =>
-  ['scheduled', 'assigned', 'in_progress'].includes(r.status) && r.location?.lat
-  ),
-  ...sampleJobs];
 
 
   // Performance analytics
@@ -253,18 +279,24 @@ export default function AdminDashboard() {
                 <MapPin data-source-location="pages/AdminDashboard:253:16" data-dynamic-content="false" className="w-5 h-5 text-emerald-600" />
                 Live Field Tracking
               </CardTitle>
-              <Button data-source-location="pages/AdminDashboard:256:14" data-dynamic-content="true" variant="ghost" size="sm" asChild>
-                <Link data-source-location="pages/AdminDashboard:257:16" data-dynamic-content="false" to={createPageUrl('LiveTracking')}>
-                  Full Map <ArrowRight data-source-location="pages/AdminDashboard:258:27" data-dynamic-content="false" className="w-4 h-4 ml-1" />
-                </Link>
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => setMapFullScreen(true)}>
+                  <Expand className="h-4 w-4" />
+                </Button>
+                {/* <Button data-source-location="pages/AdminDashboard:256:14" data-dynamic-content="true" variant="ghost" size="sm" asChild>
+                  <Link data-source-location="pages/AdminDashboard:257:16" data-dynamic-content="false" to={createPageUrl('LiveTracking')}>
+                    Full Map <ArrowRight data-source-location="pages/AdminDashboard:258:27" data-dynamic-content="false" className="w-4 h-4 ml-1" />
+                  </Link>
+                </Button> */}
+              </div>
             </div>
           </CardHeader>
           <CardContent data-source-location="pages/AdminDashboard:263:10" data-dynamic-content="true">
-            <TechnicianMap data-source-location="pages/AdminDashboard:264:12" data-dynamic-content="false"
-                technicians={activeTechnicians}
-                jobs={activeJobs}
-                className="h-[350px]" />
+            <DashboardMap
+                jobs={clientsForMap}
+                className="h-[350px]"
+                onCreateServiceRequest={handleCreateServiceRequestFromMap}
+              />
 
           </CardContent>
         </Card>
@@ -461,6 +493,50 @@ export default function AdminDashboard() {
           }
         </TabsContent>
       </Tabs>
+
+      {/* Full-screen map modal */}
+      <Dialog open={mapFullScreen} onOpenChange={(open) => !open && setMapFullScreen(false)}>
+        <DialogContent className="max-w-none w-[95vw] h-[90vh] sm:w-[98vw] sm:h-[95vh] rounded-lg p-0 gap-0 overflow-hidden border-0">
+          <div className="flex flex-col h-full">
+            <div className="flex items-center min-h-12 shrink-0 px-4 pr-12 border-b bg-background">
+              <DialogTitle className="text-lg font-semibold m-0">Live Field Tracking</DialogTitle>
+            </div>
+            <div className="flex-1 min-h-0 p-2">
+              <DashboardMap
+                jobs={clientsForMap}
+                className="h-full min-h-[70vh]"
+                onCreateServiceRequest={handleCreateServiceRequestFromMap}
+              />
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Service Request dialog (from map client tooltip) */}
+      <Dialog open={showServiceRequestDialog} onOpenChange={(open) => {
+        setShowServiceRequestDialog(open);
+        if (!open) setClientForServiceRequest(null);
+      }}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>New Service Request</DialogTitle>
+            <DialogDescription>
+              {clientForServiceRequest ? `Create a service request for ${clientForServiceRequest.name}` : 'Fill in the details for the new service request'}
+            </DialogDescription>
+          </DialogHeader>
+          <ServiceRequestForm
+            request={null}
+            initialClientId={clientForServiceRequest?.id}
+            onSubmit={async (data) => {
+              await createRequestMutation.mutateAsync(data);
+            }}
+            onCancel={() => {
+              setShowServiceRequestDialog(false);
+              setClientForServiceRequest(null);
+            }}
+          />
+        </DialogContent>
+      </Dialog>
     </div>);
 
 }

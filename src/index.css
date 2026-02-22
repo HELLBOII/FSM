@@ -4,7 +4,13 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Leaflet map custom styles */
+/* Leaflet map custom styles - keep below app modals (z-index 10000+) */
+.leaflet-pane,
+.leaflet-top,
+.leaflet-bottom,
+.leaflet-control-container {
+  z-index: 999 !important;
+}
 .custom-marker {
   background: transparent !important;
   border: none !important;

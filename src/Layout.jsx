@@ -61,19 +61,21 @@ const webNavItems = [
 { divider: true },
 { name: 'Technicians', icon: Users, page: 'Technicians' },
 { name: 'Clients', icon: UserCircle, page: 'Clients' },
-{ name: 'Equipment', icon: Package, page: 'EquipmentInventory' }];
+{ name: 'Equipment', icon: Package, page: 'EquipmentInventory' },
+{ divider: true },
+{ name: 'Settings', icon: Settings, page: 'Settings' }];
 
 
-// Mobile navigation for Technicians
+// Mobile navigation for Technicians (Profile is in app bar)
 const mobileNavItems = [
 { name: 'Dashboard', icon: LayoutDashboard, page: 'TechnicianDashboard' },
 { name: 'My Jobs', icon: Wrench, page: 'TechnicianJobs' },
 { name: 'Map', icon: Navigation, page: 'TechnicianNavigation' },
-{ name: 'Profile', icon: UserCircle, page: 'TechnicianProfile' }];
+{ name: 'Equipments', icon: Package, page: 'TechnicianEquipment' }];
 
 
 // Pages that should use mobile layout
-const mobilePages = ['TechnicianDashboard', 'TechnicianHome', 'TechnicianJobs', 'TechnicianNavigation', 'TechnicianProfile', 'JobDetails', 'JobExecution'];
+const mobilePages = ['TechnicianDashboard', 'TechnicianHome', 'TechnicianJobs', 'TechnicianNavigation', 'TechnicianProfile', 'TechnicianEquipment', 'JobDetails', 'JobExecution'];
 
 // Pages that should have no layout
 const noLayoutPages = ['Login', 'RoleSelection'];
@@ -119,18 +121,20 @@ export default function Layout({ children, currentPageName }) {
         
         {/* Mobile Header */}
         <header data-source-location="Layout:94:8" data-dynamic-content="false" className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between sticky top-0 z-40">
-          <div data-source-location="Layout:95:10" data-dynamic-content="false" className="flex items-center gap-2">
-            {/* <div data-source-location="Layout:96:12" data-dynamic-content="false" className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <Droplets data-source-location="Layout:97:14" data-dynamic-content="false" className="w-5 h-5 text-white" />
-            </div> */}
-            <img src="/images/logohalf.png" alt="Techsigaram" className="w-14 h-14" />
-            <div data-source-location="Layout:99:12" data-dynamic-content="false">
-              <span data-source-location="Layout:100:14" data-dynamic-content="false" className="font-bold text-xl text-gray-900">TECHSIGARAM</span>
-              <p data-source-location="Layout:101:14" data-dynamic-content="false" className="text-xs text-gray-500">Field Service Management</p>
-            </div>
-          </div>
-          <div data-source-location="Layout:101:10" data-dynamic-content="false" className="flex items-center gap-2">
-            <NotificationBell data-source-location="Layout:102:12" data-dynamic-content="false" />
+          <Link to={createPageUrl('TechnicianHome')} className="flex items-center min-w-0 flex-1">
+            <img src="/images/logofull.png" alt="Roberts Quality Irrigation LLC" className="h-10 w-auto object-contain" />
+          </Link>
+          <div className="flex items-center justify-end gap-2 min-w-0 flex-shrink-0">
+            <span className="h-10 w-10 flex items-center justify-center rounded-full bg-primary/10 text-primary shrink-0">
+              <NotificationBell className="w-6 h-6" strokeWidth={3.5} />
+            </span>
+            <Link
+              to={createPageUrl('TechnicianProfile')}
+              className="h-10 w-10 flex items-center justify-center rounded-full bg-primary/10 text-primary transition-colors hover:bg-primary/20 shrink-0"
+              aria-label="Profile"
+            >
+              <UserCircle className="w-6 h-6" />
+            </Link>
           </div>
         </header>
 
@@ -172,14 +176,14 @@ export default function Layout({ children, currentPageName }) {
       {/* Desktop Sidebar */}
       <aside data-source-location="Layout:142:6" data-dynamic-content="true" className="hidden lg:flex w-72 flex-col bg-white border-r border-primary/20 fixed inset-y-0 z-30">
         {/* Logo */}
-        <div data-source-location="Layout:144:8" data-dynamic-content="true" className="p-6 border-b border-primary/20">
-          <Link data-source-location="Layout:145:10" data-dynamic-content="false" to={createPageUrl('AdminDashboard')} className="flex items-center">
-            <img src="/images/logohalf.png" alt="Techsigaram" className="w-14 h-14" />
+        <div data-source-location="Layout:144:8" data-dynamic-content="true" className="p-3 border-b border-primary/20">
+          <Link data-source-location="Layout:145:10" data-dynamic-content="false" to={createPageUrl('AdminDashboard')} className="flex w-full justify-center items-center">
             {/* <div data-source-location="Layout:146:12" data-dynamic-content="false" className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center shadow-lg shadow-primary/20">
               <Droplets data-source-location="Layout:147:14" data-dynamic-content="false" className="w-6 h-6 text-white" />
             </div> */}
-            <div data-source-location="Layout:149:12" data-dynamic-content="false">
-              <span data-source-location="Layout:150:14" data-dynamic-content="false" className="font-bold text-xl text-gray-900">TECHSIGARAM</span>
+            <div data-source-location="Layout:149:12" data-dynamic-content="false" className="flex flex-col items-center text-center w-full">
+              {/* <span data-source-location="Layout:150:14" data-dynamic-content="false" className="font-bold text-xl text-gray-900">ROBERTS QUALITY IRRIGATION LLC</span> */}
+              <img src="/images/logofull.png" alt="Roberts Quality Irrigation LLC" className="h-14 w-auto object-contain" />
               <p data-source-location="Layout:151:14" data-dynamic-content="false" className="text-xs text-gray-500">Field Service Management</p>
             </div>
           </Link>
@@ -238,6 +242,13 @@ export default function Layout({ children, currentPageName }) {
             <DropdownMenuContent data-source-location="Layout:206:12" data-dynamic-content="true" align="end" className="w-56">
               <DropdownMenuLabel data-source-location="Layout:207:14" data-dynamic-content="false">My Account</DropdownMenuLabel>
               <DropdownMenuSeparator data-source-location="Layout:208:14" data-dynamic-content="false" />
+              <DropdownMenuItem data-source-location="Layout:210:14" data-dynamic-content="false" asChild>
+                <Link to={createPageUrl('Settings')} className="flex items-center cursor-pointer">
+                  <Settings className="w-4 h-4 mr-2" />
+                  Settings
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator data-source-location="Layout:215:14" data-dynamic-content="false" />
               <DropdownMenuItem data-source-location="Layout:216:14" data-dynamic-content="false"
               onClick={handleLogout}
               className="text-red-600"
@@ -255,24 +266,20 @@ export default function Layout({ children, currentPageName }) {
         </div>
       </aside>
 
-      {/* Mobile Header + Sidebar */}
+      {/* Mobile Header + Sidebar (web when lg:hidden) */}
       <div data-source-location="Layout:229:6" data-dynamic-content="true" className="lg:hidden fixed top-0 left-0 right-0 bg-white border-b border-gray-200 z-40">
         <div data-source-location="Layout:230:8" data-dynamic-content="true" className="flex items-center justify-between px-4 py-3">
+          <div className="flex-1 flex items-center min-w-0">
           <Sheet data-source-location="Layout:231:10" data-dynamic-content="true" open={sidebarOpen} onOpenChange={setSidebarOpen}>
             <SheetTrigger data-source-location="Layout:232:12" data-dynamic-content="false" asChild>
-              <Button data-source-location="Layout:233:14" data-dynamic-content="false" variant="ghost" size="icon">
+              <Button data-source-location="Layout:233:14" data-dynamic-content="false" variant="ghost" size="icon" className="flex-shrink-0">
                 <Menu data-source-location="Layout:234:16" data-dynamic-content="false" className="w-5 h-5" />
               </Button>
             </SheetTrigger>
             <SheetContent data-source-location="Layout:237:12" data-dynamic-content="true" side="left" className="w-72 p-0">
-              <div data-source-location="Layout:238:14" data-dynamic-content="false" className="p-6 border-b border-primary/20">
-                <div data-source-location="Layout:239:16" data-dynamic-content="false" className="flex items-center gap-3">
-                  <img src="/images/logohalf.png" alt="Techsigaram" className="w-14 h-14" />
-                  <div data-source-location="Layout:240:18" data-dynamic-content="false">
-                    <span data-source-location="Layout:241:20" data-dynamic-content="false" className="font-bold text-xl text-gray-900">TECHSIGARAM</span>
-                    <p data-source-location="Layout:242:20" data-dynamic-content="false" className="text-xs text-gray-500">Field Service Management</p>
-                  </div>
-                </div>
+              <div data-source-location="Layout:238:14" data-dynamic-content="false" className="p-6 border-b border-primary/20 flex flex-col items-center text-center">
+                <img src="/images/logofull.png" alt="Roberts Quality Irrigation LLC" className="h-14 w-auto object-contain" />
+                <p data-source-location="Layout:242:20" data-dynamic-content="false" className="text-xs text-gray-500 mt-1">Field Service Management</p>
               </div>
               <nav data-source-location="Layout:246:14" data-dynamic-content="true" className="p-4 space-y-1">
                 {webNavItems.map((item, index) => {
@@ -304,15 +311,13 @@ export default function Layout({ children, currentPageName }) {
             </SheetContent>
           </Sheet>
 
-          <Link data-source-location="Layout:276:10" data-dynamic-content="false" to={createPageUrl('AdminDashboard')} className="flex items-center gap-2">
-            <img src="/images/logohalf.png" alt="Techsigaram" className="w-14 h-14" />
-            <div data-source-location="Layout:277:12" data-dynamic-content="false">
-              <span data-source-location="Layout:278:14" data-dynamic-content="false" className="font-bold text-xl text-gray-900">TECHSIGARAM</span>
-              <p data-source-location="Layout:279:14" data-dynamic-content="false" className="text-xs text-gray-500">Field Service Management</p>
-            </div>
+          </div>
+          <Link data-source-location="Layout:276:10" data-dynamic-content="false" to={createPageUrl('AdminDashboard')} className="flex flex-col items-center text-center flex-shrink-0">
+            <img src="/images/logofull.png" alt="Roberts Quality Irrigation LLC" className="h-10 w-auto object-contain" />
+            <p data-source-location="Layout:279:14" data-dynamic-content="false" className="text-xs text-gray-500">Field Service Management</p>
           </Link>
 
-          <div data-source-location="Layout:283:10" data-dynamic-content="true" className="flex items-center gap-2">
+          <div data-source-location="Layout:283:10" data-dynamic-content="true" className="flex-1 flex justify-end items-center gap-2 min-w-0">
             <NotificationBell data-source-location="Layout:284:12" data-dynamic-content="false" />
             <DropdownMenu data-source-location="Layout:285:12" data-dynamic-content="true">
               <DropdownMenuTrigger data-source-location="Layout:286:14" data-dynamic-content="true" asChild>
@@ -328,6 +333,13 @@ export default function Layout({ children, currentPageName }) {
               <DropdownMenuContent data-source-location="Layout:296:14" data-dynamic-content="true" align="end">
                 <DropdownMenuLabel data-source-location="Layout:297:16" data-dynamic-content="true">{user?.email || 'User'}</DropdownMenuLabel>
                 <DropdownMenuSeparator data-source-location="Layout:298:16" data-dynamic-content="false" />
+                <DropdownMenuItem asChild>
+                  <Link to={createPageUrl('Settings')} onClick={() => setSidebarOpen(false)} className="flex items-center cursor-pointer">
+                    <Settings className="w-4 h-4 mr-2" />
+                    Settings
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator data-source-location="Layout:302:16" data-dynamic-content="false" />
                 <DropdownMenuItem data-source-location="Layout:299:16" data-dynamic-content="false" onClick={handleLogout} className="text-red-600" disabled={isLoggingOut}>
                   {isLoggingOut ? (
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />

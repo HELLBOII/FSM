@@ -59,6 +59,27 @@ function ChangeMapView({ center }) {
   return null;
 }
 
+// Fix map not showing when opened from sidebar: container may have 0 size at first paint.
+// Call invalidateSize after layout so tiles and view render correctly.
+function MapInvalidateSize() {
+  const map = useMap();
+  useEffect(() => {
+    const runInvalidate = () => {
+      map.invalidateSize();
+    };
+    runInvalidate();
+    const raf = requestAnimationFrame(runInvalidate);
+    const t1 = setTimeout(runInvalidate, 100);
+    const t2 = setTimeout(runInvalidate, 350);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      cancelAnimationFrame(raf);
+    };
+  }, [map]);
+  return null;
+}
+
 const createJobIcon = (priority) => {
   const colors = {
     urgent: '#ef4444',
@@ -102,8 +123,14 @@ export default function TechnicianMap({
   className,
   selectedLocation
 }) {
-  // Auto-calculate center based on data, default to Southwest US
-  const defaultCenter = [34.5, -115.0]; // Southwest US region
+  // US bounds (continental): restrict map to US only
+  const usBounds = L.latLngBounds(
+    [24, -125], // Southwest (southern FL, Pacific)
+    [49, -66]   // Northeast (Canada border, Atlantic)
+  );
+
+  // Auto-calculate center based on data, default to US center
+  const defaultCenter = [39.5, -98.5]; // Continental US center
   const calculatedCenter = center || (() => {
     const allLocations = [
       ...technicians.filter(t => t.current_location?.lat).map(t => t.current_location),
@@ -124,12 +151,15 @@ export default function TechnicianMap({
         zoom={zoom}
         className="h-full w-full min-h-[400px]"
         scrollWheelZoom={true}
+        maxBounds={usBounds}
+        maxBoundsViscosity={1}
+        minZoom={3}
       >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        
+        <MapInvalidateSize />
         {/* Update map view when selectedLocation changes */}
         {selectedLocation && <ChangeMapView center={selectedLocation} />}
         

@@ -13,3 +13,4 @@ export { emailService } from './emailService';
 export { irrigationSystemsService } from './irrigationSystemsService';
 export { specializationsService } from './specializationsService';
 export { tasksService } from './tasksService';
+export { appSettingsService } from './appSettingsService';

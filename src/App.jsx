@@ -25,6 +25,7 @@ const pageAccess = {
     'TechnicianJobs',
     'TechnicianNavigation',
     'TechnicianProfile',
+    'TechnicianEquipment',
     'JobDetails',
     'JobExecution'
   ],
@@ -90,9 +91,10 @@ const ProtectedRoute = ({ pageName, children }) => {
   // Get user role from metadata
   const userRole = user?.user_metadata?.user_role;
 
-  // Allow access to Login and RoleSelection pages
+  // If user is authenticated and tries to open Login or RoleSelection (e.g. via back button), redirect to role default
   if (pageName === 'Login' || pageName === 'RoleSelection') {
-    return <>{children}</>;
+    const redirectPath = getDefaultPathForRole(userRole);
+    return <Navigate to={redirectPath} replace />;
   }
 
   // Check if user has access to this page

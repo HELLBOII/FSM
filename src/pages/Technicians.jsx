@@ -487,6 +487,7 @@ export default function Technicians() {
                   <Label data-source-location="pages/Technicians:337:14" data-dynamic-content="false">Specializations</Label>
                   <Select data-source-location="pages/Technicians:338:14" data-dynamic-content="true"
                   value=""
+                  modal={false}
                   onValueChange={(v) => {
                     if (v === '__add_new__') {
                       setShowAddSpecializationDialog(true);

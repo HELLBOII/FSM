@@ -62,10 +62,10 @@ export default function NotificationBell() {
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative">
-          <Bell className="w-5 h-5 text-gray-600" />
+        <Button variant="ghost" size="icon" className="relative h-10 w-10 min-h-10 min-w-10 rounded-full text-primary hover:bg-transparent p-0">
+          <Bell className="w-6 h-6 shrink-0" strokeWidth={2.5} />
           {unreadCount > 0 && (
-            <span className="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+            <span className="absolute -top-0.5 -right-0.5 min-w-5 h-5 px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
               {unreadCount > 9 ? '9+' : unreadCount}
             </span>
           )}

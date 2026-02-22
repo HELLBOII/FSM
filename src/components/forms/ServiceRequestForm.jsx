@@ -48,7 +48,7 @@ const priorities = [
   { value: 'urgent', label: 'Urgent', description: 'Critical - crop damage risk' }
 ];
 
-export default function ServiceRequestForm({ request, onSubmit, onCancel }) {
+export default function ServiceRequestForm({ request, onSubmit, onCancel, initialClientId }) {
   const [formData, setFormData] = useState({
     client_id: '',
     client_name: '',
@@ -139,6 +139,29 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel }) {
       setPhotoPaths([]);
     }
   }, [request]);
+
+  // Prefill client when opening form from map (e.g. "Create service request" on client marker)
+  useEffect(() => {
+    if (!request && initialClientId && clients.length > 0) {
+      const client = clients.find((c) => c.id === initialClientId);
+      if (client) {
+        const lat = client.location?.lat ?? client.latitude ?? null;
+        const lng = client.location?.lng ?? client.longitude ?? null;
+        setFormData((prev) => ({
+          ...prev,
+          client_id: client.id,
+          client_name: client.name,
+          farm_name: client.farm_name ?? '',
+          contact_phone: client.phone ?? '',
+          location: {
+            lat,
+            lng,
+            address: client.address ?? '',
+          },
+        }));
+      }
+    }
+  }, [request, initialClientId, clients]);
 
   const handleClientSelect = (clientId) => {
     const client = clients.find(c => c.id === clientId);

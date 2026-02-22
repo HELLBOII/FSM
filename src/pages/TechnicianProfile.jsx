@@ -224,7 +224,7 @@ export default function TechnicianProfile() {
           <CardContent data-source-location="pages/TechnicianProfile:197:10" data-dynamic-content="true">
             <div data-source-location="pages/TechnicianProfile:198:12" data-dynamic-content="true" className="flex flex-wrap gap-2">
               {technician.specializations.map((spec, idx) =>
-            <Badge data-source-location="pages/TechnicianProfile:200:16" data-dynamic-content="true" key={idx} variant="secondary" className="py-1.5 px-3">
+            <Badge data-source-location="pages/TechnicianProfile:200:16" data-dynamic-content="true" key={idx} variant="default" className="py-1.5 px-3 bg-primary text-primary-foreground">
                   {spec}
                 </Badge>
             )}
@@ -275,7 +275,7 @@ export default function TechnicianProfile() {
         href="https://robertsqi.com/"
         target="_blank"
         rel="noopener noreferrer"
-        className="text-center text-sm text-gray-400 hover:text-gray-600 block"
+        className="text-center text-sm text-primary underline underline-offset-2 hover:opacity-90 block"
       >
         Powered by Roberts Quality Irrigation LLC
       </a>
