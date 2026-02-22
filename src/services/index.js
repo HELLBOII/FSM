@@ -12,8 +12,4 @@ export { navigationLogService } from './navigationLogService';
 export { emailService } from './emailService';
 export { irrigationSystemsService } from './irrigationSystemsService';
 export { specializationsService } from './specializationsService';
-<<<<<<< HEAD
 export { tasksService } from './tasksService';
-=======
->>>>>>> e779a054b2c62552301021744adeea2b59302309
-
