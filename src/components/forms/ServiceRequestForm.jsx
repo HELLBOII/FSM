@@ -265,12 +265,15 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
           }
         : { lat: null, lng: null, address: '' };
 
+      // Use display state for dates so submitted times match what the user selected (avoids stale state)
+      const startTime = fromDateTime ?? formData.from_time
+      const endTime = toDateTime ?? formData.to_time
       const submitData = {
         ...formData,
         acreage_affected: formData.acreage_affected ? parseFloat(formData.acreage_affected) : null,
         request_number: request?.request_number || `SR-${Date.now().toString(36).toUpperCase()}`,
-        scheduled_start_time: formData.from_time ? formData.from_time.toISOString() : null,
-        scheduled_end_time: formData.to_time ? formData.to_time.toISOString() : null,
+        scheduled_start_time: startTime ? startTime.toISOString() : null,
+        scheduled_end_time: endTime ? endTime.toISOString() : null,
         // Ensure these fields are explicitly included and properly formatted
         contact_phone: formData.contact_phone || '',
         location: locationData,

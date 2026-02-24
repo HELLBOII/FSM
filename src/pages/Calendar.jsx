@@ -2,18 +2,24 @@ import React, { useState } from 'react';
 import { serviceRequestService } from '@/services';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, MapPin, Clock, User, Phone, Mail } from 'lucide-react';
 import PageHeader from '@/components/common/PageHeader';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
 import MonthView from '@/components/calendar/MonthView';
+import WeekView from '@/components/calendar/WeekView';
+import DayView from '@/components/calendar/DayView';
 import ServiceRequestForm from '@/components/forms/ServiceRequestForm';
 import StatusBadge from '@/components/ui/StatusBadge';
-import { format, addMonths, parseISO } from 'date-fns';
+import { format, addMonths, addWeeks, addDays, startOfWeek, endOfWeek, parseISO } from 'date-fns';
 import { toast } from 'sonner';
+
+const VIEWS = { month: 'month', week: 'week', day: 'day' };
 
 export default function Calendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [view, setView] = useState(VIEWS.month);
   const [selectedAppointment, setSelectedAppointment] = useState(null);
   const [showDetailsDialog, setShowDetailsDialog] = useState(false);
   const [showFormDialog, setShowFormDialog] = useState(false);
@@ -57,19 +63,38 @@ export default function Calendar() {
     setShowDetailsDialog(true);
   };
 
-  const handleDateClick = (date) => {
-    setSelectedDate(date);
+  const handleDateClick = (date, timeSlot) => {
+    const dateToUse = new Date(date);
+    if (timeSlot && typeof timeSlot === 'string') {
+      const parts = timeSlot.trim().split(/\s+/);
+      const [time, period] = parts.length >= 2 ? [parts[0], parts[1]] : [timeSlot, ''];
+      const [h, m] = (time || '').split(':').map(Number);
+      let hour24 = isNaN(h) ? 9 : h;
+      const p = (period || '').toUpperCase();
+      if (p === 'PM' && hour24 !== 12) hour24 += 12;
+      if (p === 'AM' && hour24 === 12) hour24 = 0;
+      dateToUse.setHours(hour24, isNaN(m) ? 0 : m, 0, 0);
+    } else {
+      dateToUse.setHours(9, 0, 0, 0);
+    }
+    setSelectedDate(dateToUse);
     setShowFormDialog(true);
   };
 
   const handleFormSubmit = async (data) => {
-    // If a date was selected, set the scheduled times
+    // If a date was selected, set the scheduled times (preserve time if set from week/day slot)
     if (selectedDate) {
       const startDate = new Date(selectedDate);
-      startDate.setHours(9, 0, 0, 0); // Default to 9:00 AM
+      const hasTime = startDate.getHours() !== 0 || startDate.getMinutes() !== 0;
+      if (!hasTime) {
+        startDate.setHours(9, 0, 0, 0);
+      }
       const endDate = new Date(startDate);
-      endDate.setHours(10, 0, 0, 0); // Default to 10:00 AM (1 hour duration)
-      
+      if (!hasTime) {
+        endDate.setHours(10, 0, 0, 0);
+      } else {
+        endDate.setHours(endDate.getHours() + 1, endDate.getMinutes(), 0, 0);
+      }
       data.scheduled_start_time = startDate.toISOString();
       data.scheduled_end_time = endDate.toISOString();
     }
@@ -94,27 +119,30 @@ export default function Calendar() {
 
   const handleReschedule = (appointmentId, newDate, newTimeSlot) => {
     // Parse the time slot (e.g., "09:00 AM") and create datetime
-    const [time, period] = newTimeSlot.split(' ');
-    const [hours, minutes] = time.split(':');
-    let hour24 = parseInt(hours);
-    if (period === 'PM' && hour24 !== 12) hour24 += 12;
-    if (period === 'AM' && hour24 === 12) hour24 = 0;
-    
+    const parts = (newTimeSlot || '').trim().split(/\s+/);
+    const [time, period] = parts.length >= 2 ? [parts[0], parts[1]] : [newTimeSlot, ''];
+    const [h, m] = (time || '').split(':').map(Number);
+    let hour24 = isNaN(h) ? 9 : h;
+    const p = (period || '').toUpperCase();
+    if (p === 'PM' && hour24 !== 12) hour24 += 12;
+    if (p === 'AM' && hour24 === 12) hour24 = 0;
+    const mins = isNaN(m) ? 0 : m;
+
     const startDateTime = new Date(newDate);
-    startDateTime.setHours(hour24, parseInt(minutes), 0, 0);
-    
-    // Calculate end time (assuming 1 hour duration, or use existing duration)
-    const appointment = appointments.find(a => a.id === appointmentId);
+    startDateTime.setHours(hour24, mins, 0, 0);
+
+    // Calculate end time (preserve duration like MonthView)
+    const appointment = appointments.find(a => String(a.id) === String(appointmentId));
     let endDateTime = new Date(startDateTime);
     if (appointment?.scheduled_start_time && appointment?.scheduled_end_time) {
       const duration = new Date(appointment.scheduled_end_time) - new Date(appointment.scheduled_start_time);
       endDateTime = new Date(startDateTime.getTime() + duration);
     } else {
-      endDateTime.setHours(hour24 + 1, parseInt(minutes), 0, 0);
+      endDateTime.setHours(hour24 + 1, mins, 0, 0);
     }
 
     updateAppointmentMutation.mutate({
-      id: appointmentId,
+      id: appointment?.id ?? appointmentId,
       data: {
         scheduled_start_time: startDateTime.toISOString(),
         scheduled_end_time: endDateTime.toISOString()
@@ -123,7 +151,12 @@ export default function Calendar() {
   };
 
   const navigateDate = (direction) => {
-    setCurrentDate((prev) => addMonths(prev, direction === 'next' ? 1 : -1));
+    const delta = direction === 'next' ? 1 : -1;
+    setCurrentDate((prev) => {
+      if (view === VIEWS.month) return addMonths(prev, delta);
+      if (view === VIEWS.week) return addWeeks(prev, delta);
+      return addDays(prev, delta);
+    });
   };
 
   const goToToday = () => {
@@ -131,7 +164,13 @@ export default function Calendar() {
   };
 
   const getDateRange = () => {
-    return format(currentDate, 'MMMM yyyy');
+    if (view === VIEWS.month) return format(currentDate, 'MMMM yyyy');
+    if (view === VIEWS.week) {
+      const weekStart = startOfWeek(currentDate);
+      const weekEnd = endOfWeek(currentDate);
+      return `${format(weekStart, 'MMM d')} – ${format(weekEnd, 'MMM d, yyyy')}`;
+    }
+    return format(currentDate, 'EEEE, MMMM d, yyyy');
   };
 
   if (isLoading) {
@@ -150,35 +189,62 @@ export default function Calendar() {
       icon={CalendarIcon} />
 
 
-      {/* Calendar Controls */}
-      <div data-source-location="pages/Calendar:89:6" data-dynamic-content="true" className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div data-source-location="pages/Calendar:90:8" data-dynamic-content="true" className="flex items-center gap-3">
-          <Button data-source-location="pages/Calendar:91:10" data-dynamic-content="false" variant="outline" size="sm" onClick={goToToday}>
+      {/* View Tabs + Calendar Controls */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <Tabs value={view} onValueChange={setView} className="w-full sm:w-auto">
+          <TabsList className="grid w-full grid-cols-3 sm:w-[200px]">
+            <TabsTrigger value={VIEWS.month} className="text-xs sm:text-sm">Month</TabsTrigger>
+            <TabsTrigger value={VIEWS.week} className="text-xs sm:text-sm">Week</TabsTrigger>
+            <TabsTrigger value={VIEWS.day} className="text-xs sm:text-sm">Day</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          <Button variant="outline" size="sm" onClick={goToToday}>
             Today
           </Button>
-          <div data-source-location="pages/Calendar:94:10" data-dynamic-content="true" className="flex items-center gap-2">
-            <Button data-source-location="pages/Calendar:95:12" data-dynamic-content="false" variant="ghost" size="icon" onClick={() => navigateDate('prev')}>
-              <ChevronLeft data-source-location="pages/Calendar:96:14" data-dynamic-content="false" className="w-4 h-4" />
+          <div className="flex items-center gap-2 flex-1 sm:flex-initial justify-center sm:justify-start">
+            <Button variant="ghost" size="icon" onClick={() => navigateDate('prev')}>
+              <ChevronLeft className="w-4 h-4" />
             </Button>
-            <span data-source-location="pages/Calendar:98:12" data-dynamic-content="true" className="font-semibold text-gray-900 min-w-[200px] text-center">
+            <span className="font-semibold text-gray-900 min-w-[180px] sm:min-w-[220px] text-center text-sm">
               {getDateRange()}
             </span>
-            <Button data-source-location="pages/Calendar:101:12" data-dynamic-content="false" variant="ghost" size="icon" onClick={() => navigateDate('next')}>
-              <ChevronRight data-source-location="pages/Calendar:102:14" data-dynamic-content="false" className="w-4 h-4" />
+            <Button variant="ghost" size="icon" onClick={() => navigateDate('next')}>
+              <ChevronRight className="w-4 h-4" />
             </Button>
           </div>
         </div>
       </div>
 
       {/* Calendar View */}
-      <div data-source-location="pages/Calendar:117:6" data-dynamic-content="true" className="bg-white rounded-xl border overflow-hidden">
-        <MonthView 
-          date={currentDate}
-          appointments={appointments}
-          onReschedule={handleReschedule}
-          onAppointmentClick={handleAppointmentClick}
-          onDateClick={handleDateClick}
-        />
+      <div className="bg-white rounded-xl border overflow-hidden">
+        {view === VIEWS.month && (
+          <MonthView
+            date={currentDate}
+            appointments={appointments}
+            onReschedule={handleReschedule}
+            onAppointmentClick={handleAppointmentClick}
+            onDateClick={handleDateClick}
+          />
+        )}
+        {view === VIEWS.week && (
+          <WeekView
+            date={currentDate}
+            appointments={appointments}
+            onReschedule={handleReschedule}
+            onAppointmentClick={handleAppointmentClick}
+            onDateClick={handleDateClick}
+          />
+        )}
+        {view === VIEWS.day && (
+          <DayView
+            date={currentDate}
+            appointments={appointments}
+            onReschedule={handleReschedule}
+            onAppointmentClick={handleAppointmentClick}
+            onDateClick={handleDateClick}
+          />
+        )}
       </div>
 
       {/* Appointment Details Dialog */}
@@ -301,7 +367,7 @@ export default function Calendar() {
           <DialogHeader>
             <DialogTitle>New Service Request</DialogTitle>
             <DialogDescription>
-              {selectedDate ? `Create a new service request for ${format(selectedDate, 'MMMM d, yyyy')}` : 'Fill in the details for the new service request'}
+              {selectedDate ? `Create a new service request for ${format(selectedDate, 'MMMM d, yyyy')}${selectedDate.getHours() !== 0 || selectedDate.getMinutes() !== 0 ? ` at ${format(selectedDate, 'h:mm a')}` : ''}` : 'Fill in the details for the new service request'}
             </DialogDescription>
           </DialogHeader>
           <ServiceRequestForm

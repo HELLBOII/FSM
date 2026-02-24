@@ -32,13 +32,12 @@ export default function MonthView({ date, appointments, onReschedule, onAppointm
 
   const handleDragEnd = (result) => {
     if (!result.destination) return;
-
-    const { draggableId, destination } = result;
-    const dayIndex = parseInt(destination.droppableId.split('_')[1]);
+    const { draggableId, source, destination } = result;
+    if (source.droppableId === destination.droppableId && source.index === destination.index) return;
+    const dayIndex = parseInt(destination.droppableId.split('_')[1], 10);
     const newDate = rows.flat()[dayIndex];
-    
-    // Keep the same time, just change the date
-    const appointment = appointments.find(a => a.id === draggableId);
+    // Keep the same time, just change the date (like WeekView/DayView preserve duration via Calendar)
+    const appointment = appointments.find(a => String(a.id) === String(draggableId));
     if (appointment?.scheduled_start_time) {
       const originalStart = parseISO(appointment.scheduled_start_time);
       const timeSlot = format(originalStart, 'hh:mm a');
@@ -112,7 +111,7 @@ export default function MonthView({ date, appointments, onReschedule, onAppointm
                           {dayAppointments.slice(0, 3).map((apt, index) => (
                             <Draggable 
                               key={apt.id} 
-                              draggableId={apt.id} 
+                              draggableId={String(apt.id)} 
                               index={index}
                             >
                               {(provided, snapshot) => (

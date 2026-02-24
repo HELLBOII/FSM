@@ -31,7 +31,7 @@ export function DateTimePicker({
 
   const handleDateSelect = (selectedDate) => {
     if (selectedDate) {
-      const newDate = internalDate ? new Date(internalDate) : selectedDate
+      const newDate = internalDate ? new Date(internalDate) : new Date(selectedDate)
       newDate.setFullYear(selectedDate.getFullYear())
       newDate.setMonth(selectedDate.getMonth())
       newDate.setDate(selectedDate.getDate())
@@ -50,11 +50,12 @@ export function DateTimePicker({
     }
 
     if (type === "hour") {
-      const hourValue = parseInt(value)
+      const hourValue = parseInt(value) // 1-12
       const currentHours = newDate.getHours()
       const isPM = currentHours >= 12
-      // Set hour (1-12) preserving AM/PM
-      newDate.setHours(isPM ? hourValue + 12 : hourValue)
+      // Convert 12-hour to 24-hour: 12 AM → 0, 12 PM → 12, 1-11 AM → 1-11, 1-11 PM → 13-23
+      const hour24 = isPM ? (hourValue === 12 ? 12 : hourValue + 12) : (hourValue === 12 ? 0 : hourValue)
+      newDate.setHours(hour24)
     } else if (type === "minute") {
       newDate.setMinutes(parseInt(value))
     } else if (type === "ampm") {
@@ -74,6 +75,7 @@ export function DateTimePicker({
     <Popover open={isOpen} onOpenChange={setIsOpen} modal={false}>
       <PopoverTrigger asChild>
         <Button
+          type="button"
           variant="outline"
           className={cn(
             "w-full justify-start text-left font-normal h-9 text-sm",
@@ -90,7 +92,7 @@ export function DateTimePicker({
         </Button>
       </PopoverTrigger>
       <PopoverContent 
-        className="w-auto p-0 max-h-[calc(100vh-150px)]" 
+        className="w-auto p-0 max-h-[calc(100vh-150px)] z-[10002]" 
         align="start"
         side="bottom"
         sideOffset={4}
@@ -102,7 +104,7 @@ export function DateTimePicker({
         <div className="sm:flex">
           <Calendar
             mode="single"
-            selected={internalDate}
+            selected={internalDate ?? undefined}
             onSelect={handleDateSelect}
             initialFocus
           />
@@ -113,6 +115,7 @@ export function DateTimePicker({
                   const currentHour12 = internalDate ? (internalDate.getHours() % 12 || 12) : null
                   return (
                     <Button
+                      type="button"
                       key={hour}
                       size="icon"
                       variant={
@@ -133,6 +136,7 @@ export function DateTimePicker({
               <div className="flex sm:flex-col p-2 gap-1">
                 {Array.from({ length: 12 }, (_, i) => i * 5).map((minute) => (
                   <Button
+                    type="button"
                     key={minute}
                     size="icon"
                     variant={
@@ -154,6 +158,7 @@ export function DateTimePicker({
               <div className="flex sm:flex-col p-2 gap-1 w-full">
                 {["AM", "PM"].map((ampm) => (
                   <Button
+                    type="button"
                     key={ampm}
                     size="icon"
                     variant={
