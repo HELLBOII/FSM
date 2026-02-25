@@ -277,7 +277,7 @@ export default function AdminDashboard() {
             <div data-source-location="pages/AdminDashboard:251:12" data-dynamic-content="true" className="flex items-center justify-between">
               <CardTitle data-source-location="pages/AdminDashboard:252:14" data-dynamic-content="false" className="flex items-center gap-2">
                 <MapPin data-source-location="pages/AdminDashboard:253:16" data-dynamic-content="false" className="w-5 h-5 text-emerald-600" />
-                Live Field Tracking
+                  Map
               </CardTitle>
               <div className="flex items-center gap-1">
                 <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => setMapFullScreen(true)}>

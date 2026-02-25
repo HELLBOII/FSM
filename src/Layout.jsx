@@ -55,7 +55,8 @@ const webNavItems = [
 { name: 'Dashboard', icon: LayoutDashboard, page: 'AdminDashboard' },
 { name: 'Service Requests', icon: FileText, page: 'ServiceRequests' },
 { name: 'Calendar', icon: Calendar, page: 'Calendar' },
-{ name: 'Live Tracking', icon: MapPin, page: 'LiveTracking' },
+// { name: 'Live Tracking', icon: MapPin, page: 'LiveTracking' },
+{ name: 'Map', icon: MapPin, page: 'Map' },
 { name: 'Work Reports', icon: ClipboardCheck, page: 'WorkReports' },
 { name: 'Reports', icon: BarChart3, page: 'Reports' },
 { divider: true },
@@ -63,7 +64,7 @@ const webNavItems = [
 { name: 'Clients', icon: UserCircle, page: 'Clients' },
 { name: 'Equipment', icon: Package, page: 'EquipmentInventory' },
 { divider: true },
-{ name: 'Settings', icon: Settings, page: 'Settings' }];
+{ name: 'Technician Jobs', icon: Wrench, page: 'AdminTechnicianJobs' }];
 
 
 // Mobile navigation for Technicians (Profile is in app bar)
@@ -356,7 +357,7 @@ export default function Layout({ children, currentPageName }) {
 
       {/* Main Content */}
       <main data-source-location="Layout:310:6" data-dynamic-content="true" className="flex-1 lg:ml-72 pt-16 lg:pt-0">
-        <div data-source-location="Layout:311:8" data-dynamic-content="true" className="p-4 md:p-6 lg:p-8">
+        <div data-source-location="Layout:311:8" data-dynamic-content="true" className="p-3 md:p-4 lg:p-5">
           {children}
         </div>
       </main>

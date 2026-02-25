@@ -34,7 +34,8 @@ const pageAccess = {
     'AdminDashboard',
     'ServiceRequests',
     'Calendar',
-    'LiveTracking',
+    // 'LiveTracking',
+    'Map',
     'WorkReports',
     'Reports',
     'Technicians',
@@ -43,13 +44,24 @@ const pageAccess = {
     'Scheduling',
     'Settings',
     'Messages',
-    'JobDetails' // Admins can view job details
+    'JobDetails', // Admins can view job details
+    'TechnicianHome',
+    'TechnicianDashboard',
+    'TechnicianJobs',
+    'TechnicianNavigation',
+    'TechnicianProfile',
+    'TechnicianEquipment',
+    'JobExecution',
+    'AdminTechnicianJobs',
+    'AdminJobDetails',
+    'AdminJobExecution'
   ],
   supervisor: [
     'AdminDashboard',
     'ServiceRequests',
     'Calendar',
-    'LiveTracking',
+    // 'LiveTracking',
+    'Map',
     'WorkReports',
     'Reports',
     'Technicians',
@@ -58,7 +70,10 @@ const pageAccess = {
     'Scheduling',
     'Settings',
     'Messages',
-    'JobDetails'
+    'JobDetails',
+    'AdminTechnicianJobs',
+    'AdminJobDetails',
+    'AdminJobExecution'
   ],
   // Client pages
   client: [

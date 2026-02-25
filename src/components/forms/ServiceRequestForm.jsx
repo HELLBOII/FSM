@@ -48,7 +48,7 @@ const priorities = [
   { value: 'urgent', label: 'Urgent', description: 'Critical - crop damage risk' }
 ];
 
-export default function ServiceRequestForm({ request, onSubmit, onCancel, initialClientId }) {
+export default function ServiceRequestForm({ request, onSubmit, onCancel, initialClientId, initialStartTime, initialEndTime }) {
   const [formData, setFormData] = useState({
     client_id: '',
     client_name: '',
@@ -137,8 +137,20 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
       }
     } else {
       setPhotoPaths([]);
+      // Pre-fill start/end from calendar slot click (initialStartTime, initialEndTime)
+      if (initialStartTime != null || initialEndTime != null) {
+        const startVal = initialStartTime != null ? new Date(initialStartTime) : null;
+        const endVal = initialEndTime != null ? new Date(initialEndTime) : null;
+        setFromDateTime(startVal);
+        setToDateTime(endVal);
+        setFormData(prev => ({
+          ...prev,
+          from_time: startVal,
+          to_time: endVal
+        }));
+      }
     }
-  }, [request]);
+  }, [request, initialStartTime, initialEndTime]);
 
   // Prefill client when opening form from map (e.g. "Create service request" on client marker)
   useEffect(() => {

@@ -49,6 +49,29 @@ function ChangeMapView({ center }) {
   return null;
 }
 
+/**
+ * Opens the popup for the marker matching focusedMarker (when user selects from list).
+ */
+function OpenFocusedPopup({ focusedMarker, jobMarkerRefs, techMarkerRefs }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!focusedMarker) return;
+    map.closePopup();
+    const openPopup = () => {
+      const marker =
+        focusedMarker.type === 'client'
+          ? jobMarkerRefs.current[focusedMarker.id]
+          : techMarkerRefs.current[focusedMarker.id];
+      if (marker && typeof marker.openPopup === 'function') {
+        marker.openPopup();
+      }
+    };
+    const t = setTimeout(openPopup, 150);
+    return () => clearTimeout(t);
+  }, [focusedMarker, map, jobMarkerRefs, techMarkerRefs]);
+  return null;
+}
+
 function MapInvalidateSize() {
   const map = useMap();
   useEffect(() => {
@@ -151,7 +174,10 @@ export default function LiveTrackingMap({
   onCreateServiceRequest,
   className,
   selectedLocation,
+  focusedMarker = null,
 }) {
+  const jobMarkerRefs = useRef({});
+  const techMarkerRefs = useRef({});
   const usBounds = L.latLngBounds([24, -125], [49, -66]);
   const defaultCenter = [39.5, -98.5];
   const calculatedCenter = center || (() => {
@@ -185,6 +211,11 @@ export default function LiveTrackingMap({
         <MapInvalidateSize />
         <FitBoundsToMarkers technicians={technicians} jobs={jobs} />
         {selectedLocation && <ChangeMapView center={selectedLocation} />}
+        <OpenFocusedPopup
+          focusedMarker={focusedMarker}
+          jobMarkerRefs={jobMarkerRefs}
+          techMarkerRefs={techMarkerRefs}
+        />
 
         {technicians.map((tech) => {
           if (!tech.current_location?.lat) return null;
@@ -206,6 +237,9 @@ export default function LiveTrackingMap({
           return (
             <Marker
               key={tech.id}
+              ref={(r) => {
+                if (r) techMarkerRefs.current[tech.id] = r;
+              }}
               position={[
                 tech.current_location.lat + offsetLat,
                 tech.current_location.lng + offsetLng,
@@ -235,6 +269,9 @@ export default function LiveTrackingMap({
           job.location?.lat ? (
             <Marker
               key={job.id}
+              ref={(r) => {
+                if (r) jobMarkerRefs.current[job.id] = r;
+              }}
               position={[job.location.lat, job.location.lng]}
               icon={createJobIcon(job.priority)}
               eventHandlers={{ click: () => onJobClick?.(job) }}
@@ -249,26 +286,13 @@ export default function LiveTrackingMap({
                     {job.farm_name && (
                       <p className="text-emerald-100 text-xs mt-0.5 truncate">{job.farm_name}</p>
                     )}
-                    {job.request_number && (
-                      <p className="text-emerald-200 text-xs mt-0.5">#{job.request_number}</p>
-                    )}
-
-                    
-                  {/* <div className="p-2.5 space-y-2">
-                    {job.request_number && (
-                      <div className="flex gap-1.5 flex-wrap">
-                        <StatusBadge status={job.status} size="xs" />
-                        <StatusBadge status={job.priority} size="xs" />
-                      </div>
-                    )}
-                  </div> */}
-
-                    
+                  </div>
+                  <div className="p-2.5">
                     {onCreateServiceRequest && (
                       <button
                         type="button"
                         onClick={() => onCreateServiceRequest(job)}
-                        className="w-full flex items-center justify-center gap-2 rounded-md underline text-white text-sm font-medium py-2 px-3 transition-colors"
+                        className="w-full flex items-center justify-center gap-2 rounded-md bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium py-2 px-3 transition-colors"
                       >
                         <FileText className="w-4 h-4" />
                         Create service request

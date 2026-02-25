@@ -82,7 +82,7 @@ export default function Calendar() {
   };
 
   const handleFormSubmit = async (data) => {
-    // If a date was selected, set the scheduled times (preserve time if set from week/day slot)
+    // If a date was selected from calendar slot, set both start and end from it (form may already have them pre-filled)
     if (selectedDate) {
       const startDate = new Date(selectedDate);
       const hasTime = startDate.getHours() !== 0 || startDate.getMinutes() !== 0;
@@ -372,6 +372,15 @@ export default function Calendar() {
           </DialogHeader>
           <ServiceRequestForm
             request={null}
+            initialStartTime={selectedDate ?? undefined}
+            initialEndTime={selectedDate != null ? (() => {
+              const start = new Date(selectedDate);
+              const hasTime = start.getHours() !== 0 || start.getMinutes() !== 0;
+              const end = new Date(start);
+              if (!hasTime) end.setHours(10, 0, 0, 0);
+              else end.setHours(end.getHours() + 1, end.getMinutes(), 0, 0);
+              return end;
+            })() : undefined}
             onSubmit={handleFormSubmit}
             onCancel={() => {
               setShowFormDialog(false);
