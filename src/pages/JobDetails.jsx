@@ -195,7 +195,8 @@ export default function JobDetails() {
               <Button data-source-location="pages/JobDetails:239:14" data-dynamic-content="false"
               onClick={openNavigation}
               className="bg-primary hover:bg-primary/90 text-primary-foreground"
-              disabled={!job.location?.lat}>
+              // disabled={!job.location?.lat}>
+              disabled={true}>
 
                 <Navigation data-source-location="pages/JobDetails:244:16" data-dynamic-content="false" className="w-4 h-4 mr-2" />
                 Navigate
