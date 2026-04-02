@@ -204,9 +204,12 @@ export const AuthProvider = ({ children }) => {
         email: email.trim(),
         password: password,
         options: {
-          data: metadata
+          data: metadata,
+          emailRedirectTo: "https://fsm-nine.vercel.app"
         }
       });
+
+      console.log(data);
 
       if (error) {
         // Handle specific Supabase errors
@@ -230,11 +233,13 @@ export const AuthProvider = ({ children }) => {
         throw error;
       }
 
-      if (data?.user) {
+      // Only set user as authenticated when we have a session (email confirmation may be required)
+      if (data?.user && data?.session) {
         setUser(data.user);
         setIsAuthenticated(true);
         setAuthError(null);
       }
+      // If user exists but no session, email confirmation is pending - do not set authenticated
       
       setIsLoadingAuth(false);
       return data;
@@ -249,6 +254,61 @@ export const AuthProvider = ({ children }) => {
         });
       }
       
+      throw error;
+    }
+  };
+
+  const resendVerificationEmail = async (emailAddress) => {
+    try {
+      setAuthError(null);
+      if (!emailAddress?.trim()) {
+        throw new Error('Email is required to resend verification.');
+      }
+      const { data, error } = await supabase.auth.resend({
+        type: 'signup',
+        email: emailAddress.trim()
+      });
+      if (error) throw error;
+      return { success: true, data };
+    } catch (error) {
+      const message = error.message || 'Failed to resend verification email.';
+      setAuthError({ type: 'resend_error', message });
+      throw error;
+    }
+  };
+
+  const resetPasswordForEmail = async (emailAddress) => {
+    try {
+      setAuthError(null);
+      if (!emailAddress?.trim()) {
+        throw new Error('Email is required to reset password.');
+      }
+      const origin = import.meta.env.VITE_URL;
+      const redirectTo = `${origin}/reset-password`;
+      const { data, error } = await supabase.auth.resetPasswordForEmail(emailAddress.trim(), {
+        redirectTo
+      });
+      if (error) throw error;
+      return { success: true, data };
+    } catch (error) {
+      const message = error.message || 'Failed to send password reset email.';
+      setAuthError({ type: 'reset_password_error', message });
+      throw error;
+    }
+  };
+
+  const updatePassword = async (newPassword) => {
+    try {
+      setAuthError(null);
+      if (!newPassword || newPassword.length < 6) {
+        throw new Error('Password must be at least 6 characters long.');
+      }
+      const { data, error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+      return { data };
+    } catch (error) {
+      const message = error.message || 'Failed to update password.';
+      setAuthError({ type: 'update_password_error', message });
       throw error;
     }
   };
@@ -286,6 +346,9 @@ export const AuthProvider = ({ children }) => {
       authError,
       login,
       signup,
+      resendVerificationEmail,
+      resetPasswordForEmail,
+      updatePassword,
       logout,
       navigateToLogin,
       checkUserAuth

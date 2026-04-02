@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { equipmentService, specializationsService } from '@/services';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -9,7 +9,6 @@ import {
   AlertTriangle,
   Edit,
   MoreVertical,
-  Filter,
   ChevronLeft,
   ChevronRight } from
 'lucide-react';
@@ -17,7 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -40,9 +39,7 @@ import {
   DropdownMenuTrigger } from
 "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import PageHeader from '@/components/common/PageHeader';
-import LoadingSpinner from '@/components/common/LoadingSpinner';
 import EmptyState from '@/components/common/EmptyState';
 import { toast } from 'sonner';
 
@@ -59,12 +56,55 @@ const categories = [
 { value: 'other', label: 'Other' }];
 
 
+const PAGE_SIZE_OPTIONS = [12, 24, 48];
+
+function RequiredMark() {
+  return <span className="text-red-600 ml-0.5" aria-hidden="true">*</span>;
+}
+
+function EquipmentTableSkeleton({ rows = 12 }) {
+  const n = Math.min(Math.max(1, rows), 24);
+  return (
+    <div className="overflow-x-auto" aria-busy="true" aria-label="Loading inventory">
+      <table className="w-full">
+        <thead className="bg-gray-50 border-b">
+          <tr>
+            {['Item', 'Specialization', 'SKU', 'Stock', 'Unit Cost', 'Billable Cost', 'Status', ''].map((h, i) => (
+              <th key={i} className="text-left px-4 py-3 text-sm font-medium text-gray-600">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y">
+          {Array.from({ length: n }).map((_, i) => (
+            <tr key={i}>
+              <td className="px-4 py-3">
+                <div className="h-4 w-44 max-w-full rounded bg-muted animate-pulse" />
+                <div className="h-5 w-20 rounded mt-2 bg-muted animate-pulse" />
+              </td>
+              <td className="px-4 py-3"><div className="h-6 w-24 rounded-md bg-muted animate-pulse" /></td>
+              <td className="px-4 py-3"><div className="h-4 w-28 rounded bg-muted animate-pulse" /></td>
+              <td className="px-4 py-3"><div className="h-4 w-16 rounded bg-muted animate-pulse" /></td>
+              <td className="px-4 py-3"><div className="h-4 w-14 rounded bg-muted animate-pulse" /></td>
+              <td className="px-4 py-3"><div className="h-4 w-14 rounded bg-muted animate-pulse" /></td>
+              <td className="px-4 py-3"><div className="h-6 w-20 rounded-full bg-muted animate-pulse" /></td>
+              <td className="px-4 py-3"><div className="h-8 w-8 rounded-md bg-muted animate-pulse ml-auto" /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function EquipmentInventory() {
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(12);
   const [showForm, setShowForm] = useState(false);
   const [selectedItem, setSelectedItem] = useState(null);
   const [showAddSpecializationDialog, setShowAddSpecializationDialog] = useState(false);
@@ -82,17 +122,33 @@ export default function EquipmentInventory() {
     description: ''
   });
 
-  const { data: equipmentResult, isLoading } = useQuery({
-    queryKey: ['equipment', page, pageSize, searchQuery, categoryFilter],
-    queryFn: () => equipmentService.listPaginated({
-      page,
-      pageSize,
-      search: searchQuery,
-      category: categoryFilter,
-      orderBy: 'created_at',
-      orderDirection: 'desc'
-    })
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 400);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, categoryFilter, pageSize]);
+
+  const {
+    data: equipmentResult,
+    isFetching
+  } = useQuery({
+    queryKey: ['equipment', 'paged', page, pageSize, debouncedSearch, categoryFilter],
+    queryFn: () =>
+      equipmentService.listPaginated({
+        page,
+        pageSize,
+        search: debouncedSearch,
+        category: categoryFilter,
+        orderBy: 'created_at',
+        orderDirection: 'desc'
+      }),
+    placeholderData: (previousData) => previousData
   });
+
+  const showPageSkeleton = isFetching;
 
   const { data: counts, isLoading: countsLoading } = useQuery({
     queryKey: ['equipment-counts'],
@@ -101,7 +157,17 @@ export default function EquipmentInventory() {
 
   const equipment = equipmentResult?.data ?? [];
   const totalCount = equipmentResult?.total ?? 0;
-  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(totalCount / pageSize) || 1),
+    [totalCount, pageSize]
+  );
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const rangeStart = totalCount === 0 ? 0 : (page - 1) * pageSize + 1;
+  const rangeEnd = Math.min(page * pageSize, totalCount);
   const lowStockCount = counts?.lowStockCount ?? 0;
   const outOfStockCount = counts?.outOfStockCount ?? 0;
 
@@ -209,15 +275,40 @@ export default function EquipmentInventory() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const formEl = e.currentTarget;
+    if (!formEl.checkValidity()) {
+      formEl.reportValidity();
+      return;
+    }
+    if (!formData.specialization?.trim()) {
+      toast.error('Specialization is required');
+      return;
+    }
+    if (!formData.category) {
+      toast.error('Category is required');
+      return;
+    }
+    const stockQty = formData.stock_quantity === '' ? NaN : Number.parseFloat(formData.stock_quantity);
+    const minLvl = formData.min_stock_level === '' ? NaN : Number.parseFloat(formData.min_stock_level);
+    if (!Number.isFinite(stockQty) || !Number.isFinite(minLvl)) {
+      toast.error('Stock quantity and min level are required');
+      return;
+    }
+    const unitCost = formData.unit_cost === '' ? NaN : Number.parseFloat(formData.unit_cost);
+    const billable = formData.sellingcost === '' ? NaN : Number.parseFloat(formData.sellingcost);
+    if (!Number.isFinite(unitCost) || !Number.isFinite(billable)) {
+      toast.error('Unit cost and billable cost are required');
+      return;
+    }
     const submitData = {
       ...formData,
       specialization: formData.specialization || null,
-      stock_quantity: formData.stock_quantity ? parseFloat(formData.stock_quantity) : 0,
-      min_stock_level: formData.min_stock_level ? parseFloat(formData.min_stock_level) : 0,
-      unit_cost: formData.unit_cost ? parseFloat(formData.unit_cost) : 0,
-      sellingcost: formData.sellingcost ? parseFloat(formData.sellingcost) : 0,
-      status: formData.stock_quantity <= 0 ? 'out_of_stock' :
-      formData.stock_quantity <= formData.min_stock_level ? 'low_stock' : 'in_stock'
+      stock_quantity: stockQty,
+      min_stock_level: minLvl,
+      unit_cost: unitCost,
+      sellingcost: billable,
+      status: stockQty <= 0 ? 'out_of_stock' :
+      stockQty <= minLvl ? 'low_stock' : 'in_stock'
     };
     if (selectedItem) {
       await updateMutation.mutateAsync({ id: selectedItem.id, data: submitData });
@@ -236,90 +327,83 @@ export default function EquipmentInventory() {
     setPage(Math.max(1, Math.min(p, totalPages)));
   };
 
-  const handleSearchChange = (value) => {
-    setSearchQuery(value);
-    setPage(1);
-  };
-
-  const handleCategoryChange = (value) => {
-    setCategoryFilter(value);
-    setPage(1);
-  };
-
-  if (isLoading) {
-    return (
-      <div data-source-location="pages/EquipmentInventory:167:6" data-dynamic-content="false" className="flex items-center justify-center min-h-[60vh]">
-        <LoadingSpinner data-source-location="pages/EquipmentInventory:168:8" data-dynamic-content="false" size="lg" text="Loading inventory..." />
-      </div>);
-
-  }
-
   return (
     <div data-source-location="pages/EquipmentInventory:174:4" data-dynamic-content="true" className="space-y-6">
-      <PageHeader
-        title="Equipment & Parts"
-        subtitle={countsLoading ? 'Loading...' : `${counts?.total ?? 0} items in inventory`}
-        action={() => setShowForm(true)}
-        actionLabel="Add Item"
-        actionIcon={Plus}
-      >
-        {(lowStockCount > 0 || outOfStockCount > 0) && (
-          <div className="flex flex-wrap gap-3 items-center">
-            {outOfStockCount > 0 && (
-              <div className="flex items-center gap-2 px-4 py-2 bg-red-50 border border-red-200 rounded-lg">
-                <AlertTriangle className="w-4 h-4 text-red-500" />
-                <span className="text-sm font-medium text-red-700">
-                  {outOfStockCount} items out of stock
-                </span>
-              </div>
-            )}
-            {lowStockCount > 0 && (
-              <div className="flex items-center gap-2 px-4 py-2 bg-yellow-50 border border-yellow-200 rounded-lg">
-                <AlertTriangle className="w-4 h-4 text-yellow-500" />
-                <span className="text-sm font-medium text-yellow-700">
-                  {lowStockCount} items low in stock
-                </span>
-              </div>
-            )}
+      <div className="space-y-4 pb-4 border-b border-gray-200 bg-gray-50">
+        <PageHeader
+          title="Equipment & Parts"
+          className="mb-0"
+          subtitle={countsLoading ? 'Loading...' : `${counts?.total ?? 0} items in inventory`}
+          action={() => setShowForm(true)}
+          actionLabel="Add Item"
+          actionIcon={Plus}
+        >
+          {(lowStockCount > 0 || outOfStockCount > 0) && (
+            <div className="flex flex-wrap gap-3 items-center">
+              {outOfStockCount > 0 && (
+                <div className="flex items-center gap-2 px-4 py-2 bg-red-50 border border-red-200 rounded-lg">
+                  <AlertTriangle className="w-4 h-4 text-red-500" />
+                  <span className="text-sm font-medium text-red-700">
+                    {outOfStockCount} items out of stock
+                  </span>
+                </div>
+              )}
+              {lowStockCount > 0 && (
+                <div className="flex items-center gap-2 px-4 py-2 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <AlertTriangle className="w-4 h-4 text-yellow-500" />
+                  <span className="text-sm font-medium text-yellow-700">
+                    {lowStockCount} items low in stock
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+        </PageHeader>
+
+        <div data-source-location="pages/EquipmentInventory:206:6" data-dynamic-content="true" className="flex flex-col sm:flex-row gap-4">
+          <div data-source-location="pages/EquipmentInventory:207:8" data-dynamic-content="true" className="relative flex-1">
+            <Search data-source-location="pages/EquipmentInventory:208:10" data-dynamic-content="false" className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <Input data-source-location="pages/EquipmentInventory:209:10" data-dynamic-content="false"
+            placeholder="Search by name or SKU..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10" />
+
           </div>
-        )}
-      </PageHeader>
-
-      {/* Filters */}
-      <div data-source-location="pages/EquipmentInventory:206:6" data-dynamic-content="true" className="flex flex-col sm:flex-row gap-4">
-        <div data-source-location="pages/EquipmentInventory:207:8" data-dynamic-content="true" className="relative flex-1">
-          <Search data-source-location="pages/EquipmentInventory:208:10" data-dynamic-content="false" className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <Input data-source-location="pages/EquipmentInventory:209:10" data-dynamic-content="false"
-          placeholder="Search by name or SKU..."
-          value={searchQuery}
-          onChange={(e) => handleSearchChange(e.target.value)}
-          className="pl-10" />
-
+          <Select data-source-location="pages/EquipmentInventory:216:8" data-dynamic-content="true" value={categoryFilter} onValueChange={setCategoryFilter}>
+            <SelectTrigger data-source-location="pages/EquipmentInventory:217:10" data-dynamic-content="false" className="w-[180px] border-primary/30 focus:ring-primary focus:border-primary">
+              <SelectValue data-source-location="pages/EquipmentInventory:218:12" data-dynamic-content="false" />
+            </SelectTrigger>
+            <SelectContent data-source-location="pages/EquipmentInventory:220:10" data-dynamic-content="true">
+              <SelectItem data-source-location="pages/EquipmentInventory:221:12" data-dynamic-content="false" value="all">All Categories</SelectItem>
+              {categories.map((cat) =>
+              <SelectItem data-source-location="pages/EquipmentInventory:223:14" data-dynamic-content="true" key={cat.value} value={cat.value}>{cat.label}</SelectItem>
+              )}
+            </SelectContent>
+          </Select>
         </div>
-        <Select data-source-location="pages/EquipmentInventory:216:8" data-dynamic-content="true" value={categoryFilter} onValueChange={handleCategoryChange}>
-          <SelectTrigger data-source-location="pages/EquipmentInventory:217:10" data-dynamic-content="false" className="w-[180px]">
-            <SelectValue data-source-location="pages/EquipmentInventory:218:12" data-dynamic-content="false" />
-          </SelectTrigger>
-          <SelectContent data-source-location="pages/EquipmentInventory:220:10" data-dynamic-content="true">
-            <SelectItem data-source-location="pages/EquipmentInventory:221:12" data-dynamic-content="false" value="all">All Categories</SelectItem>
-            {categories.map((cat) =>
-            <SelectItem data-source-location="pages/EquipmentInventory:223:14" data-dynamic-content="true" key={cat.value} value={cat.value}>{cat.label}</SelectItem>
-            )}
-          </SelectContent>
-        </Select>
       </div>
 
       {/* Equipment Table */}
-      {!isLoading && equipment.length === 0 ?
-      <EmptyState data-source-location="pages/EquipmentInventory:231:8" data-dynamic-content="false"
-      icon={Package}
-      title="No items found"
-      description="Add equipment and parts to your inventory"
-      action={() => setShowForm(true)}
-      actionLabel="Add Item" /> :
-
-
+      {equipmentResult && totalCount === 0 ? (
+      <div className="flex min-h-[min(50vh,28rem)] items-center justify-center py-8">
+        <EmptyState data-source-location="pages/EquipmentInventory:231:8" data-dynamic-content="false"
+        icon={Package}
+        title={debouncedSearch || categoryFilter !== 'all' ? 'No matching items' : 'No items yet'}
+        description={
+          debouncedSearch || categoryFilter !== 'all'
+            ? 'Try different search terms or category'
+            : 'Add equipment and parts to your inventory'
+        }
+        action={debouncedSearch || categoryFilter !== 'all' ? undefined : () => setShowForm(true)}
+        actionLabel={debouncedSearch || categoryFilter !== 'all' ? undefined : 'Add Item'} />
+      </div>
+      ) : (
+      <>
       <Card data-source-location="pages/EquipmentInventory:239:8" data-dynamic-content="true">
+          {showPageSkeleton ? (
+            <EquipmentTableSkeleton rows={Math.min(pageSize, 24)} />
+          ) : (
           <div data-source-location="pages/EquipmentInventory:240:10" data-dynamic-content="true" className="overflow-x-auto">
             <table data-source-location="pages/EquipmentInventory:241:12" data-dynamic-content="true" className="w-full">
               <thead data-source-location="pages/EquipmentInventory:242:14" data-dynamic-content="false" className="bg-gray-50 border-b">
@@ -412,64 +496,71 @@ export default function EquipmentInventory() {
               </tbody>
             </table>
           </div>
-          {/* Pagination */}
-          {totalCount > 0 && (
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t bg-gray-50/50">
-              <div className="flex items-center gap-4 text-sm text-gray-600">
-                <span>
-                  Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, totalCount)} of {totalCount}
-                </span>
-                <div className="flex items-center gap-2">
-                  <Label className="text-sm font-normal whitespace-nowrap">Rows per page</Label>
+          )}
+          {equipmentResult && totalCount > 0 && (
+            <div className="mt-0 pt-3 border-t border-gray-200 bg-gray-50 rounded-b-lg px-1 pb-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-3 py-1">
+                <p className="text-sm text-gray-600 leading-tight">
+                  Showing{' '}
+                  <span className="font-medium text-gray-900">
+                    {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()}
+                  </span>{' '}
+                  of <span className="font-medium text-gray-900">{totalCount.toLocaleString()}</span>
+                </p>
+                <div className="flex flex-wrap items-center gap-2 justify-end">
                   <Select
                     value={String(pageSize)}
-                    onValueChange={(v) => {
-                      setPageSize(Number(v));
-                      setPage(1);
-                    }}
+                    onValueChange={(v) => setPageSize(Number(v))}
                   >
-                    <SelectTrigger className="w-[70px] h-8">
-                      <SelectValue />
+                    <SelectTrigger className="w-[130px] border-primary/30 h-9">
+                      <SelectValue placeholder="Per page" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="10">10</SelectItem>
-                      <SelectItem value="20">20</SelectItem>
-                      <SelectItem value="50">50</SelectItem>
+                      {PAGE_SIZE_OPTIONS.map((n) => (
+                        <SelectItem key={n} value={String(n)}>
+                          {n} per page
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-9 w-9"
+                      disabled={page <= 1 || isFetching}
+                      onClick={() => goToPage(page - 1)}
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <span className="text-sm text-gray-700 px-2 min-w-[7rem] text-center tabular-nums">
+                      Page {page} / {totalPages}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-9 w-9"
+                      disabled={page >= totalPages || isFetching}
+                      onClick={() => goToPage(page + 1)}
+                      aria-label="Next page"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => goToPage(page - 1)}
-                  disabled={page <= 1 || isLoading}
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                  Previous
-                </Button>
-                <span className="text-sm text-gray-600 px-2">
-                  Page {page} of {totalPages}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => goToPage(page + 1)}
-                  disabled={page >= totalPages || isLoading}
-                >
-                  Next
-                  <ChevronRight className="w-4 h-4" />
-                </Button>
               </div>
             </div>
           )}
         </Card>
-      }
+      </>
+      )}
 
       {/* Form Dialog */}
       <Dialog data-source-location="pages/EquipmentInventory:326:6" data-dynamic-content="true" open={showForm} onOpenChange={(open) => {if (!open) resetForm();}}>
-        <DialogContent data-source-location="pages/EquipmentInventory:327:8" data-dynamic-content="true" className="max-w-md">
+        <DialogContent data-source-location="pages/EquipmentInventory:327:8" data-dynamic-content="true" className="max-w-2xl max-h-[95vh] overflow-y-auto">
           <DialogHeader data-source-location="pages/EquipmentInventory:328:10" data-dynamic-content="true">
             <DialogTitle data-source-location="pages/EquipmentInventory:329:12" data-dynamic-content="true">
               {selectedItem ? 'Edit Item' : 'Add Item'}
@@ -481,7 +572,10 @@ export default function EquipmentInventory() {
 
           <form data-source-location="pages/EquipmentInventory:337:10" data-dynamic-content="true" onSubmit={handleSubmit} className="space-y-4">
             <div data-source-location="pages/EquipmentInventory:338:12" data-dynamic-content="true">
-              <Label data-source-location="pages/EquipmentInventory:339:14" data-dynamic-content="false">Item Name</Label>
+              <Label data-source-location="pages/EquipmentInventory:339:14" data-dynamic-content="false">
+                Item Name
+                <RequiredMark />
+              </Label>
               <Input data-source-location="pages/EquipmentInventory:340:14" data-dynamic-content="false"
               value={formData.name}
               onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
@@ -491,10 +585,14 @@ export default function EquipmentInventory() {
             </div>
 
             <div data-source-location="pages/EquipmentInventory:346:12" data-dynamic-content="true">
-              <Label data-source-location="pages/EquipmentInventory:347:14" data-dynamic-content="false">Specialization</Label>
+              <Label data-source-location="pages/EquipmentInventory:347:14" data-dynamic-content="false">
+                Specialization
+                <RequiredMark />
+              </Label>
               <Select
                 value={formData.specialization || ''}
                 modal={false}
+                required
                 onValueChange={(v) => {
                   if (v === '__add_new__') {
                     setShowAddSpecializationDialog(true);
@@ -503,7 +601,7 @@ export default function EquipmentInventory() {
                   }
                 }}
               >
-                <SelectTrigger>
+                <SelectTrigger className="border-primary/30 focus:ring-primary focus:border-primary">
                   <SelectValue placeholder="Select specialization..." />
                 </SelectTrigger>
                 <SelectContent className="max-h-[300px]">
@@ -521,20 +619,28 @@ export default function EquipmentInventory() {
 
             <div data-source-location="pages/EquipmentInventory:348:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
               <div data-source-location="pages/EquipmentInventory:349:14" data-dynamic-content="true">
-                <Label data-source-location="pages/EquipmentInventory:350:16" data-dynamic-content="false">SKU</Label>
+                <Label data-source-location="pages/EquipmentInventory:350:16" data-dynamic-content="false">
+                  SKU
+                  <RequiredMark />
+                </Label>
                 <Input data-source-location="pages/EquipmentInventory:351:16" data-dynamic-content="false"
                 value={formData.sku}
                 onChange={(e) => setFormData((prev) => ({ ...prev, sku: e.target.value }))}
-                placeholder="PVC-2IN-001" />
+                placeholder="PVC-2IN-001"
+                required />
 
               </div>
               <div data-source-location="pages/EquipmentInventory:357:14" data-dynamic-content="true">
-                <Label data-source-location="pages/EquipmentInventory:358:16" data-dynamic-content="false">Category</Label>
+                <Label data-source-location="pages/EquipmentInventory:358:16" data-dynamic-content="false">
+                  Category
+                  <RequiredMark />
+                </Label>
                 <Select data-source-location="pages/EquipmentInventory:359:16" data-dynamic-content="true"
                 value={formData.category}
+                required
                 onValueChange={(v) => setFormData((prev) => ({ ...prev, category: v }))}>
 
-                  <SelectTrigger data-source-location="pages/EquipmentInventory:363:18" data-dynamic-content="false">
+                  <SelectTrigger data-source-location="pages/EquipmentInventory:363:18" data-dynamic-content="false" className="border-primary/30 focus:ring-primary focus:border-primary">
                     <SelectValue data-source-location="pages/EquipmentInventory:364:20" data-dynamic-content="false" placeholder="Select..." />
                   </SelectTrigger>
                   <SelectContent data-source-location="pages/EquipmentInventory:366:18" data-dynamic-content="true">
@@ -548,25 +654,40 @@ export default function EquipmentInventory() {
 
             <div data-source-location="pages/EquipmentInventory:375:12" data-dynamic-content="true" className="grid grid-cols-3 gap-4">
               <div data-source-location="pages/EquipmentInventory:376:14" data-dynamic-content="true">
-                <Label data-source-location="pages/EquipmentInventory:377:16" data-dynamic-content="false">Stock Qty</Label>
+                <Label data-source-location="pages/EquipmentInventory:377:16" data-dynamic-content="false">
+                  Stock Qty
+                  <RequiredMark />
+                </Label>
                 <Input data-source-location="pages/EquipmentInventory:378:16" data-dynamic-content="false"
                 type="number"
+                min="0"
+                step="any"
                 value={formData.stock_quantity}
                 onChange={(e) => setFormData((prev) => ({ ...prev, stock_quantity: e.target.value }))}
-                placeholder="100" />
+                placeholder="100"
+                required />
 
               </div>
               <div data-source-location="pages/EquipmentInventory:385:14" data-dynamic-content="true">
-                <Label data-source-location="pages/EquipmentInventory:386:16" data-dynamic-content="false">Min Level</Label>
+                <Label data-source-location="pages/EquipmentInventory:386:16" data-dynamic-content="false">
+                  Min Level
+                  <RequiredMark />
+                </Label>
                 <Input data-source-location="pages/EquipmentInventory:387:16" data-dynamic-content="false"
                 type="number"
+                min="0"
+                step="any"
                 value={formData.min_stock_level}
                 onChange={(e) => setFormData((prev) => ({ ...prev, min_stock_level: e.target.value }))}
-                placeholder="10" />
+                placeholder="10"
+                required />
 
               </div>
               <div data-source-location="pages/EquipmentInventory:394:14" data-dynamic-content="true">
-                <Label data-source-location="pages/EquipmentInventory:395:16" data-dynamic-content="false">Unit</Label>
+                <Label data-source-location="pages/EquipmentInventory:395:16" data-dynamic-content="false">
+                  Unit
+                  <RequiredMark />
+                </Label>
                 <Input data-source-location="pages/EquipmentInventory:396:16" data-dynamic-content="false"
                 value={formData.unit}
                 onChange={(e) => setFormData((prev) => ({ ...prev, unit: e.target.value }))}
@@ -578,22 +699,32 @@ export default function EquipmentInventory() {
 
             <div data-source-location="pages/EquipmentInventory:405:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
               <div data-source-location="pages/EquipmentInventory:405:14" data-dynamic-content="true">
-                <Label data-source-location="pages/EquipmentInventory:406:16" data-dynamic-content="false">Unit Cost ($)</Label>
+                <Label data-source-location="pages/EquipmentInventory:406:16" data-dynamic-content="false">
+                  Unit Cost ($)
+                  <RequiredMark />
+                </Label>
                 <Input data-source-location="pages/EquipmentInventory:407:16" data-dynamic-content="false"
                 type="number"
                 step="0.01"
+                min="0"
                 value={formData.unit_cost}
                 onChange={(e) => setFormData((prev) => ({ ...prev, unit_cost: e.target.value }))}
-                placeholder="5.99" />
+                placeholder="5.99"
+                required />
               </div>
               <div data-source-location="pages/EquipmentInventory:405:14" data-dynamic-content="true">
-                <Label data-source-location="pages/EquipmentInventory:406:16" data-dynamic-content="false">Billable Cost ($)</Label>
+                <Label data-source-location="pages/EquipmentInventory:406:16" data-dynamic-content="false">
+                  Billable Cost ($)
+                  <RequiredMark />
+                </Label>
                 <Input data-source-location="pages/EquipmentInventory:407:16" data-dynamic-content="false"
                 type="number"
                 step="0.01"
+                min="0"
                 value={formData.sellingcost}
                 onChange={(e) => setFormData((prev) => ({ ...prev, sellingcost: e.target.value }))}
-                placeholder="7.99" />
+                placeholder="7.99"
+                required />
               </div>
             </div>
 
@@ -603,7 +734,8 @@ export default function EquipmentInventory() {
               value={formData.description}
               onChange={(e) => setFormData((prev) => ({ ...prev, description: e.target.value }))}
               placeholder="Item description..."
-              rows={2} />
+              rows={5}
+              className="min-h-[120px] resize-y" />
 
             </div>
 

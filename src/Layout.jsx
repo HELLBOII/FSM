@@ -74,9 +74,15 @@ const mobileNavItems = [
 { name: 'Map', icon: Navigation, page: 'TechnicianNavigation' },
 { name: 'Equipments', icon: Package, page: 'TechnicianEquipment' }];
 
+// Mobile navigation for Clients
+const clientNavItems = [
+{ name: 'Home', icon: Home, page: 'ClientDashboard' }];
 
-// Pages that should use mobile layout
+// Pages that should use mobile layout (technician)
 const mobilePages = ['TechnicianDashboard', 'TechnicianHome', 'TechnicianJobs', 'TechnicianNavigation', 'TechnicianProfile', 'TechnicianEquipment', 'JobDetails', 'JobExecution'];
+
+// Pages that should use mobile layout (client)
+const clientMobilePages = ['ClientDashboard', 'JobDetails'];
 
 // Pages that should have no layout
 const noLayoutPages = ['Login', 'RoleSelection'];
@@ -88,9 +94,11 @@ export default function Layout({ children, currentPageName }) {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const { user, logout } = useAuth();
 
-  const isMobilePage = mobilePages.includes(currentPageName);
+  const userRole = user?.user_metadata?.user_role || user?.user_role || 'admin';
+  const isTechnicianMobile = mobilePages.includes(currentPageName);
+  const isClientMobile = userRole === 'client' && clientMobilePages.includes(currentPageName);
+  const isMobilePage = isTechnicianMobile || isClientMobile;
   const isNoLayout = noLayoutPages.includes(currentPageName);
-  const userRole = user?.user_role || 'admin';
 
   const handleLogout = () => {
     setShowLogoutDialog(true);
@@ -114,61 +122,109 @@ export default function Layout({ children, currentPageName }) {
     return <>{children}</>;
   }
 
-  // Mobile layout for technicians
+  // Mobile layout for technicians and clients
   if (isMobilePage) {
+    const homePage = userRole === 'client' ? 'ClientDashboard' : 'TechnicianHome';
+    const profilePage = userRole === 'client' ? null : 'TechnicianProfile';
+    const navItems = userRole === 'client' ? clientNavItems : mobileNavItems;
+
     return (
-      <div data-source-location="Layout:90:6" data-dynamic-content="true" className="min-h-screen bg-gray-50 flex flex-col">
-        <OfflineIndicator data-source-location="Layout:91:8" data-dynamic-content="false" />
+      <div className="min-h-screen bg-gray-50 flex flex-col">
+        <OfflineIndicator />
         
         {/* Mobile Header */}
-        <header data-source-location="Layout:94:8" data-dynamic-content="false" className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between sticky top-0 z-40">
-          <Link to={createPageUrl('TechnicianHome')} className="flex items-center min-w-0 flex-1">
+        <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between sticky top-0 z-40">
+          <Link to={createPageUrl(homePage)} className="flex items-center min-w-0 flex-1">
             <img src="/images/logofull.png" alt="Roberts Quality Irrigation LLC" className="h-10 w-auto object-contain" />
           </Link>
           <div className="flex items-center justify-end gap-2 min-w-0 flex-shrink-0">
             <span className="h-10 w-10 flex items-center justify-center rounded-full bg-primary/10 text-primary shrink-0">
               <NotificationBell className="w-6 h-6" strokeWidth={3.5} />
             </span>
-            <Link
-              to={createPageUrl('TechnicianProfile')}
-              className="h-10 w-10 flex items-center justify-center rounded-full bg-primary/10 text-primary transition-colors hover:bg-primary/20 shrink-0"
-              aria-label="Profile"
-            >
-              <UserCircle className="w-6 h-6" />
-            </Link>
+            {profilePage ? (
+              <Link
+                to={createPageUrl(profilePage)}
+                className="h-10 w-10 flex items-center justify-center rounded-full bg-primary/10 text-primary transition-colors hover:bg-primary/20 shrink-0"
+                aria-label="Profile"
+              >
+                <UserCircle className="w-6 h-6" />
+              </Link>
+            ) : (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="h-10 w-10 flex items-center justify-center rounded-full bg-primary/10 text-primary transition-colors hover:bg-primary/20 shrink-0">
+                    <UserCircle className="w-6 h-6" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel>{user?.email || 'Account'}</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={handleLogout} className="text-red-600" disabled={isLoggingOut}>
+                    {isLoggingOut ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <LogOut className="w-4 h-4 mr-2" />}
+                    {isLoggingOut ? 'Logging out...' : 'Logout'}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
         </header>
 
         {/* Content */}
-        <main data-source-location="Layout:107:8" data-dynamic-content="true" className="flex-1 overflow-auto pb-20">
+        <main className="flex-1 overflow-auto pb-20">
           {children}
         </main>
 
         {/* Mobile Bottom Navigation */}
-        <nav data-source-location="Layout:112:8" data-dynamic-content="true" className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-2 py-2 z-50">
-          <div data-source-location="Layout:113:10" data-dynamic-content="true" className="flex justify-around items-center max-w-md mx-auto">
-            {mobileNavItems.map((item) => {
+        <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-2 py-2 z-50">
+          <div className="flex justify-around items-center max-w-md mx-auto">
+            {navItems.map((item) => {
               const isActive = currentPageName === item.page;
               return (
-                <Link data-source-location="Layout:117:16" data-dynamic-content="true"
-                key={item.page}
-                to={createPageUrl(item.page)}
-                className={cn(
-                  'flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all',
-                  isActive ?
-                  'bg-primary/10 text-primary' :
-                  'text-gray-500 hover:text-gray-900'
-                )}>
-
-                  <item.icon data-source-location="Layout:127:18" data-dynamic-content="false" className={cn('w-6 h-6', isActive && 'text-primary')} />
-                  <span data-source-location="Layout:128:18" data-dynamic-content="true" className="text-xs font-medium">{item.name}</span>
-                </Link>);
-
+                <Link
+                  key={item.page}
+                  to={createPageUrl(item.page)}
+                  className={cn(
+                    'flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all',
+                    isActive ? 'bg-primary/10 text-primary' : 'text-gray-500 hover:text-gray-900'
+                  )}
+                >
+                  <item.icon className={cn('w-6 h-6', isActive && 'text-primary')} />
+                  <span className="text-xs font-medium">{item.name}</span>
+                </Link>
+              );
             })}
           </div>
         </nav>
-      </div>);
 
+        <AlertDialog open={showLogoutDialog} onOpenChange={setShowLogoutDialog}>
+          <AlertDialogContent className="z-[9999]">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Confirm Logout</AlertDialogTitle>
+              <AlertDialogDescription>
+                Do you want to logout? You will need to sign in again to access your account.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isLoggingOut}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={confirmLogout}
+                disabled={isLoggingOut}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                {isLoggingOut ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Logging out...
+                  </>
+                ) : (
+                  'Logout'
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    );
   }
 
   // Web layout for Admin/Supervisor

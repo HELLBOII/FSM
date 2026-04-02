@@ -21,6 +21,61 @@ export const technicianService = {
   },
 
   /**
+   * Paginated list with optional search and status filter (server-side).
+   * @param {Object} opts
+   * @param {number} [opts.page=1]
+   * @param {number} [opts.pageSize=12]
+   * @param {string} [opts.search=''] — matches name, employee_id, phone (ilike)
+   * @param {string} [opts.status='all'] — 'all' | 'active' | 'inactive'
+   * @returns {Promise<{ data: Array, total: number }>}
+   */
+  async listPaged({
+    page = 1,
+    pageSize = 12,
+    search = '',
+    status = 'all'
+  } = {}) {
+    const safePage = Math.max(1, Number(page) || 1);
+    const safeSize = Math.min(100, Math.max(1, Number(pageSize) || 12));
+    const from = (safePage - 1) * safeSize;
+    const to = from + safeSize - 1;
+
+    let query = supabase.from('technicians').select('*', { count: 'exact' });
+
+    if (status && status !== 'all') {
+      query = query.eq('status', status);
+    }
+
+    const q = search?.trim();
+    if (q) {
+      const esc = q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+      query = query.or(
+        `name.ilike.%${esc}%,employee_id.ilike.%${esc}%,phone.ilike.%${esc}%`
+      );
+    }
+
+    query = query
+      .order('name', { ascending: true })
+      .order('employee_id', { ascending: true })
+      .range(from, to);
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      if (error.message?.includes('schema cache') || error.message?.includes('relation') || error.message?.includes('does not exist')) {
+        const enhancedError = new Error(
+          'Database table not found. Please run the migration script (supabase_migration.sql) in your Supabase SQL Editor to create the required tables.'
+        );
+        enhancedError.originalError = error;
+        throw enhancedError;
+      }
+      throw error;
+    }
+
+    return { data: data || [], total: count ?? 0 };
+  },
+
+  /**
    * Get a single technician by ID
    * @param {string} id
    * @returns {Promise<Object>}

@@ -8,6 +8,7 @@ import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-d
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
+import ResetPassword from './pages/ResetPassword';
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -167,11 +168,12 @@ const AuthenticatedApp = () => {
       </div>);
   }
 
-  // Show login page if not authenticated
+  // Show login page if not authenticated (and reset-password for recovery link)
   if (!isAuthenticated) {
     return (
       <Routes>
         <Route path="/login" element={<Pages.Login />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="*" element={<Pages.Login />} />
       </Routes>
     );
@@ -182,6 +184,8 @@ const AuthenticatedApp = () => {
     <Routes data-source-location="App:44:4" data-dynamic-content="true">
       {/* Redirect root path based on user role */}
       <Route data-source-location="App:45:6" data-dynamic-content="false" path="/" element={<RoleBasedRedirect />} />
+      {/* Set new password (recovery link lands here with session from hash) */}
+      <Route path="/reset-password" element={<ResetPassword />} />
       {Object.entries(Pages).map(([path, Page]) =>
       <Route data-source-location="App:51:8" data-dynamic-content="false"
       key={path}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { clientService, serviceRequestService, irrigationSystemsService } from '@/services';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -11,6 +11,7 @@ import {
   MapPin,
   Leaf,
   ChevronRight,
+  ChevronLeft,
   Edit,
   MoreVertical,
   Droplets } from
@@ -58,10 +59,57 @@ const irrigationSystems = [
 'Subsurface Drip'];
 
 
+const PAGE_SIZE_OPTIONS = [12, 24, 48];
+
+/** Red asterisk for required form labels */
+function RequiredMark() {
+  return <span className="text-red-600 ml-0.5" aria-hidden="true">*</span>;
+}
+
+/** Empty or whitespace → null; invalid number → null */
+function parseOptionalNumber(value) {
+  const s = String(value ?? '').trim();
+  if (s === '') return null;
+  const n = Number.parseFloat(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function ClientCardSkeleton() {
+  return (
+    <Card className="h-full min-h-0 border bg-card shadow-sm">
+      <CardContent className="p-5 flex flex-col gap-4">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            <div className="h-12 w-12 rounded-full bg-muted animate-pulse shrink-0" />
+            <div className="flex-1 space-y-2 min-w-0">
+              <div className="h-4 w-[66%] max-w-[12rem] rounded bg-muted animate-pulse" />
+              <div className="h-3 w-1/2 max-w-[8rem] rounded bg-muted animate-pulse" />
+            </div>
+          </div>
+          <div className="h-8 w-8 rounded-md bg-muted animate-pulse shrink-0" />
+        </div>
+        <div className="space-y-2">
+          <div className="h-3 w-full rounded bg-muted animate-pulse" />
+          <div className="h-3 w-full rounded bg-muted animate-pulse" />
+        </div>
+        <div className="flex justify-between gap-2 pt-1">
+          <div className="h-6 w-16 rounded-full bg-muted animate-pulse" />
+          <div className="h-4 w-12 rounded bg-muted animate-pulse" />
+        </div>
+        <div className="h-px w-full bg-muted/60" />
+        <div className="h-4 w-28 rounded bg-muted animate-pulse" />
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Clients() {
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(12);
   const [showForm, setShowForm] = useState(false);
   const [selectedClient, setSelectedClient] = useState(null);
   const [showAddIrrigationDialog, setShowAddIrrigationDialog] = useState(false);
@@ -84,10 +132,45 @@ export default function Clients() {
     status: 'active'
   });
 
-  const { data: clients = [], isLoading } = useQuery({
-    queryKey: ['clients'],
-    queryFn: () => clientService.list()
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 400);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, statusFilter, pageSize]);
+
+  const {
+    data: pageResult,
+    isLoading,
+    isFetching
+  } = useQuery({
+    queryKey: ['clients', 'paged', page, pageSize, debouncedSearch, statusFilter],
+    queryFn: () =>
+      clientService.listPaged({
+        page,
+        pageSize,
+        search: debouncedSearch,
+        status: statusFilter
+      }),
+    placeholderData: (previousData) => previousData
   });
+
+  /** Skeleton only (no full-page spinner): show while any clients query is in flight */
+  const showPageSkeleton = isFetching;
+
+  const clients = pageResult?.data ?? [];
+  const total = pageResult?.total ?? 0;
+
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(total / pageSize) || 1),
+    [total, pageSize]
+  );
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   const { data: dbIrrigationSystems = [], isLoading: isLoadingIrrigationSystems } = useQuery({
     queryKey: ['irrigationSystems'],
@@ -216,15 +299,14 @@ export default function Clients() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const lat = parseOptionalNumber(formData.latitude);
+    const lng = parseOptionalNumber(formData.longitude);
     const submitData = {
       ...formData,
-      total_acreage: formData.total_acreage ? parseFloat(formData.total_acreage) : null,
-      latitude: formData.latitude ? parseFloat(formData.latitude) : null,
-      longitude: formData.longitude ? parseFloat(formData.longitude) : null,
-      location: formData.latitude && formData.longitude ? {
-        lat: parseFloat(formData.latitude),
-        lng: parseFloat(formData.longitude)
-      } : null
+      total_acreage: parseOptionalNumber(formData.total_acreage),
+      latitude: lat,
+      longitude: lng,
+      location: lat != null && lng != null ? { lat, lng } : null
     };
     if (selectedClient) {
       await updateMutation.mutateAsync({ id: selectedClient.id, data: submitData });
@@ -237,82 +319,102 @@ export default function Clients() {
     return requests.filter((r) => r.client_id === clientId).length;
   };
 
-  const filteredClients = clients.filter((client) => {
-    const matchesSearch = !searchQuery ||
-    client.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    client.farm_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    client.phone?.includes(searchQuery);
-    const matchesStatus = statusFilter === 'all' || client.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
-
-  if (isLoading) {
-    return (
-      <div data-source-location="pages/Clients:166:6" data-dynamic-content="false" className="flex items-center justify-center min-h-[80vh] w-full">
-        <LoadingSpinner data-source-location="pages/Clients:167:8" data-dynamic-content="false" size="lg" text="Loading clients..." />
-      </div>
-    );
-  }
+  const rangeStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const rangeEnd = Math.min(page * pageSize, total);
 
   return (
-    <div data-source-location="pages/Clients:173:4" data-dynamic-content="true" className="space-y-6">
-      <PageHeader data-source-location="pages/Clients:174:6" data-dynamic-content="false"
-      title="Clients"
-      subtitle={`${clients.length} registered farmers/clients`}
-      action={() => setShowForm(true)}
-      actionLabel="Add Client"
-      actionIcon={Plus} />
+    <div className="space-y-6">
+      <div className="space-y-4 pb-4 border-b border-gray-200 bg-gray-50">
+        <PageHeader
+          title="Clients"
+          className="mb-0"
+          subtitle={
+            total > 0
+              ? `${total.toLocaleString()} registered farmers/clients`
+              : 'Registered farmers/clients'
+          }
+          action={() => setShowForm(true)}
+          actionLabel="Add Client"
+          actionIcon={Plus}
+        />
 
-
-      {/* Filters */}
-      <div data-source-location="pages/Clients:183:6" data-dynamic-content="true" className="flex flex-col sm:flex-row gap-4">
-        <div data-source-location="pages/Clients:184:8" data-dynamic-content="true" className="relative flex-1">
-          <Search data-source-location="pages/Clients:185:10" data-dynamic-content="false" className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <Input data-source-location="pages/Clients:186:10" data-dynamic-content="false"
-          placeholder="Search by name, farm, or phone..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="pl-10" />
-
+        <div className="flex flex-col sm:flex-row gap-4">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <Input
+              placeholder="Search by name, farm, or phone..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-[150px] border-primary/30 focus:ring-primary focus:border-primary">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Status</SelectItem>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="inactive">Inactive</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-        <Select data-source-location="pages/Clients:193:8" data-dynamic-content="false" value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger data-source-location="pages/Clients:194:10" data-dynamic-content="false" className="w-[150px] border-primary/30 focus:ring-primary focus:border-primary">
-            <SelectValue data-source-location="pages/Clients:195:12" data-dynamic-content="false" />
-          </SelectTrigger>
-          <SelectContent data-source-location="pages/Clients:197:10" data-dynamic-content="false">
-            <SelectItem data-source-location="pages/Clients:198:12" data-dynamic-content="false" value="all">All Status</SelectItem>
-            <SelectItem data-source-location="pages/Clients:199:12" data-dynamic-content="false" value="active">Active</SelectItem>
-            <SelectItem data-source-location="pages/Clients:200:12" data-dynamic-content="false" value="inactive">Inactive</SelectItem>
-          </SelectContent>
-        </Select>
       </div>
 
       {/* Clients Grid */}
-      {filteredClients.length === 0 ?
-      <EmptyState data-source-location="pages/Clients:207:8" data-dynamic-content="false"
-      icon={UserCircle}
-      title="No clients found"
-      description="Add your first client/farmer"
-      action={() => setShowForm(true)}
-      actionLabel="Add Client" /> :
-
-
-      <div data-source-location="pages/Clients:215:8" data-dynamic-content="true" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {pageResult && total === 0 ? (
+        <div className="flex min-h-[min(50vh,28rem)] items-center justify-center py-8">
+          <EmptyState
+            icon={UserCircle}
+            title={debouncedSearch || statusFilter !== 'all' ? 'No matching clients' : 'No clients yet'}
+            description={
+              debouncedSearch || statusFilter !== 'all'
+                ? 'Try different search terms or filters'
+                : 'Add your first client/farmer'
+            }
+            action={debouncedSearch || statusFilter !== 'all' ? undefined : () => setShowForm(true)}
+            actionLabel={debouncedSearch || statusFilter !== 'all' ? undefined : 'Add Client'}
+          />
+        </div>
+      ) : (
+      <>
+      <div className="space-y-0">
+      {showPageSkeleton ? (
+        <div
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-stretch"
+          aria-busy="true"
+          aria-label="Loading clients"
+        >
+          {Array.from({ length: Math.min(pageSize, 24) }).map((_, i) => (
+            <ClientCardSkeleton key={`sk-${i}`} />
+          ))}
+        </div>
+      ) : (
+      <div
+        className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-stretch"
+      >
           <AnimatePresence data-source-location="pages/Clients:216:10" data-dynamic-content="true" mode="popLayout">
-            {filteredClients.map((client) =>
+            {clients.map((client) =>
           <motion.div data-source-location="pages/Clients:218:14" data-dynamic-content="true"
           key={client.id}
+          className="h-full min-h-0"
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.95 }}>
 
-                <Card data-source-location="pages/Clients:224:16" data-dynamic-content="true" className="hover:shadow-lg transition-all cursor-pointer group">
-                  <CardContent data-source-location="pages/Clients:225:18" data-dynamic-content="true" className="p-5">
-                    <div data-source-location="pages/Clients:226:20" data-dynamic-content="true" className="flex items-start justify-between mb-4">
+                <Card data-source-location="pages/Clients:224:16" data-dynamic-content="true" className="hover:shadow-lg transition-all cursor-pointer group h-full flex flex-col min-h-0">
+                  <CardContent data-source-location="pages/Clients:225:18" data-dynamic-content="true" className="p-5 flex flex-col flex-1 h-full min-h-0">
+                    <div data-source-location="pages/Clients:226:20" data-dynamic-content="true" className="flex items-start justify-between mb-4 shrink-0">
                       <div data-source-location="pages/Clients:227:22" data-dynamic-content="true" className="flex items-center gap-3">
                         <Avatar data-source-location="pages/Clients:228:24" data-dynamic-content="true" className="h-12 w-12">
                           <AvatarFallback data-source-location="pages/Clients:229:26" data-dynamic-content="true" className="bg-gradient-to-br from-green-100 to-emerald-100 text-green-700 text-lg">
-                            {client.name?.split(' ').map((n) => n[0]).join('')}
+                            {/* {client.name?.split(' ').map((n) => n[0]).join('')} */}
+                            {client.name
+                              ?.split(' ')
+                              .map((n) => n[0])
+                              .slice(0, 1)
+                              .join('')
+                            }
                           </AvatarFallback>
                         </Avatar>
                         <div data-source-location="pages/Clients:233:24" data-dynamic-content="true">
@@ -338,29 +440,29 @@ export default function Clients() {
                       </DropdownMenu>
                     </div>
 
-                    <div data-source-location="pages/Clients:256:20" data-dynamic-content="true" className="space-y-2 mb-4">
-                      {client.phone &&
+                    <div data-source-location="pages/Clients:256:20" data-dynamic-content="true" className="space-y-2 mb-4 flex-1 min-h-0 flex flex-col justify-start">
+                      {/* {client.phone && */}
                   <div data-source-location="pages/Clients:258:24" data-dynamic-content="true" className="flex items-center gap-2 text-sm text-gray-600">
                           <Phone data-source-location="pages/Clients:259:26" data-dynamic-content="false" className="w-4 h-4 text-gray-400" />
-                          {client.phone}
+                          {client.phone ? client.phone : 'N/A'}
                         </div>
-                  }
-                      {client.address &&
+                  {/* } */}
+                      {/* {client.address && */}
                   <div data-source-location="pages/Clients:264:24" data-dynamic-content="true" className="flex items-center gap-2 text-sm text-gray-600">
                           <MapPin data-source-location="pages/Clients:265:26" data-dynamic-content="false" className="w-4 h-4 text-gray-400" />
-                          <span data-source-location="pages/Clients:266:26" data-dynamic-content="true" className="truncate">{client.address}</span>
+                          <span data-source-location="pages/Clients:266:26" data-dynamic-content="true" className="truncate">{client.address ? client.address : 'N/A'}</span>
                         </div>
-                  }
+                  {/* } */}
                     </div>
 
-                    <div data-source-location="pages/Clients:271:20" data-dynamic-content="true" className="flex items-center justify-between mb-3">
+                    <div data-source-location="pages/Clients:271:20" data-dynamic-content="true" className="flex items-center justify-between mb-3 shrink-0">
                       <StatusBadge data-source-location="pages/Clients:272:22" data-dynamic-content="false" status={client.status} size="sm" />
                       {client.total_acreage &&
                   <span data-source-location="pages/Clients:274:24" data-dynamic-content="true" className="text-sm text-gray-500">{client.total_acreage} acres</span>
                   }
                     </div>
 
-                    <div data-source-location="pages/Clients:278:20" data-dynamic-content="true" className="flex items-center justify-between pt-3 border-t">
+                    <div data-source-location="pages/Clients:278:20" data-dynamic-content="true" className="flex items-center justify-between pt-3 border-t shrink-0">
                       <div data-source-location="pages/Clients:279:22" data-dynamic-content="true" className="flex items-center gap-1 text-sm text-gray-600">
                         <Droplets data-source-location="pages/Clients:280:24" data-dynamic-content="false" className="w-4 h-4 text-primary" />
                         <span data-source-location="pages/Clients:281:24" data-dynamic-content="true">{getClientRequestCount(client.id)} requests</span>
@@ -368,7 +470,7 @@ export default function Clients() {
                     </div>
 
                     {client.irrigation_systems?.length > 0 &&
-                <div data-source-location="pages/Clients:286:22" data-dynamic-content="true" className="flex flex-wrap gap-1 mt-3">
+                <div data-source-location="pages/Clients:286:22" data-dynamic-content="true" className="flex flex-wrap gap-1 mt-3 shrink-0">
                         {client.irrigation_systems.slice(0, 2).map((sys, idx) =>
                   <Badge data-source-location="pages/Clients:288:26" data-dynamic-content="true" key={idx} className="bg-primary text-primary-foreground text-xs">
                             {sys}
@@ -387,7 +489,68 @@ export default function Clients() {
           )}
           </AnimatePresence>
         </div>
-      }
+      )}
+      </div>
+
+      {pageResult && total > 0 && (
+        <div className="mt-4 pt-3 border-t border-gray-200 bg-gray-50 rounded-lg px-1 pb-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-gray-600 leading-tight">
+              Showing{' '}
+              <span className="font-medium text-gray-900">
+                {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()}
+              </span>{' '}
+              of <span className="font-medium text-gray-900">{total.toLocaleString()}</span>
+            </p>
+            <div className="flex flex-wrap items-center gap-2 justify-end">
+              <Select
+                value={String(pageSize)}
+                onValueChange={(v) => setPageSize(Number(v))}
+              >
+                <SelectTrigger className="w-[130px] border-primary/30">
+                  <SelectValue placeholder="Per page" />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAGE_SIZE_OPTIONS.map((n) => (
+                    <SelectItem key={n} value={String(n)}>
+                      {n} per page
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9"
+                  disabled={page <= 1 || isFetching}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-sm text-gray-700 px-2 min-w-[7rem] text-center tabular-nums">
+                  Page {page} / {totalPages}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9"
+                  disabled={page >= totalPages || isFetching}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      </>
+      )}
 
       {/* Form Dialog */}
       <Dialog data-source-location="pages/Clients:308:6" data-dynamic-content="true" open={showForm} onOpenChange={(open) => {if (!open) resetForm();}}>
@@ -406,7 +569,10 @@ export default function Clients() {
               {/* Left Column */}
               <div data-source-location="pages/Clients:320:12" data-dynamic-content="true" className="space-y-4">
                 <div data-source-location="pages/Clients:320:12" data-dynamic-content="true">
-                  <Label data-source-location="pages/Clients:321:14" data-dynamic-content="false">Client Name</Label>
+                  <Label data-source-location="pages/Clients:321:14" data-dynamic-content="false">
+                    Client Name
+                    <RequiredMark />
+                  </Label>
                   <Input data-source-location="pages/Clients:322:14" data-dynamic-content="false"
                   value={formData.name}
                   onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
@@ -415,7 +581,10 @@ export default function Clients() {
                 </div>
 
                 <div data-source-location="pages/Clients:330:12" data-dynamic-content="true">
-                  <Label data-source-location="pages/Clients:331:14" data-dynamic-content="false">Farm Name</Label>
+                  <Label data-source-location="pages/Clients:331:14" data-dynamic-content="false">
+                    Farm Name
+                    <RequiredMark />
+                  </Label>
                   <Input data-source-location="pages/Clients:332:14" data-dynamic-content="false"
                   value={formData.farm_name}
                   onChange={(e) => setFormData((prev) => ({ ...prev, farm_name: e.target.value }))}
@@ -424,7 +593,10 @@ export default function Clients() {
                 </div>
 
                 <div data-source-location="pages/Clients:341:14" data-dynamic-content="true">
-                  <Label data-source-location="pages/Clients:342:16" data-dynamic-content="false">Phone</Label>
+                  <Label data-source-location="pages/Clients:342:16" data-dynamic-content="false">
+                    Phone
+                    <RequiredMark />
+                  </Label>
                   <Input data-source-location="pages/Clients:343:16" data-dynamic-content="false"
                   value={formData.phone}
                   onChange={(e) => setFormData((prev) => ({ ...prev, phone: e.target.value }))}
@@ -442,12 +614,16 @@ export default function Clients() {
                 </div>
 
                 <div data-source-location="pages/Clients:361:12" data-dynamic-content="true">
-                  <Label data-source-location="pages/Clients:362:14" data-dynamic-content="false">Email</Label>
+                  <Label data-source-location="pages/Clients:362:14" data-dynamic-content="false">
+                    Email
+                    <RequiredMark />
+                  </Label>
                   <Input data-source-location="pages/Clients:363:14" data-dynamic-content="false"
                   type="email"
                   value={formData.email}
                   onChange={(e) => setFormData((prev) => ({ ...prev, email: e.target.value }))}
-                  placeholder="john@farm.com" />
+                  placeholder="john@farm.com"
+                  required />
                 </div>
 
                 <div data-source-location="pages/Clients:361:12" data-dynamic-content="true">
@@ -473,45 +649,66 @@ export default function Clients() {
               {/* Right Column */}
               <div data-source-location="pages/Clients:320:12" data-dynamic-content="true" className="space-y-4">
                 <div data-source-location="pages/Clients:371:12" data-dynamic-content="true">
-                  <Label data-source-location="pages/Clients:372:14" data-dynamic-content="false">Street Address</Label>
+                  <Label data-source-location="pages/Clients:372:14" data-dynamic-content="false">
+                    Street Address
+                    <RequiredMark />
+                  </Label>
                   <Textarea data-source-location="pages/Clients:373:14" data-dynamic-content="false"
                   value={formData.address}
                   onChange={(e) => setFormData((prev) => ({ ...prev, address: e.target.value }))}
                   placeholder="Street address"
-                  rows={2} />
+                  rows={5}
+                  className="min-h-[120px] resize-y"
+                  required />
                 </div>
 
                 <div data-source-location="pages/Clients:371:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
                   <div data-source-location="pages/Clients:371:12" data-dynamic-content="true">
-                    <Label data-source-location="pages/Clients:372:14" data-dynamic-content="false">City</Label>
+                    <Label data-source-location="pages/Clients:372:14" data-dynamic-content="false">
+                      City
+                      <RequiredMark />
+                    </Label>
                     <Input data-source-location="pages/Clients:373:14" data-dynamic-content="false"
                     value={formData.city}
                     onChange={(e) => setFormData((prev) => ({ ...prev, city: e.target.value }))}
-                    placeholder="City" />
+                    placeholder="City"
+                    required />
                   </div>
                   <div data-source-location="pages/Clients:371:12" data-dynamic-content="true">
-                    <Label data-source-location="pages/Clients:372:14" data-dynamic-content="false">State</Label>
+                    <Label data-source-location="pages/Clients:372:14" data-dynamic-content="false">
+                      State
+                      <RequiredMark />
+                    </Label>
                     <Input data-source-location="pages/Clients:373:14" data-dynamic-content="false"
                     value={formData.state}
                     onChange={(e) => setFormData((prev) => ({ ...prev, state: e.target.value }))}
-                    placeholder="State" />
+                    placeholder="State"
+                    required />
                   </div>
                 </div>
 
                 <div data-source-location="pages/Clients:371:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
                   <div data-source-location="pages/Clients:371:12" data-dynamic-content="true">
-                    <Label data-source-location="pages/Clients:372:14" data-dynamic-content="false">Zipcode</Label>
+                    <Label data-source-location="pages/Clients:372:14" data-dynamic-content="false">
+                      Zipcode
+                      <RequiredMark />
+                    </Label>
                     <Input data-source-location="pages/Clients:373:14" data-dynamic-content="false"
                     value={formData.zipcode}
                     onChange={(e) => setFormData((prev) => ({ ...prev, zipcode: e.target.value }))}
-                    placeholder="Zipcode" />
+                    placeholder="Zipcode"
+                    required />
                   </div>
                   <div data-source-location="pages/Clients:371:12" data-dynamic-content="true">
-                    <Label data-source-location="pages/Clients:372:14" data-dynamic-content="false">Country</Label>
+                    <Label data-source-location="pages/Clients:372:14" data-dynamic-content="false">
+                      Country
+                      <RequiredMark />
+                    </Label>
                     <Input data-source-location="pages/Clients:373:14" data-dynamic-content="false"
                     value={formData.country}
                     onChange={(e) => setFormData((prev) => ({ ...prev, country: e.target.value }))}
-                    placeholder="Country" />
+                    placeholder="Country"
+                    required />
                   </div>
                 </div>
 
@@ -564,9 +761,13 @@ export default function Clients() {
                 </div>
 
                 <div data-source-location="pages/Clients:432:12" data-dynamic-content="true">
-                  <Label data-source-location="pages/Clients:433:14" data-dynamic-content="false">Status</Label>
+                  <Label data-source-location="pages/Clients:433:14" data-dynamic-content="false">
+                    Status
+                    <RequiredMark />
+                  </Label>
                   <Select data-source-location="pages/Clients:434:14" data-dynamic-content="false"
                   value={formData.status}
+                  required
                   onValueChange={(v) => setFormData((prev) => ({ ...prev, status: v }))}>
 
                     <SelectTrigger data-source-location="pages/Clients:438:16" data-dynamic-content="false" className="border-primary/30 focus:ring-primary focus:border-primary">
@@ -585,7 +786,8 @@ export default function Clients() {
                   value={formData.notes}
                   onChange={(e) => setFormData((prev) => ({ ...prev, notes: e.target.value }))}
                   placeholder="Additional notes..."
-                  rows={2} />
+                  rows={5}
+                  className="min-h-[120px] resize-y" />
                 </div>
               </div>
             </div>

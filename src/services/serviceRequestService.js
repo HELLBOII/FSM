@@ -27,6 +27,107 @@ export const serviceRequestService = {
   },
 
   /**
+   * Counts for tab badges (All / Active / Pending / Closed) — not affected by search/filters.
+   */
+  async getTabCounts() {
+    const from = () => supabase.from('service_requests');
+    const [allRes, activeRes, pendingRes, closedRes] = await Promise.all([
+      from().select('*', { count: 'exact', head: true }),
+      from()
+        .select('*', { count: 'exact', head: true })
+        .in('status', ['new', 'scheduled', 'assigned', 'in_progress']),
+      from().select('*', { count: 'exact', head: true }).eq('status', 'completed'),
+      from()
+        .select('*', { count: 'exact', head: true })
+        .in('status', ['approved', 'closed'])
+    ]);
+
+    if (allRes.error) throw allRes.error;
+    if (activeRes.error) throw activeRes.error;
+    if (pendingRes.error) throw pendingRes.error;
+    if (closedRes.error) throw closedRes.error;
+
+    return {
+      all: allRes.count ?? 0,
+      active: activeRes.count ?? 0,
+      pending: pendingRes.count ?? 0,
+      closed: closedRes.count ?? 0
+    };
+  },
+
+  /**
+   * Paginated list with optional search, filters, and tab (server-side).
+   * @param {Object} opts
+   * @param {number} [opts.page=1]
+   * @param {number} [opts.pageSize=12]
+   * @param {string} [opts.search=''] — ilike client_name, farm_name, request_number, description
+   * @param {string} [opts.status='all']
+   * @param {string} [opts.priority='all']
+   * @param {string} [opts.irrigation='all']
+   * @param {string} [opts.activeTab='all'] — 'all' | 'active' | 'pending' | 'closed'
+   * @returns {Promise<{ data: Array, total: number }>}
+   */
+  async listPaged({
+    page = 1,
+    pageSize = 12,
+    search = '',
+    status = 'all',
+    priority = 'all',
+    irrigation = 'all',
+    activeTab = 'all'
+  } = {}) {
+    const safePage = Math.max(1, Number(page) || 1);
+    const safeSize = Math.min(100, Math.max(1, Number(pageSize) || 12));
+    const fromIdx = (safePage - 1) * safeSize;
+    const toIdx = fromIdx + safeSize - 1;
+
+    let query = supabase.from('service_requests').select('*', { count: 'exact' });
+
+    if (activeTab === 'active') {
+      query = query.in('status', ['new', 'scheduled', 'assigned', 'in_progress']);
+    } else if (activeTab === 'pending') {
+      query = query.eq('status', 'completed');
+    } else if (activeTab === 'closed') {
+      query = query.in('status', ['approved', 'closed']);
+    }
+
+    if (status && status !== 'all') {
+      query = query.eq('status', status);
+    }
+    if (priority && priority !== 'all') {
+      query = query.eq('priority', priority);
+    }
+    if (irrigation && irrigation !== 'all') {
+      query = query.eq('irrigation_type', irrigation);
+    }
+
+    const q = search?.trim();
+    if (q) {
+      const esc = q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+      query = query.or(
+        `client_name.ilike.%${esc}%,farm_name.ilike.%${esc}%,request_number.ilike.%${esc}%,description.ilike.%${esc}%`
+      );
+    }
+
+    query = query.order('created_at', { ascending: false }).range(fromIdx, toIdx);
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      if (error.message?.includes('schema cache') || error.message?.includes('relation') || error.message?.includes('does not exist')) {
+        const enhancedError = new Error(
+          'Database table not found. Please run the migration script (supabase_migration.sql) in your Supabase SQL Editor to create the required tables.'
+        );
+        enhancedError.originalError = error;
+        throw enhancedError;
+      }
+      throw error;
+    }
+
+    return { data: data || [], total: count ?? 0 };
+  },
+
+  /**
    * Get a single service request by ID
    * @param {string} id
    * @returns {Promise<Object>}

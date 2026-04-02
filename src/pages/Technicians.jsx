@@ -9,8 +9,8 @@ import {
   Phone,
   Mail,
   Star,
-  MapPin,
   ChevronRight,
+  ChevronLeft,
   Edit,
   MoreVertical } from
 'lucide-react';
@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -44,7 +44,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import PageHeader from '@/components/common/PageHeader';
 import StatusBadge from '@/components/ui/StatusBadge';
-import LoadingSpinner from '@/components/common/LoadingSpinner';
 import EmptyState from '@/components/common/EmptyState';
 import { toast } from 'sonner';
 
@@ -57,10 +56,62 @@ const specializations = [
 'Water Management'];
 
 
+const PAGE_SIZE_OPTIONS = [12, 24, 48];
+
+function RequiredMark() {
+  return <span className="text-red-600 ml-0.5" aria-hidden="true">*</span>;
+}
+
+/** Empty or whitespace → null; invalid number → null */
+function parseOptionalNumber(value) {
+  const s = String(value ?? '').trim();
+  if (s === '') return null;
+  const n = Number.parseFloat(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function TechnicianCardSkeleton() {
+  return (
+    <Card className="border bg-card shadow-sm">
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between gap-2 mb-4">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            <div className="h-12 w-12 rounded-full bg-muted animate-pulse shrink-0" />
+            <div className="flex-1 space-y-2 min-w-0">
+              <div className="h-4 w-[70%] max-w-[12rem] rounded bg-muted animate-pulse" />
+              <div className="h-3 w-1/2 max-w-[8rem] rounded bg-muted animate-pulse" />
+            </div>
+          </div>
+          <div className="h-8 w-8 rounded-md bg-muted animate-pulse shrink-0" />
+        </div>
+        <div className="space-y-2 mb-4">
+          <div className="h-3 w-full rounded bg-muted animate-pulse" />
+          <div className="h-3 w-4/5 rounded bg-muted animate-pulse" />
+        </div>
+        <div className="flex justify-between gap-2 mb-3">
+          <div className="h-6 w-16 rounded-full bg-muted animate-pulse" />
+          <div className="h-6 w-16 rounded-full bg-muted animate-pulse" />
+        </div>
+        <div className="flex items-center justify-between pt-3 border-t">
+          <div className="h-4 w-12 rounded bg-muted animate-pulse" />
+          <div className="h-4 w-28 rounded bg-muted animate-pulse" />
+        </div>
+        <div className="flex flex-wrap gap-1 mt-3">
+          <div className="h-5 w-16 rounded-full bg-muted animate-pulse" />
+          <div className="h-5 w-20 rounded-full bg-muted animate-pulse" />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Technicians() {
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(12);
   const [showForm, setShowForm] = useState(false);
   const [selectedTech, setSelectedTech] = useState(null);
   const [showAddSpecializationDialog, setShowAddSpecializationDialog] = useState(false);
@@ -81,20 +132,55 @@ export default function Technicians() {
     country: ''
   });
 
-  const { data: technicians = [], isLoading } = useQuery({
-    queryKey: ['technicians'],
-    queryFn: () => technicianService.list()
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 400);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, statusFilter, pageSize]);
+
+  const {
+    data: pageResult,
+    isFetching
+  } = useQuery({
+    queryKey: ['technicians', 'paged', page, pageSize, debouncedSearch, statusFilter],
+    queryFn: () =>
+      technicianService.listPaged({
+        page,
+        pageSize,
+        search: debouncedSearch,
+        status: statusFilter
+      }),
+    placeholderData: (previousData) => previousData
   });
 
-  const { data: dbSpecializations = [], isLoading: isLoadingSpecializations } = useQuery({
+  const showPageSkeleton = isFetching;
+  const technicians = pageResult?.data ?? [];
+  const total = pageResult?.total ?? 0;
+
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(total / pageSize) || 1),
+    [total, pageSize]
+  );
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const rangeStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const rangeEnd = Math.min(page * pageSize, total);
+
+  const { data: dbSpecializations = [] } = useQuery({
     queryKey: ['specializations'],
     queryFn: () => specializationsService.list()
   });
 
-  // Get all unique specializations from database and combine with hardcoded ones
+  // Hardcoded + DB + specializations seen on the current page (for add/edit dropdown)
   const availableSpecializations = useMemo(() => {
-    const dbSystemNames = dbSpecializations.map(sys => sys.specializations);
-    const technicianSystems = technicians.flatMap(tech => tech.specializations || []);
+    const dbSystemNames = dbSpecializations.map((sys) => sys.specializations);
+    const technicianSystems = technicians.flatMap((tech) => tech.specializations || []);
     const allSystems = [...new Set([...specializations, ...dbSystemNames, ...technicianSystems])];
     return allSystems.sort();
   }, [technicians, dbSpecializations]);
@@ -202,10 +288,15 @@ export default function Technicians() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const lat = parseOptionalNumber(formData.latitude);
+    const lng = parseOptionalNumber(formData.longitude);
     const submitData = {
-      ...formData
+      ...formData,
+      employee_id: formData.employee_id?.trim() || null,
+      latitude: lat,
+      longitude: lng
     };
-    
+
     if (selectedTech) {
       await updateMutation.mutateAsync({ id: selectedTech.id, data: submitData });
     } else {
@@ -213,69 +304,75 @@ export default function Technicians() {
     }
   };
 
-  const filteredTechnicians = technicians.filter((tech) => {
-    const matchesSearch = !searchQuery ||
-    tech.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    tech.employee_id?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    tech.phone?.includes(searchQuery);
-    const matchesStatus = statusFilter === 'all' || tech.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
-
-  if (isLoading) {
-    return (
-      <div data-source-location="pages/Technicians:142:6" data-dynamic-content="false" className="flex items-center justify-center min-h-[60vh]">
-        <LoadingSpinner data-source-location="pages/Technicians:143:8" data-dynamic-content="false" size="lg" text="Loading technicians..." />
-      </div>);
-
-  }
-
   return (
     <div data-source-location="pages/Technicians:149:4" data-dynamic-content="true" className="space-y-6">
-      <PageHeader data-source-location="pages/Technicians:150:6" data-dynamic-content="false"
-      title="Technicians"
-      subtitle={`${technicians.length} field technicians`}
-      action={() => setShowForm(true)}
-      actionLabel="Add Technician"
-      actionIcon={Plus} />
+      <div className="space-y-4 pb-4 border-b border-gray-200 bg-gray-50">
+        <PageHeader data-source-location="pages/Technicians:150:6" data-dynamic-content="false"
+        title="Technicians"
+        className="mb-0"
+        subtitle={
+          total > 0
+            ? `${total.toLocaleString()} field technicians`
+            : 'Field technicians'
+        }
+        action={() => setShowForm(true)}
+        actionLabel="Add Technician"
+        actionIcon={Plus} />
 
+        <div data-source-location="pages/Technicians:159:6" data-dynamic-content="true" className="flex flex-col sm:flex-row gap-4">
+          <div data-source-location="pages/Technicians:160:8" data-dynamic-content="true" className="relative flex-1">
+            <Search data-source-location="pages/Technicians:161:10" data-dynamic-content="false" className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <Input data-source-location="pages/Technicians:162:10" data-dynamic-content="false"
+            placeholder="Search by name, ID, or phone..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10" />
 
-      {/* Filters */}
-      <div data-source-location="pages/Technicians:159:6" data-dynamic-content="true" className="flex flex-col sm:flex-row gap-4">
-        <div data-source-location="pages/Technicians:160:8" data-dynamic-content="true" className="relative flex-1">
-          <Search data-source-location="pages/Technicians:161:10" data-dynamic-content="false" className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <Input data-source-location="pages/Technicians:162:10" data-dynamic-content="false"
-          placeholder="Search by name, ID, or phone..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="pl-10" />
-
+          </div>
+          <Select data-source-location="pages/Technicians:169:8" data-dynamic-content="false" value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger data-source-location="pages/Technicians:170:10" data-dynamic-content="false" className="w-[150px] border-primary/30 focus:ring-primary focus:border-primary">
+              <SelectValue data-source-location="pages/Technicians:171:12" data-dynamic-content="false" />
+            </SelectTrigger>
+            <SelectContent data-source-location="pages/Technicians:173:10" data-dynamic-content="false">
+              <SelectItem data-source-location="pages/Technicians:174:12" data-dynamic-content="false" value="all">All Status</SelectItem>
+              <SelectItem data-source-location="pages/Technicians:175:12" data-dynamic-content="false" value="active">Active</SelectItem>
+              <SelectItem data-source-location="pages/Technicians:176:12" data-dynamic-content="false" value="inactive">Inactive</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-        <Select data-source-location="pages/Technicians:169:8" data-dynamic-content="false" value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger data-source-location="pages/Technicians:170:10" data-dynamic-content="false" className="w-[150px]">
-            <SelectValue data-source-location="pages/Technicians:171:12" data-dynamic-content="false" />
-          </SelectTrigger>
-          <SelectContent data-source-location="pages/Technicians:173:10" data-dynamic-content="false">
-            <SelectItem data-source-location="pages/Technicians:174:12" data-dynamic-content="false" value="all">All Status</SelectItem>
-            <SelectItem data-source-location="pages/Technicians:175:12" data-dynamic-content="false" value="active">Active</SelectItem>
-            <SelectItem data-source-location="pages/Technicians:176:12" data-dynamic-content="false" value="inactive">Inactive</SelectItem>
-          </SelectContent>
-        </Select>
       </div>
 
       {/* Technicians Grid */}
-      {filteredTechnicians.length === 0 ?
-      <EmptyState data-source-location="pages/Technicians:183:8" data-dynamic-content="false"
-      icon={Users}
-      title="No technicians found"
-      description="Add your first field technician"
-      action={() => setShowForm(true)}
-      actionLabel="Add Technician" /> :
-
-
-      <div data-source-location="pages/Technicians:191:8" data-dynamic-content="true" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {pageResult && total === 0 ? (
+      <div className="flex min-h-[min(50vh,28rem)] items-center justify-center py-8">
+        <EmptyState data-source-location="pages/Technicians:183:8" data-dynamic-content="false"
+        icon={Users}
+        title={debouncedSearch || statusFilter !== 'all' ? 'No matching technicians' : 'No technicians yet'}
+        description={
+          debouncedSearch || statusFilter !== 'all'
+            ? 'Try different search terms or filters'
+            : 'Add your first field technician'
+        }
+        action={debouncedSearch || statusFilter !== 'all' ? undefined : () => setShowForm(true)}
+        actionLabel={debouncedSearch || statusFilter !== 'all' ? undefined : 'Add Technician'} />
+      </div>
+      ) : (
+      <>
+      <div className="space-y-0">
+      {showPageSkeleton ? (
+        <div
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-stretch"
+          aria-busy="true"
+          aria-label="Loading technicians"
+        >
+          {Array.from({ length: Math.min(pageSize, 24) }).map((_, i) => (
+            <TechnicianCardSkeleton key={`sk-${i}`} />
+          ))}
+        </div>
+      ) : (
+      <div data-source-location="pages/Technicians:191:8" data-dynamic-content="true" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-stretch">
           <AnimatePresence data-source-location="pages/Technicians:192:10" data-dynamic-content="true" mode="popLayout">
-            {filteredTechnicians.map((tech) =>
+            {technicians.map((tech) =>
           <motion.div data-source-location="pages/Technicians:194:14" data-dynamic-content="true"
           key={tech.id}
           initial={{ opacity: 0, scale: 0.95 }}
@@ -362,7 +459,68 @@ export default function Technicians() {
           )}
           </AnimatePresence>
         </div>
-      }
+      )}
+      </div>
+
+      {pageResult && total > 0 && (
+        <div className="mt-4 pt-3 border-t border-gray-200 bg-gray-50 rounded-lg px-1 pb-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-gray-600 leading-tight">
+              Showing{' '}
+              <span className="font-medium text-gray-900">
+                {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()}
+              </span>{' '}
+              of <span className="font-medium text-gray-900">{total.toLocaleString()}</span>
+            </p>
+            <div className="flex flex-wrap items-center gap-2 justify-end">
+              <Select
+                value={String(pageSize)}
+                onValueChange={(v) => setPageSize(Number(v))}
+              >
+                <SelectTrigger className="w-[130px] border-primary/30">
+                  <SelectValue placeholder="Per page" />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAGE_SIZE_OPTIONS.map((n) => (
+                    <SelectItem key={n} value={String(n)}>
+                      {n} per page
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9"
+                  disabled={page <= 1 || isFetching}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-sm text-gray-700 px-2 min-w-[7rem] text-center tabular-nums">
+                  Page {page} / {totalPages}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9"
+                  disabled={page >= totalPages || isFetching}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      </>
+      )}
 
       {/* Form Dialog */}
       <Dialog data-source-location="pages/Technicians:283:6" data-dynamic-content="true" open={showForm} onOpenChange={(open) => {if (!open) resetForm();}}>
@@ -381,7 +539,10 @@ export default function Technicians() {
               {/* Left Column */}
               <div data-source-location="pages/Technicians:295:12" data-dynamic-content="true" className="space-y-4">
                 <div data-source-location="pages/Technicians:295:12" data-dynamic-content="true">
-                  <Label data-source-location="pages/Technicians:296:14" data-dynamic-content="false">Full Name</Label>
+                  <Label data-source-location="pages/Technicians:296:14" data-dynamic-content="false">
+                    Full Name
+                    <RequiredMark />
+                  </Label>
                   <Input data-source-location="pages/Technicians:297:14" data-dynamic-content="false"
                   value={formData.name}
                   onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
@@ -394,12 +555,14 @@ export default function Technicians() {
                   <Input data-source-location="pages/Technicians:308:16" data-dynamic-content="false"
                   value={formData.employee_id}
                   onChange={(e) => setFormData((prev) => ({ ...prev, employee_id: e.target.value }))}
-                  placeholder="EMP-001"
-                  required />
+                  placeholder="EMP-001" />
                 </div>
 
                 <div data-source-location="pages/Technicians:315:14" data-dynamic-content="true">
-                  <Label data-source-location="pages/Technicians:316:16" data-dynamic-content="false">Phone</Label>
+                  <Label data-source-location="pages/Technicians:316:16" data-dynamic-content="false">
+                    Phone
+                    <RequiredMark />
+                  </Label>
                   <Input data-source-location="pages/Technicians:317:16" data-dynamic-content="false"
                   value={formData.phone}
                   onChange={(e) => setFormData((prev) => ({ ...prev, phone: e.target.value }))}
@@ -408,12 +571,16 @@ export default function Technicians() {
                 </div>
 
                 <div data-source-location="pages/Technicians:326:12" data-dynamic-content="true">
-                  <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">Email</Label>
+                  <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">
+                    Email
+                    <RequiredMark />
+                  </Label>
                   <Input data-source-location="pages/Technicians:328:14" data-dynamic-content="false"
                   type="email"
                   value={formData.email}
                   onChange={(e) => setFormData((prev) => ({ ...prev, email: e.target.value }))}
-                  placeholder="john@example.com" />
+                  placeholder="john@example.com"
+                  required />
                 </div>
 
                 <div data-source-location="pages/Technicians:326:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
@@ -441,45 +608,65 @@ export default function Technicians() {
               {/* Right Column */}
               <div data-source-location="pages/Technicians:295:12" data-dynamic-content="true" className="space-y-4">
                 <div data-source-location="pages/Technicians:326:12" data-dynamic-content="true">
-                  <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">Street Address</Label>
+                  <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">
+                    Street Address
+                    <RequiredMark />
+                  </Label>
                   <Textarea data-source-location="pages/Technicians:328:14" data-dynamic-content="false"
                   value={formData.address}
                   onChange={(e) => setFormData((prev) => ({ ...prev, address: e.target.value }))}
                   placeholder="Street address"
-                  rows={2} />
+                  rows={2}
+                  required />
                 </div>
 
                 <div data-source-location="pages/Technicians:326:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
                   <div data-source-location="pages/Technicians:326:14" data-dynamic-content="true">
-                    <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">City</Label>
+                    <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">
+                      City
+                      <RequiredMark />
+                    </Label>
                     <Input data-source-location="pages/Technicians:328:14" data-dynamic-content="false"
                     value={formData.city}
                     onChange={(e) => setFormData((prev) => ({ ...prev, city: e.target.value }))}
-                    placeholder="City" />
+                    placeholder="City"
+                    required />
                   </div>
                   <div data-source-location="pages/Technicians:326:14" data-dynamic-content="true">
-                    <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">State</Label>
+                    <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">
+                      State
+                      <RequiredMark />
+                    </Label>
                     <Input data-source-location="pages/Technicians:328:14" data-dynamic-content="false"
                     value={formData.state}
                     onChange={(e) => setFormData((prev) => ({ ...prev, state: e.target.value }))}
-                    placeholder="State" />
+                    placeholder="State"
+                    required />
                   </div>
                 </div>
 
                 <div data-source-location="pages/Technicians:326:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
                   <div data-source-location="pages/Technicians:326:14" data-dynamic-content="true">
-                    <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">Zipcode</Label>
+                    <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">
+                      Zipcode
+                      <RequiredMark />
+                    </Label>
                     <Input data-source-location="pages/Technicians:328:14" data-dynamic-content="false"
                     value={formData.zipcode}
                     onChange={(e) => setFormData((prev) => ({ ...prev, zipcode: e.target.value }))}
-                    placeholder="Zipcode" />
+                    placeholder="Zipcode"
+                    required />
                   </div>
                   <div data-source-location="pages/Technicians:326:14" data-dynamic-content="true">
-                    <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">Country</Label>
+                    <Label data-source-location="pages/Technicians:327:14" data-dynamic-content="false">
+                      Country
+                      <RequiredMark />
+                    </Label>
                     <Input data-source-location="pages/Technicians:328:14" data-dynamic-content="false"
                     value={formData.country}
                     onChange={(e) => setFormData((prev) => ({ ...prev, country: e.target.value }))}
-                    placeholder="Country" />
+                    placeholder="Country"
+                    required />
                   </div>
                 </div>
 
@@ -532,9 +719,13 @@ export default function Technicians() {
                 </div>
 
                 <div data-source-location="pages/Technicians:377:12" data-dynamic-content="true">
-                  <Label data-source-location="pages/Technicians:378:14" data-dynamic-content="false">Status</Label>
+                  <Label data-source-location="pages/Technicians:378:14" data-dynamic-content="false">
+                    Status
+                    <RequiredMark />
+                  </Label>
                   <Select data-source-location="pages/Technicians:379:14" data-dynamic-content="false"
                   value={formData.status}
+                  required
                   onValueChange={(v) => setFormData((prev) => ({ ...prev, status: v }))}>
 
                     <SelectTrigger data-source-location="pages/Technicians:383:16" data-dynamic-content="false">

@@ -88,8 +88,12 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [carouselIndex, setCarouselIndex] = useState(0);
+  const [pendingVerificationEmail, setPendingVerificationEmail] = useState(null);
+  const [isResending, setIsResending] = useState(false);
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
+  const [isSendingReset, setIsSendingReset] = useState(false);
   const navigate = useNavigate();
-  const { login, signup, authError } = useAuth();
+  const { login, signup, resendVerificationEmail, resetPasswordForEmail, authError } = useAuth();
 
   useEffect(() => {
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -119,15 +123,17 @@ export default function LoginPage() {
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    if (!email || !password) {
+    const trimmedEmail = email?.trim();
+    if (!trimmedEmail || !password) {
       toast.error("Please enter both email and password");
       return;
     }
 
     setIsLoading(true);
+    setPendingVerificationEmail(null);
 
     try {
-      const result = await login(email, password);
+      const result = await login(trimmedEmail, password);
 
       if (result?.user) {
         toast.success("Login successful!");
@@ -137,6 +143,8 @@ export default function LoginPage() {
           navigate("/TechnicianHome", { replace: true });
         } else if (userRole === "admin" || userRole === "supervisor") {
           navigate("/AdminDashboard", { replace: true });
+        } else if (userRole === "client") {
+          navigate("/ClientDashboard", { replace: true });
         } else {
           navigate("/RoleSelection", { replace: true });
         }
@@ -146,16 +154,14 @@ export default function LoginPage() {
     } catch (error) {
       console.error("Login error:", error);
 
-      // Handle specific error cases - show only one toast per error
-      if (error.code === 'email_not_confirmed' || error.message?.includes('Email not confirmed')) {
-        toast.error("Please verify your email address before signing in.");
-      } else if (error.message?.includes('not configured')) {
+      if (error.code === "email_not_confirmed" || error.message?.includes("Email not confirmed")) {
+        setPendingVerificationEmail(trimmedEmail);
+        toast.error("Please verify your email before signing in. Check your inbox or resend the verification email.");
+      } else if (error.message?.includes("not configured")) {
         toast.error("Configuration error: Please check your Supabase settings");
-      } else if (error.message?.includes('Email and password are required')) {
+      } else if (error.message?.includes("Email and password are required")) {
         toast.error("Please enter both email and password");
       } else {
-        // Use error message from the caught error, or default message
-        // Don't use authError here to avoid duplicate toasts
         const errorMessage = error.message || "Invalid login credentials";
         toast.error(errorMessage);
       }
@@ -164,10 +170,48 @@ export default function LoginPage() {
     }
   };
 
+  const handleResendVerification = async () => {
+    const toSend = pendingVerificationEmail || email?.trim();
+    if (!toSend) {
+      toast.error("Enter your email address first.");
+      return;
+    }
+    setIsResending(true);
+    try {
+      await resendVerificationEmail(toSend);
+      toast.success("Verification email sent. Please check your inbox (and spam folder).");
+      setPendingVerificationEmail(null);
+    } catch (err) {
+      toast.error(err.message || "Failed to resend verification email. Try again later.");
+    } finally {
+      setIsResending(false);
+    }
+  };
+
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    const trimmedEmail = email?.trim();
+    if (!trimmedEmail) {
+      toast.error("Please enter your email address");
+      return;
+    }
+    setIsSendingReset(true);
+    try {
+      await resetPasswordForEmail(trimmedEmail);
+      toast.success("If an account exists for this email, you will receive a password reset link. Check your inbox and spam folder.");
+      setIsForgotPassword(false);
+    } catch (err) {
+      toast.error(err.message || "Failed to send reset link. Try again later.");
+    } finally {
+      setIsSendingReset(false);
+    }
+  };
+
   const handleSignup = async (e) => {
     e.preventDefault();
+    const trimmedEmail = email?.trim();
 
-    if (!email || !password || !confirmPassword) {
+    if (!trimmedEmail || !password || !confirmPassword) {
       toast.error("Please fill in all required fields");
       return;
     }
@@ -188,42 +232,42 @@ export default function LoginPage() {
     }
 
     setIsLoading(true);
+    setPendingVerificationEmail(null);
 
     try {
       const metadata = {
-        full_name: fullName || email.split('@')[0],
+        full_name: fullName || trimmedEmail.split("@")[0],
         user_role: selectedRole
       };
 
-      const result = await signup(email, password, metadata);
+      const result = await signup(trimmedEmail, password, metadata);
 
       if (result?.user) {
-        toast.success("Account created successfully! Please check your email to verify your account.");
-
         if (result.session) {
+          toast.success("Account created successfully!");
           const userRole = result?.user?.user_metadata?.user_role;
-
           if (userRole === "technician") {
             navigate("/TechnicianHome", { replace: true });
           } else if (userRole === "admin" || userRole === "supervisor") {
             navigate("/AdminDashboard", { replace: true });
+          } else if (userRole === "client") {
+            navigate("/ClientDashboard", { replace: true });
           } else {
             navigate("/RoleSelection", { replace: true });
           }
         } else {
-          toast.info("Please check your email to verify your account before signing in.");
-          setIsSignup(false);
-          setEmail("");
-          setPassword("");
-          setConfirmPassword("");
+          setPendingVerificationEmail(trimmedEmail);
+          toast.success("Account created. Please check your email to verify your account before signing in.");
         }
       } else {
         toast.error("Signup failed: No user data received");
       }
     } catch (error) {
       console.error("Signup error:", error);
-      if (error.message?.includes('not configured')) {
+      if (error.message?.includes("not configured")) {
         toast.error("Configuration error: Please check your Supabase settings");
+      } else {
+        toast.error(error.message || "Sign up failed. Please try again.");
       }
     } finally {
       setIsLoading(false);
@@ -245,17 +289,67 @@ export default function LoginPage() {
           </div>
 
           {/* Form Header */}
-          <div className={isSignup ? "mb-4 sm:mb-6" : "mb-3 sm:mb-4"}>
-            <h1 className={`${isSignup ? "text-2xl sm:text-3xl" : "text-xl sm:text-2xl"} font-bold text-gray-900 dark:text-white ${isSignup ? "mb-1" : "mb-0.5"}`}>
-              {isSignup ? "Create Account" : "Sign In"}
+          <div className={isForgotPassword ? "mb-3 sm:mb-4" : isSignup ? "mb-4 sm:mb-6" : "mb-3 sm:mb-4"}>
+            <h1 className={`${isSignup && !isForgotPassword ? "text-2xl sm:text-3xl" : "text-xl sm:text-2xl"} font-bold text-gray-900 dark:text-white ${isSignup ? "mb-1" : "mb-0.5"}`}>
+              {isForgotPassword ? "Reset password" : isSignup ? "Create Account" : "Sign In"}
             </h1>
             <p className={`${isSignup ? "text-sm sm:text-base" : "text-xs sm:text-sm"} text-gray-600 dark:text-gray-400`}>
-              {isSignup ? "Join Roberts Quality Irrigation LLC to manage your field operations" : "Welcome back! Please sign in to continue"}
+              {isForgotPassword
+                ? "Enter your email and we'll send you a link to reset your password."
+                : isSignup
+                  ? "Join Roberts Quality Irrigation LLC to manage your field operations"
+                  : "Welcome back! Please sign in to continue"}
             </p>
           </div>
 
           {/* Form */}
-          <form onSubmit={isSignup ? handleSignup : handleLogin} className={isSignup ? "space-y-3 sm:space-y-4" : "space-y-2 sm:space-y-3"}>
+          <form
+            onSubmit={isForgotPassword ? handleForgotPassword : isSignup ? handleSignup : handleLogin}
+            className={isSignup && !isForgotPassword ? "space-y-3 sm:space-y-4" : "space-y-2 sm:space-y-3"}
+          >
+            {/* Forgot password: email + send link + back */}
+            {isForgotPassword ? (
+              <div className="space-y-3 sm:space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Email
+                  </label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <Input
+                      type="email"
+                      placeholder="example@info.com"
+                      className="pl-10 h-10 sm:h-11 border-primary/30 dark:border-primary/50 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      required
+                      disabled={isSendingReset}
+                    />
+                  </div>
+                </div>
+                <Button
+                  type="submit"
+                  className="w-full h-10 sm:h-11 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg font-medium"
+                  disabled={!email?.trim() || isSendingReset}
+                >
+                  {isSendingReset ? (
+                    <Loader2 className="w-5 h-5 animate-spin text-primary-foreground" />
+                  ) : (
+                    "Send reset link"
+                  )}
+                </Button>
+                <div className="text-center pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsForgotPassword(false)}
+                    className="text-sm text-primary hover:text-primary/90 font-medium hover:underline"
+                  >
+                    Back to sign in
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
             {/* Role Selection - Signup only */}
             {isSignup && (
               <div className="animate-fade-in">
@@ -274,6 +368,7 @@ export default function LoginPage() {
                     <SelectItem value="admin">Admin</SelectItem>
                     <SelectItem value="supervisor">Supervisor</SelectItem>
                     <SelectItem value="technician">Technician</SelectItem>
+                    <SelectItem value="client">Client</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -382,16 +477,55 @@ export default function LoginPage() {
                     {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                   </button>
                 </div>
+                <div className="text-right mt-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsForgotPassword(true)}
+                    className="text-sm text-primary hover:text-primary/90 font-medium hover:underline"
+                  >
+                    Forgot password?
+                  </button>
+                </div>
               </div>
             )}
 
             {/* Submit Button */}
+            {/* Verify email notice + Resend (when verification pending) */}
+            {pendingVerificationEmail && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-3 space-y-2">
+                <p className="text-sm text-amber-800 dark:text-amber-200">
+                  We sent a verification link to <strong>{pendingVerificationEmail}</strong>. Click the link in the email to verify, then sign in.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleResendVerification}
+                    disabled={isResending}
+                    className="border-amber-300 text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900/50"
+                  >
+                    {isResending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Mail className="w-4 h-4 mr-1" />}
+                    {isResending ? "Sending…" : "Resend verification email"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setPendingVerificationEmail(null)}
+                  >
+                    Dismiss
+                  </Button>
+                </div>
+              </div>
+            )}
+
             <Button
               type="submit"
               className={`w-full ${isSignup ? "h-11 sm:h-12" : "h-10 sm:h-11"} bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg font-medium transition-colors ${isSignup ? "mt-2" : "mt-1"}`}
               disabled={
                 isLoading ||
-                !email ||
+                !email?.trim() ||
                 !password ||
                 (isSignup && (!confirmPassword || password !== confirmPassword || !selectedRole))
               }
@@ -404,7 +538,7 @@ export default function LoginPage() {
             </Button>
 
             {/* Toggle Sign In/Sign Up */}
-            {/* <div className={`text-center ${isSignup ? "mt-3 sm:mt-4" : "mt-2 sm:mt-3"}`}>
+            <div className={`text-center ${isSignup ? "mt-3 sm:mt-4" : "mt-2 sm:mt-3"}`}>
               <p className="text-sm text-gray-600 dark:text-gray-400">
                 {isSignup ? "Already have an account?" : "Don't have an account?"}
                 {" "}
@@ -416,13 +550,17 @@ export default function LoginPage() {
                     setConfirmPassword("");
                     setSelectedRole(null);
                     setFullName("");
+                    setPendingVerificationEmail(null);
+                    setIsForgotPassword(false);
                   }}
                   className="text-primary hover:text-primary/90 font-medium hover:underline"
                 >
                   {isSignup ? "Sign in" : "Sign up"}
                 </button>
               </p>
-            </div> */}
+            </div>
+              </>
+            )}
           </form>
 
           {/* Copyright */}

@@ -28,24 +28,27 @@ export const equipmentService = {
   async listPaginated(opts = {}) {
     const {
       page = 1,
-      pageSize = 10,
+      pageSize = 12,
       search = '',
       category = '',
       orderBy = 'created_at',
       orderDirection = 'desc'
     } = opts;
 
-    const from = (page - 1) * pageSize;
-    const to = from + pageSize - 1;
+    const safePage = Math.max(1, Number(page) || 1);
+    const safeSize = Math.min(100, Math.max(1, Number(pageSize) || 12));
+    const from = (safePage - 1) * safeSize;
+    const to = from + safeSize - 1;
 
     let query = supabase
       .from('equipment')
       .select('*', { count: 'exact' })
       .order(orderBy, { ascending: orderDirection === 'asc' });
 
-    if (search && search.trim()) {
-      const term = search.trim();
-      query = query.or(`name.ilike.%${term}%,sku.ilike.%${term}%`);
+    const q = search?.trim();
+    if (q) {
+      const esc = q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+      query = query.or(`name.ilike.%${esc}%,sku.ilike.%${esc}%`);
     }
     if (category && category !== 'all') {
       query = query.eq('category', category);
