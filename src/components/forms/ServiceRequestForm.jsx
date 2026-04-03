@@ -14,7 +14,8 @@ import {
 } from "@/components/ui/dialog";
 import { clientService, storageService, technicianService, emailService } from '@/services';
 import { useQuery } from '@tanstack/react-query';
-import { Loader2, MapPin, Upload, X, Calendar, Eye } from 'lucide-react';
+import { Loader2, MapPin, Upload, X, Calendar, Eye, History } from 'lucide-react';
+import ClientNotesHistoryDialog from '@/components/clients/ClientNotesHistoryDialog';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import TechnicianMap from '@/components/map/TechnicianMap';
@@ -75,6 +76,7 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
   const [isLoading, setIsLoading] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [showAssignmentDialog, setShowAssignmentDialog] = useState(false);
+  const [clientNotesHistoryOpen, setClientNotesHistoryOpen] = useState(false);
 
   const { data: clients = [], isLoading: isLoadingClients } = useQuery({
     queryKey: ['clients'],
@@ -360,22 +362,37 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
             {isLoadingClients ? (
               <SelectSkeleton />
             ) : (
-              <Select value={formData.client_id} onValueChange={handleClientSelect}>
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder="Choose a client..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {clients.length > 0 ? (
-                    clients.map(client => (
-                      <SelectItem key={client.id} value={client.id}>
-                        {client.name} - {client.farm_name}
-                      </SelectItem>
-                    ))
-                  ) : (
-                    <SelectItem value="" disabled>No clients available</SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
+              <div className="flex items-center gap-2">
+                <Select value={formData.client_id} onValueChange={handleClientSelect}>
+                  <SelectTrigger className="h-9 text-sm flex-1 min-w-0">
+                    <SelectValue placeholder="Choose a client..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {clients.length > 0 ? (
+                      clients.map(client => (
+                        <SelectItem key={client.id} value={client.id}>
+                          {client.name} - {client.farm_name}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="" disabled>No clients available</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                {formData.client_id ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9 shrink-0 border-primary/30"
+                    title="Client notes history — view and add entries"
+                    aria-label="Open client notes history"
+                    onClick={() => setClientNotesHistoryOpen(true)}
+                  >
+                    <History className="h-4 w-4" />
+                  </Button>
+                ) : null}
+              </div>
             )}
           </div>
 
@@ -629,6 +646,14 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
           {request ? 'Update Request' : 'Create Request'}
         </Button>
       </div>
+
+      <ClientNotesHistoryDialog
+        open={clientNotesHistoryOpen}
+        onOpenChange={setClientNotesHistoryOpen}
+        clientId={formData.client_id}
+        clientName={formData.client_name ? `${formData.client_name}${formData.farm_name ? ` · ${formData.farm_name}` : ''}` : ''}
+        allowAdd
+      />
     </form>
   );
 }

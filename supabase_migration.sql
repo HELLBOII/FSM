@@ -628,6 +628,12 @@ INSERT INTO specializations (specializations) VALUES
 ON CONFLICT (specializations) DO NOTHING;
 
 -- ============================================
+-- Client notes history (append-only JSON array on clients)
+-- Run if your database was created before this column existed.
+-- ============================================
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS notes_history JSONB DEFAULT '[]'::jsonb;
+
+-- ============================================
 -- SUCCESS MESSAGE
 -- ============================================
 DO $$

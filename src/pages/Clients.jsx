@@ -14,7 +14,9 @@ import {
   ChevronLeft,
   Edit,
   MoreVertical,
-  Droplets } from
+  Droplets,
+  History,
+  StickyNote } from
 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +50,8 @@ import PageHeader from '@/components/common/PageHeader';
 import StatusBadge from '@/components/ui/StatusBadge';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
 import EmptyState from '@/components/common/EmptyState';
+import ClientNotesHistoryDialog from '@/components/clients/ClientNotesHistoryDialog';
+import { normalizeNotesHistory } from '@/utils/clientNotesHistory';
 import { toast } from 'sonner';
 
 const irrigationSystems = [
@@ -114,6 +118,8 @@ export default function Clients() {
   const [selectedClient, setSelectedClient] = useState(null);
   const [showAddIrrigationDialog, setShowAddIrrigationDialog] = useState(false);
   const [newIrrigationSystem, setNewIrrigationSystem] = useState('');
+  const [notesHistoryOpen, setNotesHistoryOpen] = useState(false);
+  const [notesHistoryTarget, setNotesHistoryTarget] = useState(null);
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
@@ -306,7 +312,8 @@ export default function Clients() {
       total_acreage: parseOptionalNumber(formData.total_acreage),
       latitude: lat,
       longitude: lng,
-      location: lat != null && lng != null ? { lat, lng } : null
+      location: lat != null && lng != null ? { lat, lng } : null,
+      notes_history: selectedClient ? normalizeNotesHistory(selectedClient.notes_history) : []
     };
     if (selectedClient) {
       await updateMutation.mutateAsync({ id: selectedClient.id, data: submitData });
@@ -435,6 +442,23 @@ export default function Clients() {
                           <DropdownMenuItem data-source-location="pages/Clients:248:26" data-dynamic-content="false" onClick={() => handleEdit(client)}>
                             <Edit data-source-location="pages/Clients:249:28" data-dynamic-content="false" className="w-4 h-4 mr-2" />
                             Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="flex items-center justify-between gap-2"
+                            onClick={() => {
+                              setNotesHistoryTarget({ id: client.id, name: client.name });
+                              setNotesHistoryOpen(true);
+                            }}
+                          >
+                            <span className="flex items-center">
+                              <History className="w-4 h-4 mr-2 shrink-0" />
+                              Notes history
+                            </span>
+                            {normalizeNotesHistory(client.notes_history).length > 0 && (
+                              <span className="text-xs text-muted-foreground tabular-nums">
+                                {normalizeNotesHistory(client.notes_history).length}
+                              </span>
+                            )}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -781,13 +805,40 @@ export default function Clients() {
                 </div>
 
                 <div data-source-location="pages/Clients:422:12" data-dynamic-content="true">
-                  <Label data-source-location="pages/Clients:423:14" data-dynamic-content="false">Notes</Label>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <Label data-source-location="pages/Clients:423:14" data-dynamic-content="false" className="mb-0">
+                      Notes
+                    </Label>
+                    {selectedClient && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs border-primary/30"
+                        onClick={() => {
+                          setNotesHistoryTarget({ id: selectedClient.id, name: selectedClient.name });
+                          setNotesHistoryOpen(true);
+                        }}
+                      >
+                        <StickyNote className="w-3.5 h-3.5 mr-1.5" />
+                        History
+                        {normalizeNotesHistory(selectedClient.notes_history).length > 0 && (
+                          <Badge variant="secondary" className="ml-1.5 px-1.5 py-0 text-[10px]">
+                            {normalizeNotesHistory(selectedClient.notes_history).length}
+                          </Badge>
+                        )}
+                      </Button>
+                    )}
+                  </div>
                   <Textarea data-source-location="pages/Clients:424:14" data-dynamic-content="false"
                   value={formData.notes}
                   onChange={(e) => setFormData((prev) => ({ ...prev, notes: e.target.value }))}
-                  placeholder="Additional notes..."
+                  placeholder="General notes (separate from dated history below)..."
                   rows={5}
                   className="min-h-[120px] resize-y" />
+                  <p className="text-xs text-muted-foreground mt-1.5">
+                    Use <span className="font-medium">History</span> to add timestamped entries that stay in the client log.
+                  </p>
                 </div>
               </div>
             </div>
@@ -807,6 +858,20 @@ export default function Clients() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <ClientNotesHistoryDialog
+        open={notesHistoryOpen}
+        onOpenChange={(open) => {
+          setNotesHistoryOpen(open);
+          if (!open) setNotesHistoryTarget(null);
+        }}
+        clientId={notesHistoryTarget?.id}
+        clientName={notesHistoryTarget?.name}
+        allowAdd
+        onClientUpdated={(updated) => {
+          if (selectedClient?.id === updated?.id) setSelectedClient(updated);
+        }}
+      />
 
       {/* Add New Irrigation System Dialog */}
       <Dialog open={showAddIrrigationDialog} onOpenChange={setShowAddIrrigationDialog}>

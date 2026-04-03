@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { normalizeNotesHistory, newNoteEntry } from '@/utils/clientNotesHistory';
 
 /**
  * Client Service - CRUD operations for Clients
@@ -187,6 +188,20 @@ export const clientService = {
 
     if (error) throw error;
     return data || [];
+  },
+
+  /**
+   * Append an entry to client notes_history (newest first).
+   * @param {string} clientId
+   * @param {string} text
+   */
+  async appendNotesHistoryEntry(clientId, text) {
+    const t = String(text ?? '').trim();
+    if (!t) throw new Error('Note text is required');
+    const client = await this.getById(clientId);
+    const current = normalizeNotesHistory(client.notes_history);
+    const next = [newNoteEntry(t), ...current];
+    return this.update(clientId, { notes_history: next });
   }
 };
 
