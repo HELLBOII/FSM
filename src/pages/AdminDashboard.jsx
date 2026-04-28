@@ -192,8 +192,9 @@ export default function AdminDashboard() {
             value={stats.total}
             icon={FileText}
             color="blue"
-            trend="up"
-            trendValue="+12% this month" />
+            // trend="up"
+            // trendValue="+12% this month" 
+          />
 
         <StatCard data-source-location="pages/AdminDashboard:172:8" data-dynamic-content="false"
             title="Scheduled Jobs"
