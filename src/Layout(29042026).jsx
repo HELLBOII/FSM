@@ -32,12 +32,15 @@ import {
   LayoutDashboard,
   FileText,
   Calendar,
+  MapPin,
   ClipboardCheck,
+  BarChart3,
   Users,
   Settings,
   LogOut,
   Menu,
   Droplets,
+  ChevronRight,
   Wrench,
   Package,
   UserCircle,
@@ -48,33 +51,20 @@ import {
 'lucide-react';
 
 // Web navigation items for Admin/Supervisor
-const webNavSections = [
-{
-  label: 'Overview',
-  items: [
-  { name: 'Dashboard', icon: LayoutDashboard, page: 'AdminDashboard' },
-  { name: 'Calendar', icon: Calendar, page: 'Calendar' },
-  { name: 'Technician Jobs', icon: Wrench, page: 'AdminTechnicianJobs' }]
-},
-{
-  label: 'Requests',
-  items: [
-  { name: 'Service Requests', icon: FileText, page: 'ServiceRequests' },
-  { name: 'Overdue / Pending', icon: ClipboardCheck, page: 'Scheduling' }]
-},
-{
-  label: 'Manage',
-  items: [
-  { name: 'Clients', icon: UserCircle, page: 'Clients' },
-  { name: 'Technicians', icon: Users, page: 'Technicians' },
-  { name: 'Inventory / Equipment', icon: Package, page: 'EquipmentInventory' }]
-},
-{
-  label: 'Reports',
-  items: [
-  { name: 'Reports', icon: FileText, page: 'Reports' },
-  { name: 'Work Reports', icon: ClipboardCheck, page: 'WorkReports' }]
-}];
+const webNavItems = [
+{ name: 'Dashboard', icon: LayoutDashboard, page: 'AdminDashboard' },
+{ name: 'Service Requests', icon: FileText, page: 'ServiceRequests' },
+{ name: 'Calendar', icon: Calendar, page: 'Calendar' },
+// { name: 'Live Tracking', icon: MapPin, page: 'LiveTracking' },
+{ name: 'Map', icon: MapPin, page: 'Map' },
+{ name: 'Work Reports', icon: ClipboardCheck, page: 'WorkReports' },
+{ name: 'Reports', icon: BarChart3, page: 'Reports' },
+{ divider: true },
+{ name: 'Technicians', icon: Users, page: 'Technicians' },
+{ name: 'Clients', icon: UserCircle, page: 'Clients' },
+{ name: 'Equipment', icon: Package, page: 'EquipmentInventory' },
+{ divider: true },
+{ name: 'Technician Jobs', icon: Wrench, page: 'AdminTechnicianJobs' }];
 
 
 // Mobile navigation for Technicians (Profile is in app bar)
@@ -109,53 +99,6 @@ export default function Layout({ children, currentPageName }) {
   const isClientMobile = userRole === 'client' && clientMobilePages.includes(currentPageName);
   const isMobilePage = isTechnicianMobile || isClientMobile;
   const isNoLayout = noLayoutPages.includes(currentPageName);
-
-  const { data: navRequestCounts } = useQuery({
-    queryKey: ['layoutNavRequestCounts'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('service_requests')
-        .select('status, scheduled_end_time');
-
-      if (error) throw error;
-
-      const requests = data || [];
-      const total = requests.length;
-      const overduePending = requests.filter((r) => {
-        if (r.status === 'completed') return false;
-        if (!r.scheduled_end_time) return false;
-        const due = new Date(r.scheduled_end_time);
-        if (Number.isNaN(due.getTime())) return false;
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        due.setHours(0, 0, 0, 0);
-        return due > today;
-      }).length;
-
-      return { total, overduePending };
-    },
-    staleTime: 30000,
-    refetchInterval: 60000,
-  });
-
-  const getNavBadge = (page) => {
-    if (!navRequestCounts) return null;
-    if (page === 'ServiceRequests') {
-      return (
-        <span className="ml-auto rounded-full bg-[#534AB7] px-2 py-0.5 text-[10px] font-medium text-white">
-          {navRequestCounts.total}
-        </span>
-      );
-    }
-    if (page === 'Scheduling') {
-      return (
-        <span className="ml-auto rounded-full bg-[#A32D2D] px-2 py-0.5 text-[10px] font-medium text-white">
-          {navRequestCounts.overduePending}
-        </span>
-      );
-    }
-    return null;
-  };
 
   const handleLogout = () => {
     setShowLogoutDialog(true);
@@ -304,36 +247,34 @@ export default function Layout({ children, currentPageName }) {
         </div>
 
         {/* Navigation */}
-        <nav data-source-location="Layout:157:8" data-dynamic-content="true" className="flex-1 p-4 space-y-5 overflow-y-auto">
-          {webNavSections.map((section) =>
-          <div key={section.label} className="space-y-1">
-              <p className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-                {section.label}
-              </p>
-              {section.items.map((item) => {
-              const isActive = currentPageName === item.page;
-              return (
-                <Link data-source-location="Layout:164:14" data-dynamic-content="true"
-                key={item.page}
-                to={createPageUrl(item.page)}
-                className={cn(
-                  'flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group',
-                  isActive ?
-                  'bg-primary/10 text-primary font-medium' :
-                  'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                )}>
+        <nav data-source-location="Layout:157:8" data-dynamic-content="true" className="flex-1 p-4 space-y-1 overflow-y-auto">
+          {webNavItems.map((item, index) => {
+            if (item.divider) {
+              return <div data-source-location="Layout:160:21" data-dynamic-content="false" key={index} className="h-px bg-primary/20 my-4" />;
+            }
+            const isActive = currentPageName === item.page;
+            return (
+              <Link data-source-location="Layout:164:14" data-dynamic-content="true"
+              key={item.page}
+              to={createPageUrl(item.page)}
+              className={cn(
+                'flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group',
+                isActive ?
+                'bg-primary/10 text-primary font-medium' :
+                'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+              )}>
 
-                    <item.icon data-source-location="Layout:174:16" data-dynamic-content="false" className={cn(
-                    'w-5 h-5 transition-colors',
-                    isActive ? 'text-primary' : 'text-gray-400 group-hover:text-gray-600'
-                  )} />
-                    <span data-source-location="Layout:178:16" data-dynamic-content="true">{item.name}</span>
-                    {getNavBadge(item.page)}
-                  </Link>);
+                <item.icon data-source-location="Layout:174:16" data-dynamic-content="false" className={cn(
+                  'w-5 h-5 transition-colors',
+                  isActive ? 'text-primary' : 'text-gray-400 group-hover:text-gray-600'
+                )} />
+                <span data-source-location="Layout:178:16" data-dynamic-content="true">{item.name}</span>
+                {isActive &&
+                <ChevronRight data-source-location="Layout:180:18" data-dynamic-content="false" className="w-4 h-4 ml-auto text-primary" />
+                }
+              </Link>);
 
-            })}
-            </div>
-          )}
+          })}
         </nav>
 
         {/* User Section */}
@@ -397,37 +338,32 @@ export default function Layout({ children, currentPageName }) {
                 <img src="/images/logofull.png" alt="Roberts Quality Irrigation LLC" className="h-14 w-auto object-contain" />
                 <p data-source-location="Layout:242:20" data-dynamic-content="false" className="text-xs text-gray-500 mt-1">Field Service Management</p>
               </div>
-              <nav data-source-location="Layout:246:14" data-dynamic-content="true" className="p-4 space-y-5">
-                {webNavSections.map((section) =>
-                <div key={section.label} className="space-y-1">
-                    <p className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-                      {section.label}
-                    </p>
-                    {section.items.map((item) => {
-                    const isActive = currentPageName === item.page;
-                    return (
-                      <Link data-source-location="Layout:253:20" data-dynamic-content="true"
-                      key={item.page}
-                      to={createPageUrl(item.page)}
-                      onClick={() => setSidebarOpen(false)}
-                      className={cn(
-                        'flex items-center gap-3 px-4 py-3 rounded-xl transition-all',
-                        isActive ?
-                        'bg-primary/10 text-primary font-medium' :
-                        'text-gray-600 hover:bg-gray-50'
-                      )}>
+              <nav data-source-location="Layout:246:14" data-dynamic-content="true" className="p-4 space-y-1">
+                {webNavItems.map((item, index) => {
+                  if (item.divider) {
+                    return <div data-source-location="Layout:249:27" data-dynamic-content="false" key={index} className="h-px bg-primary/20 my-4" />;
+                  }
+                  const isActive = currentPageName === item.page;
+                  return (
+                    <Link data-source-location="Layout:253:20" data-dynamic-content="true"
+                    key={item.page}
+                    to={createPageUrl(item.page)}
+                    onClick={() => setSidebarOpen(false)}
+                    className={cn(
+                      'flex items-center gap-3 px-4 py-3 rounded-xl transition-all',
+                      isActive ?
+                      'bg-primary/10 text-primary font-medium' :
+                      'text-gray-600 hover:bg-gray-50'
+                    )}>
 
-                          <item.icon data-source-location="Layout:264:22" data-dynamic-content="false" className={cn(
-                          'w-5 h-5',
-                          isActive ? 'text-primary' : 'text-gray-400'
-                        )} />
-                          <span data-source-location="Layout:268:22" data-dynamic-content="true">{item.name}</span>
-                          {getNavBadge(item.page)}
-                        </Link>);
+                      <item.icon data-source-location="Layout:264:22" data-dynamic-content="false" className={cn(
+                        'w-5 h-5',
+                        isActive ? 'text-primary' : 'text-gray-400'
+                      )} />
+                      <span data-source-location="Layout:268:22" data-dynamic-content="true">{item.name}</span>
+                    </Link>);
 
-                  })}
-                  </div>
-                )}
+                })}
               </nav>
             </SheetContent>
           </Sheet>

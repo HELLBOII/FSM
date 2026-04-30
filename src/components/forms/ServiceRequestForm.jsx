@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,7 +18,7 @@ import { Loader2, MapPin, Upload, X, Calendar, Eye, History } from 'lucide-react
 import ClientNotesHistoryDialog from '@/components/clients/ClientNotesHistoryDialog';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
-import TechnicianMap from '@/components/map/TechnicianMap';
+import DashboardMap, { MAP_PIN_COLORS } from '@/components/map/DashboardMap';
 
 const irrigationTypes = [
   { value: 'drip', label: 'Drip Irrigation', icon: '💧' },
@@ -49,6 +49,111 @@ const priorities = [
   { value: 'urgent', label: 'Urgent', description: 'Critical - crop damage risk' }
 ];
 
+const CLOSED_STATUSES = ['completed', 'approved', 'closed'];
+
+function isReactiveRequest(r) {
+  return (
+    r.priority === 'urgent' ||
+    ['leak_repair', 'pump_issue', 'pipe_repair', 'valve_replacement'].includes(r.issue_category)
+  );
+}
+
+function isRequestOverdue(r) {
+  if (CLOSED_STATUSES.includes(r.status)) return false;
+  if (r.is_sla_breached) return true;
+  if (r.scheduled_date) {
+    const d = new Date(r.scheduled_date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    d.setHours(0, 0, 0, 0);
+    if (d < today && ['scheduled', 'assigned', 'new'].includes(r.status)) return true;
+  }
+  return false;
+}
+
+function formatRequestAppt(r) {
+  if (r?.scheduled_start_time) {
+    try {
+      return format(new Date(r.scheduled_start_time), 'MMM d • h:mm a');
+    } catch {
+      // fallback below
+    }
+  }
+  if (!r?.scheduled_date) return '—';
+  try {
+    const d = format(new Date(r.scheduled_date), 'MMM d');
+    return r.scheduled_time_slot ? `${d}, ${r.scheduled_time_slot}` : d;
+  } catch {
+    return r.scheduled_date;
+  }
+}
+
+function deriveClientMapContext(sortedRequestsForClient) {
+  const list = sortedRequestsForClient;
+  if (!list.length) {
+    return {
+      mapStatus: 'unscheduled',
+      mapStatusLabel: 'Unscheduled',
+      pinColor: MAP_PIN_COLORS.unscheduled,
+      nextApptText: '—',
+      primaryRequest: null,
+    };
+  }
+  const active = list.filter((r) => !CLOSED_STATUSES.includes(r.status));
+  const pickPrimary = (pred) => active.find(pred) || list[0];
+
+  if (active.some((r) => isRequestOverdue(r))) {
+    const r = pickPrimary((x) => isRequestOverdue(x));
+    return {
+      mapStatus: 'overdue',
+      mapStatusLabel: 'Overdue',
+      pinColor: MAP_PIN_COLORS.overdue,
+      nextApptText: formatRequestAppt(r),
+      primaryRequest: r,
+    };
+  }
+  if (active.some((r) => r.status === 'new' && !r.scheduled_date)) {
+    const r = pickPrimary((x) => x.status === 'new' && !x.scheduled_date);
+    return {
+      mapStatus: 'unscheduled',
+      mapStatusLabel: 'Unscheduled',
+      pinColor: MAP_PIN_COLORS.unscheduled,
+      nextApptText: '—',
+      primaryRequest: r,
+    };
+  }
+  if (active.some((r) => r.status === 'in_progress' && isReactiveRequest(r))) {
+    const r = pickPrimary((x) => x.status === 'in_progress' && isReactiveRequest(x));
+    return {
+      mapStatus: 'reactive',
+      mapStatusLabel: 'Reactive / Repair',
+      pinColor: MAP_PIN_COLORS.reactive,
+      nextApptText: formatRequestAppt(r),
+      primaryRequest: r,
+    };
+  }
+  if (active.some((r) => ['scheduled', 'assigned', 'in_progress'].includes(r.status))) {
+    const r = pickPrimary((x) => ['scheduled', 'assigned', 'in_progress'].includes(x.status));
+    return {
+      mapStatus: 'scheduled',
+      mapStatusLabel: 'Scheduled',
+      pinColor: MAP_PIN_COLORS.scheduled,
+      nextApptText: formatRequestAppt(r),
+      primaryRequest: r,
+    };
+  }
+  const lastDone = list.find((r) => r.status === 'completed') || list[0];
+  return {
+    mapStatus: 'completed',
+    mapStatusLabel: 'Completed',
+    pinColor: MAP_PIN_COLORS.completed,
+    nextApptText: lastDone?.actual_end_time
+      ? format(new Date(lastDone.actual_end_time), 'MMM d')
+      : formatRequestAppt(lastDone),
+    primaryRequest: lastDone,
+  };
+}
+
 export default function ServiceRequestForm({ request, onSubmit, onCancel, initialClientId, initialStartTime, initialEndTime }) {
   const [formData, setFormData] = useState({
     client_id: '',
@@ -77,6 +182,7 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [showAssignmentDialog, setShowAssignmentDialog] = useState(false);
   const [clientNotesHistoryOpen, setClientNotesHistoryOpen] = useState(false);
+  const [errors, setErrors] = useState({});
 
   const { data: clients = [], isLoading: isLoadingClients } = useQuery({
     queryKey: ['clients'],
@@ -87,6 +193,59 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
     queryKey: ['technicians', 'active'],
     queryFn: () => technicianService.filter({ status: 'active' })
   });
+  const { data: requests = [] } = useQuery({
+    queryKey: ['serviceRequests'],
+    queryFn: () => serviceRequestService.list('created_at', 'desc', 100)
+  });
+
+  const requestsByClientId = useMemo(() => {
+    const m = new Map();
+    for (const r of requests) {
+      if (!r.client_id) continue;
+      if (!m.has(r.client_id)) m.set(r.client_id, []);
+      m.get(r.client_id).push(r);
+    }
+    for (const arr of m.values()) {
+      arr.sort((a, b) => {
+        const tb = new Date(b.updated_at || b.created_at).getTime();
+        const ta = new Date(a.updated_at || a.created_at).getTime();
+        return tb - ta;
+      });
+    }
+    return m;
+  }, [requests]);
+
+  const mapJobs = useMemo(
+    () =>
+      clients
+        .filter((client) => {
+          const lat = Number(client.location?.lat ?? client.latitude);
+          const lng = Number(client.location?.lng ?? client.longitude);
+          return Number.isFinite(lat) && Number.isFinite(lng);
+        })
+        .map((client) => {
+          const lat = Number(client.location?.lat ?? client.latitude);
+          const lng = Number(client.location?.lng ?? client.longitude);
+          const reqs = requestsByClientId.get(client.id) || [];
+          const ctx = deriveClientMapContext(reqs);
+          return {
+            id: client.id,
+            client_name: client.name || 'Client',
+            farm_name: client.farm_name || '',
+            location: {
+              lat,
+              lng,
+              address: client.address || '',
+            },
+            mapStatus: ctx.mapStatus,
+            mapStatusLabel: ctx.mapStatusLabel,
+            pinColor: ctx.pinColor,
+            nextApptText: ctx.nextApptText,
+            primaryRequest: ctx.primaryRequest,
+          };
+        }),
+    [clients, requestsByClientId]
+  );
 
   // Reusable skeleton component for Select fields
   const SelectSkeleton = () => (
@@ -178,16 +337,16 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
   }, [request, initialClientId, clients]);
 
   const handleClientSelect = (clientId) => {
-    const client = clients.find(c => c.id === clientId);
+    const client = clients.find((c) => String(c.id) === String(clientId));
     if (client) {
       // Extract location data from client
-      const lat = client.latitude ?? null;
-      const lng = client.longitude ?? null;
+      const lat = client.location?.lat ?? client.latitude ?? null;
+      const lng = client.location?.lng ?? client.longitude ?? null;
       const address = client.address || '';
       
       setFormData(prev => ({
         ...prev,
-        client_id: clientId,
+        client_id: client.id,
         client_name: client.name,
         farm_name: client.farm_name,
         contact_phone: client.phone,
@@ -197,7 +356,23 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
           address: address
         }
       }));
+      setErrors((prev) => ({ ...prev, client_id: '' }));
     }
+  };
+
+  const validateForm = () => {
+    const nextErrors = {};
+    if (!formData.client_id) nextErrors.client_id = 'Client is required.';
+    if (!formData.irrigation_type) nextErrors.irrigation_type = 'Irrigation type is required.';
+    if (!formData.issue_category) nextErrors.issue_category = 'Issue category is required.';
+    if (!fromDateTime) nextErrors.from_time = 'Start time is required.';
+    if (!toDateTime) nextErrors.to_time = 'End time is required.';
+    if (!formData.assigned_technician_id) nextErrors.assigned_technician_id = 'Technician is required.';
+    if (fromDateTime && toDateTime && toDateTime <= fromDateTime) {
+      nextErrors.to_time = 'End time must be after start time.';
+    }
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
   };
 
   const handlePhotoUpload = async (e) => {
@@ -267,6 +442,10 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!validateForm()) {
+      toast.error('Please fill all mandatory fields.');
+      return;
+    }
     setIsLoading(true);
     
     try {
@@ -305,26 +484,26 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
       
       // Get technician data if assigned (for including in client email)
       let technician = null;
-      if (submitData.assigned_technician_id) {
-        technician = technicians.find(t => t.id === submitData.assigned_technician_id);
-        // Add technician phone to submitData for client email
-        if (technician && technician.phone) {
-          submitData.technician_mobile = technician.phone;
-        }
-      }
+      // if (submitData.assigned_technician_id) {
+      //   technician = technicians.find(t => t.id === submitData.assigned_technician_id);
+      //   // Add technician phone to submitData for client email
+      //   if (technician && technician.phone) {
+      //     submitData.technician_mobile = technician.phone;
+      //   }
+      // }
       
       // Send email to client
-      if (submitData.client_id) {
-        const client = clients.find(c => c.id === submitData.client_id);
-        if (client && client.email) {
-          try {
-            await emailService.sendClientNotification(submitData, client, isUpdate);
-          } catch (error) {
-            console.error('Failed to send email to client:', error);
-            // Don't show error to user, email sending failure shouldn't block form submission
-          }
-        }
-      }
+      // if (submitData.client_id) {
+      //   const client = clients.find(c => c.id === submitData.client_id);
+      //   if (client && client.email) {
+      //     try {
+      //       await emailService.sendClientNotification(submitData, client, isUpdate);
+      //     } catch (error) {
+      //       console.error('Failed to send email to client:', error);
+      //       // Don't show error to user, email sending failure shouldn't block form submission
+      //     }
+      //   }
+      // }
       
       // Send email to technician if assigned
       if (technician && technician.email) {
@@ -344,12 +523,14 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
   const handleFromDateTimeChange = (dateTime) => {
     setFromDateTime(dateTime);
     setFormData(prev => ({ ...prev, from_time: dateTime }));
+    setErrors((prev) => ({ ...prev, from_time: '', to_time: '' }));
   };
 
   // Handle to date/time changes
   const handleToDateTimeChange = (dateTime) => {
     setToDateTime(dateTime);
     setFormData(prev => ({ ...prev, to_time: dateTime }));
+    setErrors((prev) => ({ ...prev, to_time: '' }));
   };
 
   return (
@@ -358,13 +539,13 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
         {/* Row 1: Select Client, Irrigation Type, Issue Category */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div>
-            <Label className="text-sm mb-2 block">Select Client</Label>
+            <Label className="text-sm mb-2 block">Select Client <span className="text-red-600">*</span></Label>
             {isLoadingClients ? (
               <SelectSkeleton />
             ) : (
               <div className="flex items-center gap-2">
                 <Select value={formData.client_id} onValueChange={handleClientSelect}>
-                  <SelectTrigger className="h-9 text-sm flex-1 min-w-0">
+                  <SelectTrigger className={`h-9 text-sm flex-1 min-w-0 ${errors.client_id ? 'border-red-500' : ''}`}>
                     <SelectValue placeholder="Choose a client..." />
                   </SelectTrigger>
                   <SelectContent>
@@ -394,15 +575,19 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
                 ) : null}
               </div>
             )}
+            {errors.client_id && <p className="mt-1 text-xs text-red-600">{errors.client_id}</p>}
           </div>
 
           <div>
-            <Label className="text-sm mb-2 block">Irrigation Type</Label>
+            <Label className="text-sm mb-2 block">Irrigation Type <span className="text-red-600">*</span></Label>
             <Select 
               value={formData.irrigation_type} 
-              onValueChange={(v) => setFormData(prev => ({ ...prev, irrigation_type: v }))}
+              onValueChange={(v) => {
+                setFormData(prev => ({ ...prev, irrigation_type: v }));
+                setErrors((prev) => ({ ...prev, irrigation_type: '' }));
+              }}
             >
-              <SelectTrigger className="h-9 text-sm">
+              <SelectTrigger className={`h-9 text-sm ${errors.irrigation_type ? 'border-red-500' : ''}`}>
                 <SelectValue placeholder="Select type..." />
               </SelectTrigger>
               <SelectContent>
@@ -413,10 +598,11 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
                 ))}
               </SelectContent>
             </Select>
+            {errors.irrigation_type && <p className="mt-1 text-xs text-red-600">{errors.irrigation_type}</p>}
           </div>
 
           <div>
-            <Label className="text-sm mb-2 block">Issue Category</Label>
+            <Label className="text-sm mb-2 block">Issue Category <span className="text-red-600">*</span></Label>
             <Select 
               value={formData.issue_category} 
               onValueChange={(v) => {
@@ -426,9 +612,10 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
                   issue_category: v,
                   description: selectedCategory ? selectedCategory.label : prev.description
                 }));
+                setErrors((prev) => ({ ...prev, issue_category: '' }));
               }}
             >
-              <SelectTrigger className="h-9 text-sm">
+              <SelectTrigger className={`h-9 text-sm ${errors.issue_category ? 'border-red-500' : ''}`}>
                 <SelectValue placeholder="Select issue..." />
               </SelectTrigger>
               <SelectContent>
@@ -439,32 +626,35 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
                 ))}
               </SelectContent>
             </Select>
+            {errors.issue_category && <p className="mt-1 text-xs text-red-600">{errors.issue_category}</p>}
           </div>
         </div>
 
         {/* Row 2: From Time, To Time, Technician */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div>
-            <Label className="text-sm mb-2 block">Start Time</Label>
+            <Label className="text-sm mb-2 block">Start Time <span className="text-red-600">*</span></Label>
             <DateTimePicker
               date={fromDateTime}
               onDateChange={handleFromDateTimeChange}
               placeholder="Select start date & time"
             />
+            {errors.from_time && <p className="mt-1 text-xs text-red-600">{errors.from_time}</p>}
           </div>
 
           <div>
-            <Label className="text-sm mb-2 block">End Time</Label>
+            <Label className="text-sm mb-2 block">End Time <span className="text-red-600">*</span></Label>
             <DateTimePicker
               date={toDateTime}
               onDateChange={handleToDateTimeChange}
               placeholder="Select end date & time"
             />
+            {errors.to_time && <p className="mt-1 text-xs text-red-600">{errors.to_time}</p>}
           </div>
 
           <div className="flex gap-2">
             <div className="flex-1">
-              <Label className="text-sm mb-2 block">Technician</Label>
+              <Label className="text-sm mb-2 block">Technician <span className="text-red-600">*</span></Label>
               {isLoadingTechnicians ? (
                 <SelectSkeleton />
               ) : (
@@ -478,9 +668,10 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
                       assigned_technician_name: technician ? technician.name : '',
                       assigned_technician_phone: technician ? technician.phone : ''
                     }));
+                    setErrors((prev) => ({ ...prev, assigned_technician_id: '' }));
                   }}
                 >
-                  <SelectTrigger className="h-9 text-sm">
+                  <SelectTrigger className={`h-9 text-sm ${errors.assigned_technician_id ? 'border-red-500' : ''}`}>
                     <SelectValue placeholder="Select technician..." />
                   </SelectTrigger>
                   <SelectContent>
@@ -496,6 +687,7 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
                   </SelectContent>
                 </Select>
               )}
+              {errors.assigned_technician_id && <p className="mt-1 text-xs text-red-600">{errors.assigned_technician_id}</p>}
             </div>
             <div className="flex items-end">
               <Button
@@ -513,54 +705,15 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
           </div>
         </div>
 
-        {/* Map (View Only) */}
+        {/* Map (Dashboard-style) */}
         <div>
-          <TechnicianMap
-            technicians={[]}
-            jobs={clients
-              .filter(client => {
-                // Check if client has location data (either in location object or latitude/longitude fields)
-                const lat = client.location?.lat ?? client.latitude;
-                const lng = client.location?.lng ?? client.longitude;
-                return lat != null && lng != null;
-              })
-              .map(client => {
-                // Transform client to job-like format for the map
-                const lat = client.location?.lat ?? client.latitude;
-                const lng = client.location?.lng ?? client.longitude;
-                return {
-                  id: client.id,
-                  client_name: client.name,
-                  farm_name: client.farm_name,
-                  location: {
-                    lat: lat,
-                    lng: lng,
-                    address: client.address || ''
-                  }
-                  // No request_number, status, or priority - these are clients, not jobs
-                };
-              })}
-            center={(() => {
-              // Calculate center based on client locations
-              const clientLocations = clients
-                .filter(client => {
-                  const lat = client.location?.lat ?? client.latitude;
-                  const lng = client.location?.lng ?? client.longitude;
-                  return lat != null && lng != null;
-                })
-                .map(client => ({
-                  lat: client.location?.lat ?? client.latitude,
-                  lng: client.location?.lng ?? client.longitude
-                }));
-              
-              if (clientLocations.length > 0) {
-                const avgLat = clientLocations.reduce((sum, loc) => sum + loc.lat, 0) / clientLocations.length;
-                const avgLng = clientLocations.reduce((sum, loc) => sum + loc.lng, 0) / clientLocations.length;
-                return [avgLat, avgLng];
-              }
-              return [39.8283, -98.5795]; // Default center (US center)
-            })()}
-            zoom={6}
+          <DashboardMap
+            jobs={mapJobs}
+            center={[39.5, -98.5]}
+            zoom={4}
+            autoCenterFromJobs={false}
+            onSelectJob={(job) => handleClientSelect(job.id)}
+            onOpenClientDetail={(job) => handleClientSelect(job.id)}
             className="h-[300px]"
           />
         </div>

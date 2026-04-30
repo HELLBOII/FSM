@@ -173,22 +173,6 @@ export default function Calendar() {
     return format(currentDate, 'EEEE, MMMM d, yyyy');
   };
 
-  const getDisplayStatus = (appointment) => {
-    const status = (appointment?.status || '').toLowerCase();
-    const isScheduledFamily = status === 'scheduled' || status === 'in_progress';
-    const endDate = appointment?.scheduled_end_time ? new Date(appointment.scheduled_end_time) : null;
-    const hasValidEnd = endDate && !Number.isNaN(endDate.getTime());
-    if (isScheduledFamily && hasValidEnd) {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const due = new Date(endDate);
-      due.setHours(0, 0, 0, 0);
-      if (due < today) return 'overdue';
-    }
-    if (status === 'in_progress') return 'scheduled';
-    return status || appointment?.status;
-  };
-
   if (isLoading) {
     return (
       <div data-source-location="pages/Calendar:74:6" data-dynamic-content="false" className="flex items-center justify-center min-h-[60vh]">
@@ -278,7 +262,7 @@ export default function Calendar() {
                       {selectedAppointment.client_name} • {selectedAppointment.farm_name}
                     </DialogDescription>
                   </div>
-                  <StatusBadge status={getDisplayStatus(selectedAppointment)} size="md" />
+                  <StatusBadge status={selectedAppointment.status} size="md" />
                 </div>
               </DialogHeader>
 
@@ -407,22 +391,22 @@ export default function Calendar() {
       </Dialog>
 
       {/* Legend */}
-      <div className="mt-3 flex flex-wrap gap-3">
-        <div className="flex items-center gap-2 rounded-md border border-black/10 bg-white px-2.5 py-1">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#534AB7]" />
-          <span className="text-[11px] text-[#6f6f68]">Scheduled</span>
+      <div data-source-location="pages/Calendar:142:6" data-dynamic-content="false" className="flex flex-wrap gap-4 text-sm">
+        <div data-source-location="pages/Calendar:143:8" data-dynamic-content="false" className="flex items-center gap-2">
+          <div data-source-location="pages/Calendar:144:10" data-dynamic-content="false" className="w-4 h-4 rounded bg-blue-100 border border-blue-300" />
+          <span data-source-location="pages/Calendar:145:10" data-dynamic-content="false" className="text-gray-600">New/Scheduled</span>
         </div>
-        <div className="flex items-center gap-2 rounded-md border border-black/10 bg-white px-2.5 py-1">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#1D9E75]" />
-          <span className="text-[11px] text-[#6f6f68]">Completed</span>
+        <div data-source-location="pages/Calendar:147:8" data-dynamic-content="false" className="flex items-center gap-2">
+          <div data-source-location="pages/Calendar:148:10" data-dynamic-content="false" className="w-4 h-4 rounded bg-yellow-100 border border-yellow-300" />
+          <span data-source-location="pages/Calendar:149:10" data-dynamic-content="false" className="text-gray-600">In Progress</span>
         </div>
-        <div className="flex items-center gap-2 rounded-md border border-black/10 bg-white px-2.5 py-1">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#E24B4A]" />
-          <span className="text-[11px] text-[#6f6f68]">Overdue</span>
+        <div data-source-location="pages/Calendar:151:8" data-dynamic-content="false" className="flex items-center gap-2">
+          <div data-source-location="pages/Calendar:152:10" data-dynamic-content="false" className="w-4 h-4 rounded bg-green-100 border border-green-300" />
+          <span data-source-location="pages/Calendar:153:10" data-dynamic-content="false" className="text-gray-600">Completed</span>
         </div>
-        <div className="flex items-center gap-2 rounded-md border border-black/10 bg-white px-2.5 py-1">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#378ADD]" />
-          <span className="text-[11px] text-[#6f6f68]">Reactive</span>
+        <div data-source-location="pages/Calendar:155:8" data-dynamic-content="false" className="flex items-center gap-2">
+          <div data-source-location="pages/Calendar:156:10" data-dynamic-content="false" className="w-4 h-4 rounded bg-red-100 border border-red-300" />
+          <span data-source-location="pages/Calendar:157:10" data-dynamic-content="false" className="text-gray-600">Urgent</span>
         </div>
       </div>
     </div>);

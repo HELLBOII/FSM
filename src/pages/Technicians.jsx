@@ -286,10 +286,39 @@ export default function Technicians() {
     setShowForm(true);
   };
 
+  const handleGeocode = async () => {
+  const address = `${formData.address} ${formData.city} ${formData.state} ${formData.zipcode}`;
+  console.log('Address:', address);
+  const response = await fetch(
+    `https://nominatim.openstreetmap.org/search?format=json&q=${address}`
+  );
+
+  const data = await response.json();
+  console.log('Geocoding data:', data);
+
+  return data;
+};
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const lat = parseOptionalNumber(formData.latitude);
-    const lng = parseOptionalNumber(formData.longitude);
+    let lat = null;
+    let lng = null;
+    console.log('Form data:', formData);
+
+  if (formData.latitude && formData.longitude) {
+    lat = parseOptionalNumber(formData.latitude);
+    lng = parseOptionalNumber(formData.longitude);
+  } else {
+    const data = await handleGeocode();
+    console.log('Geocoding data:', data);
+    if (data && data.length > 0) {
+      lat = parseOptionalNumber(data[0].lat);
+      lng = parseOptionalNumber(data[0].lon);
+    } else {
+      alert("Address not found");
+      return;
+    }
+  }
     const submitData = {
       ...formData,
       employee_id: formData.employee_id?.trim() || null,

@@ -5,9 +5,16 @@ const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
+  const [session, setSession] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [authError, setAuthError] = useState(null);
+
+  const applySession = useCallback((nextSession) => {
+    setSession(nextSession ?? null);
+    setUser(nextSession?.user ?? null);
+    setIsAuthenticated(!!nextSession?.user);
+  }, []);
 
   const checkUserAuth = useCallback(async () => {
     try {
@@ -19,45 +26,49 @@ export const AuthProvider = ({ children }) => {
         if (error.message !== 'Invalid Refresh Token: Refresh Token Not Found') {
           console.error('User auth check failed:', error);
         }
-        setUser(null);
-        setIsAuthenticated(false);
+        applySession(null);
         setIsLoadingAuth(false);
         return;
       }
       
       if (user) {
-        setUser(user);
-        setIsAuthenticated(true);
+        const { data: { session: s } } = await supabase.auth.getSession();
+        applySession(s);
         setAuthError(null);
       } else {
-        setUser(null);
-        setIsAuthenticated(false);
+        applySession(null);
       }
       setIsLoadingAuth(false);
     } catch (error) {
       console.error('Unexpected auth error:', error);
-      setUser(null);
-      setIsAuthenticated(false);
+      applySession(null);
       setIsLoadingAuth(false);
     }
+  }, [applySession]);
+
+  const getAccessToken = useCallback(async () => {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) return null;
+    return data.session?.access_token ?? null;
   }, []);
 
   useEffect(() => {
     // Check initial session
     checkUserAuth();
 
-    // Listen for auth state changes
+    // Listen for auth state changes (JWT refresh, sign-in, sign-out)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          if (session?.user) {
-            setUser(session.user);
-            setIsAuthenticated(true);
-            setAuthError(null);
-          }
+      async (event, nextSession) => {
+        if (event === 'INITIAL_SESSION') {
+          applySession(nextSession);
+          setIsLoadingAuth(false);
+          return;
+        }
+        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+          applySession(nextSession);
+          setAuthError(null);
         } else if (event === 'SIGNED_OUT') {
-          setUser(null);
-          setIsAuthenticated(false);
+          applySession(null);
         }
         setIsLoadingAuth(false);
       }
@@ -66,7 +77,7 @@ export const AuthProvider = ({ children }) => {
     return () => {
       subscription.unsubscribe();
     };
-  }, [checkUserAuth]);
+  }, [checkUserAuth, applySession]);
 
   const login = async (email, password) => {
     try {
@@ -135,8 +146,15 @@ export const AuthProvider = ({ children }) => {
       }
 
       if (data?.user) {
-        setUser(data.user);
-        setIsAuthenticated(true);
+        const sess =
+          data.session ?? (await supabase.auth.getSession()).data.session ?? null;
+        if (sess) {
+          applySession(sess);
+        } else {
+          setSession(null);
+          setUser(data.user);
+          setIsAuthenticated(true);
+        }
         setAuthError(null);
       } else {
         throw new Error('Login successful but no user data received');
@@ -233,10 +251,8 @@ export const AuthProvider = ({ children }) => {
         throw error;
       }
 
-      // Only set user as authenticated when we have a session (email confirmation may be required)
       if (data?.user && data?.session) {
-        setUser(data.user);
-        setIsAuthenticated(true);
+        applySession(data.session);
         setAuthError(null);
       }
       // If user exists but no session, email confirmation is pending - do not set authenticated
@@ -317,8 +333,7 @@ export const AuthProvider = ({ children }) => {
     try {
       // Sign out from Supabase
       await supabase.auth.signOut();
-      setUser(null);
-      setIsAuthenticated(false);
+      applySession(null);
       setAuthError(null);
 
       if (shouldRedirect) {
@@ -328,8 +343,7 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('Logout failed:', error);
       // Still clear local state even if signOut fails
-      setUser(null);
-      setIsAuthenticated(false);
+      applySession(null);
     }
   };
 
@@ -341,6 +355,7 @@ export const AuthProvider = ({ children }) => {
   return (
     <AuthContext.Provider value={{
       user,
+      session,
       isAuthenticated,
       isLoadingAuth,
       authError,
@@ -351,7 +366,8 @@ export const AuthProvider = ({ children }) => {
       updatePassword,
       logout,
       navigateToLogin,
-      checkUserAuth
+      checkUserAuth,
+      getAccessToken
     }}>
       {children}
     </AuthContext.Provider>

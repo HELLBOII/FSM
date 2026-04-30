@@ -107,10 +107,22 @@ const ProtectedRoute = ({ pageName, children }) => {
   // Get user role from metadata
   const userRole = user?.user_metadata?.user_role;
 
-  // If user is authenticated and tries to open Login or RoleSelection (e.g. via back button), redirect to role default
-  if (pageName === 'Login' || pageName === 'RoleSelection') {
+  // If user is authenticated and tries to open Login, redirect to role/default page
+  if (pageName === 'Login') {
     const redirectPath = getDefaultPathForRole(userRole);
     return <Navigate to={redirectPath} replace />;
+  }
+
+  // Allow RoleSelection only when no role is set yet; otherwise redirect to role dashboard
+  if (pageName === 'RoleSelection') {
+    if (!userRole) return <>{children}</>;
+    const redirectPath = getDefaultPathForRole(userRole);
+    return <Navigate to={redirectPath} replace />;
+  }
+
+  // For all protected pages (except RoleSelection), force users without a role to pick one first
+  if (!userRole) {
+    return <Navigate to="/RoleSelection" replace />;
   }
 
   // Check if user has access to this page

@@ -1,42 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { createPageUrl } from '@/utils';
-import { serviceRequestService } from '@/services';
+import { serviceRequestService, clientService, technicianService, emailService } from '@/services';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { motion, AnimatePresence } from 'framer-motion';
-import {
-  Plus,
-  Search,
-  Filter,
-  Grid3X3,
-  List,
-  SlidersHorizontal,
-  X,
-  Download,
-  RefreshCw,
-  Sparkles,
-  UserCheck,
-  ChevronLeft,
-  ChevronRight } from
-'lucide-react';
+import { Plus, RefreshCw, FileText, AlertTriangle, CheckCircle, Clock3 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue } from
-"@/components/ui/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger } from
-"@/components/ui/sheet";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -44,120 +11,26 @@ import {
   DialogHeader,
   DialogTitle } from
 "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
-import PageHeader from '@/components/common/PageHeader';
-import JobCard from '@/components/ui/JobCard';
 import StatusBadge from '@/components/ui/StatusBadge';
-import EmptyState from '@/components/common/EmptyState';
+import LoadingSpinner from '@/components/common/LoadingSpinner';
 import ServiceRequestForm from '@/components/forms/ServiceRequestForm';
-import AutoAssignDialog from '@/components/assignment/AutoAssignDialog';
-import AssignmentPanel from '@/components/assignment/AssignmentPanel';
+import { DateTimePicker } from "@/components/ui/DateTimePicker";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from 'sonner';
-import { format } from 'date-fns';
-
-const statusFilters = [
-{ value: 'all', label: 'All Status' },
-{ value: 'new', label: 'New' },
-{ value: 'scheduled', label: 'Scheduled' },
-{ value: 'assigned', label: 'Assigned' },
-{ value: 'in_progress', label: 'In Progress' },
-{ value: 'completed', label: 'Completed' },
-{ value: 'approved', label: 'Approved' },
-{ value: 'closed', label: 'Closed' },
-{ value: 'rework', label: 'Rework' }];
-
-
-const priorityFilters = [
-{ value: 'all', label: 'All Priority' },
-{ value: 'urgent', label: 'Urgent' },
-{ value: 'high', label: 'High' },
-{ value: 'medium', label: 'Medium' },
-{ value: 'low', label: 'Low' }];
-
-
-const irrigationFilters = [
-{ value: 'all', label: 'All Types' },
-{ value: 'drip', label: 'Drip' },
-{ value: 'sprinkler', label: 'Sprinkler' },
-{ value: 'center_pivot', label: 'Center Pivot' },
-{ value: 'flood', label: 'Flood' },
-{ value: 'micro_sprinkler', label: 'Micro Sprinkler' },
-{ value: 'subsurface', label: 'Subsurface' }];
-
-
-const PAGE_SIZE_OPTIONS = [12, 24, 48];
-
-function ServiceRequestCardSkeleton() {
-  return (
-    <div className="relative bg-white rounded-xl border p-4 animate-pulse">
-      <div className="flex gap-2 mb-2">
-        <div className="h-5 w-5 rounded bg-muted" />
-        <div className="h-4 w-28 rounded bg-muted" />
-        <div className="h-5 w-16 rounded-full bg-muted" />
-      </div>
-      <div className="h-5 w-4/5 max-w-[14rem] rounded bg-muted mb-2" />
-      <div className="h-4 w-3/5 rounded bg-muted mb-3" />
-      <div className="h-10 w-full rounded bg-muted/70 mb-3" />
-      <div className="flex justify-between gap-2">
-        <div className="h-4 w-20 rounded bg-muted" />
-        <div className="h-4 w-24 rounded bg-muted" />
-      </div>
-    </div>
-  );
-}
-
-function ServiceRequestTableSkeleton({ rows = 10 }) {
-  const n = Math.min(Math.max(1, rows), 24);
-  return (
-    <div className="overflow-x-auto" aria-busy="true" aria-label="Loading service requests">
-      <table className="w-full">
-        <thead className="bg-gray-50 border-b">
-          <tr>
-            {['Request #', 'Client', 'Type', 'Issue', 'Status', 'Priority', 'Scheduled', 'Technician'].map((h, i) => (
-              <th key={i} className="text-left px-4 py-3 text-sm font-medium text-gray-600">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y">
-          {Array.from({ length: n }).map((_, i) => (
-            <tr key={i}>
-              <td className="px-4 py-3"><div className="h-4 w-24 rounded bg-muted animate-pulse" /></td>
-              <td className="px-4 py-3">
-                <div className="h-4 w-36 rounded bg-muted animate-pulse mb-1" />
-                <div className="h-3 w-28 rounded bg-muted animate-pulse" />
-              </td>
-              <td className="px-4 py-3"><div className="h-4 w-20 rounded bg-muted animate-pulse" /></td>
-              <td className="px-4 py-3"><div className="h-4 w-28 rounded bg-muted animate-pulse" /></td>
-              <td className="px-4 py-3"><div className="h-6 w-20 rounded-full bg-muted animate-pulse" /></td>
-              <td className="px-4 py-3"><div className="h-6 w-16 rounded-full bg-muted animate-pulse" /></td>
-              <td className="px-4 py-3"><div className="h-4 w-14 rounded bg-muted animate-pulse" /></td>
-              <td className="px-4 py-3"><div className="h-4 w-24 rounded bg-muted animate-pulse" /></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
+import { format, isBefore, startOfToday } from 'date-fns';
 
 export default function ServiceRequests() {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [viewMode, setViewMode] = useState('card');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [priorityFilter, setPriorityFilter] = useState('all');
-  const [irrigationFilter, setIrrigationFilter] = useState('all');
   const [showForm, setShowForm] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState(null);
-  const [activeTab, setActiveTab] = useState('all');
-  const [showAutoAssign, setShowAutoAssign] = useState(false);
-  const [showAssignPanel, setShowAssignPanel] = useState(false);
-  const [assigningRequest, setAssigningRequest] = useState(null);
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(12);
+  const [activeTab] = useState('all');
+  const [showRescheduleDialog, setShowRescheduleDialog] = useState(false);
+  const [rescheduleRequest, setRescheduleRequest] = useState(null);
+  const [rescheduleDateTime, setRescheduleDateTime] = useState(null);
+  const [rescheduleTechnicianId, setRescheduleTechnicianId] = useState('');
+  const [debouncedSearch] = useState('');
+  const [page] = useState(1);
+  const [pageSize] = useState(200);
 
   // Check URL params for actions
   useEffect(() => {
@@ -170,15 +43,6 @@ export default function ServiceRequests() {
       // TODO: Load and show specific request
     }}, []);
 
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 400);
-    return () => clearTimeout(t);
-  }, [searchQuery]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [debouncedSearch, statusFilter, priorityFilter, irrigationFilter, activeTab, pageSize]);
-
   const {
     data: pageResult,
     isFetching,
@@ -190,9 +54,6 @@ export default function ServiceRequests() {
       page,
       pageSize,
       debouncedSearch,
-      statusFilter,
-      priorityFilter,
-      irrigationFilter,
       activeTab
     ],
     queryFn: () =>
@@ -200,34 +61,24 @@ export default function ServiceRequests() {
         page,
         pageSize,
         search: debouncedSearch,
-        status: statusFilter,
-        priority: priorityFilter,
-        irrigation: irrigationFilter,
+        status: 'all',
+        priority: 'all',
+        irrigation: 'all',
         activeTab
       }),
     placeholderData: (previousData) => previousData
   });
-
-  const { data: tabCounts } = useQuery({
-    queryKey: ['serviceRequests', 'tabCounts'],
-    queryFn: () => serviceRequestService.getTabCounts()
+  const { data: clients = [] } = useQuery({
+    queryKey: ['clients'],
+    queryFn: () => clientService.list()
+  });
+  const { data: technicians = [] } = useQuery({
+    queryKey: ['technicians', 'active'],
+    queryFn: () => technicianService.filter({ status: 'active' })
   });
 
-  const showPageSkeleton = isFetching;
   const requests = pageResult?.data ?? [];
-  const total = pageResult?.total ?? 0;
-
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(total / pageSize) || 1),
-    [total, pageSize]
-  );
-
-  useEffect(() => {
-    if (page > totalPages) setPage(totalPages);
-  }, [page, totalPages]);
-
-  const rangeStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
-  const rangeEnd = Math.min(page * pageSize, total);
+  const total = useMemo(() => requests.length, [requests]);
 
   const createMutation = useMutation({
     mutationFn: (data) => serviceRequestService.create(data),
@@ -270,360 +121,347 @@ export default function ServiceRequests() {
     setShowForm(true);
   };
 
-  const handleAutoAssign = (request) => {
-    setAssigningRequest(request);
-    setShowAutoAssign(true);
+  const handleReschedule = (request) => {
+    setRescheduleRequest(request);
+    const initial = request.scheduled_end_time || request.scheduled_start_time || request.scheduled_date;
+    setRescheduleDateTime(initial ? new Date(initial) : new Date());
+    setRescheduleTechnicianId(request.assigned_technician_id ? String(request.assigned_technician_id) : '');
+    setShowRescheduleDialog(true);
   };
 
-  const handleManualAssign = (request) => {
-    setAssigningRequest(request);
-    setShowAssignPanel(true);
+  const rescheduleMutation = useMutation({
+    mutationFn: async ({ request, nextDate, technicianId }) => {
+      const nextStart = new Date(nextDate);
+      let durationMs = 60 * 60 * 1000;
+      if (request?.scheduled_start_time && request?.scheduled_end_time) {
+        const existing = new Date(request.scheduled_end_time).getTime() - new Date(request.scheduled_start_time).getTime();
+        if (existing > 0) durationMs = existing;
+      }
+      const nextEnd = new Date(nextStart.getTime() + durationMs);
+      const selectedTechnician = technicians.find((t) => String(t.id) === String(technicianId));
+      const updatePayload = {
+        scheduled_start_time: nextStart.toISOString(),
+        scheduled_end_time: nextEnd.toISOString(),
+        scheduled_date: format(nextEnd, 'yyyy-MM-dd'),
+        assigned_technician_id: technicianId || null,
+        assigned_technician_name: selectedTechnician?.name || null,
+      };
+      const updated = await serviceRequestService.update(request.id, updatePayload);
+
+      const submitData = {
+        ...request,
+        ...updatePayload,
+        request_number: request.request_number || `SR-${request.id}`,
+        client_name: request.client_name || '',
+        contact_phone: request.contact_phone || '',
+        location: request.location || { address: request.address || '' },
+        technician_mobile: selectedTechnician?.phone || '',
+      };
+      const client = clients.find((c) => String(c.id) === String(request.client_id));
+
+      if (client?.email) {
+        try {
+          await emailService.sendClientNotification(submitData, client, true);
+        } catch {
+          // Do not block successful reschedule on email failure.
+        }
+      }
+      if (selectedTechnician?.email) {
+        try {
+          await emailService.sendTechnicianNotification(submitData, selectedTechnician, true);
+        } catch {
+          // Do not block successful reschedule on email failure.
+        }
+      }
+
+      return updated;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['serviceRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['technicianJobs'] });
+      setShowRescheduleDialog(false);
+      setRescheduleRequest(null);
+      setRescheduleDateTime(null);
+      setRescheduleTechnicianId('');
+      toast.success('Job rescheduled successfully');
+    },
+    onError: (error) => {
+      toast.error(error?.message || 'Failed to reschedule job');
+    }
+  });
+
+  const isOverdue = (request) => {
+    if (['completed', 'approved', 'closed'].includes(request.status)) return false;
+    const dateRef = request.scheduled_end_time || request.scheduled_date;
+    if (!dateRef) return false;
+    const d = new Date(dateRef);
+    return isBefore(d, startOfToday());
   };
 
-  const clearFilters = () => {
-    setSearchQuery('');
-    setStatusFilter('all');
-    setPriorityFilter('all');
-    setIrrigationFilter('all');
+  const getScheduleDateRef = (request) =>
+    request.scheduled_end_time || request.scheduled_date || request.scheduled_start_time || null;
+
+  const getDueDateRef = (request) =>
+    request.scheduled_end_time || request.scheduled_date || request.scheduled_start_time || null;
+
+  const getScheduledDateRef = (request) =>
+    request.scheduled_start_time || null;
+
+  const getSeasonFromRequest = (request) => {
+    const dateRef = request.scheduled_start_time || null;
+    const d = dateRef ? new Date(dateRef) : new Date();
+    const month = d.getMonth() + 1;
+    if (month >= 3 && month <= 5) return 'spring';
+    if (month >= 6 && month <= 8) return 'summer';
+    if (month >= 9 && month <= 11) return 'winter';
+    return 'off';
   };
 
-  const hasActiveFilters = searchQuery || statusFilter !== 'all' || priorityFilter !== 'all' || irrigationFilter !== 'all';
+  const isScheduledMaintenanceSeason = (request) =>
+    ['spring', 'winter'].includes(getSeasonFromRequest(request));
+
+  const getServiceTypeLabel = (request) => {
+    const season = getSeasonFromRequest(request);
+    if (season === 'spring') return 'Spring Startup';
+    if (season === 'winter') return 'Winterization (Blowout)';
+    if (season === 'summer') return 'Reactive Service';
+    return 'Service';
+  };
+
+  const getStatusTone = (request) => {
+    const closed = ['completed', 'approved', 'closed'].includes(request.status);
+    if (isOverdue(request) || request.status === 'pending') return 'bg-[#FCEBEB] text-[#A32D2D]';
+    if (closed) return 'bg-[#EAF3DE] text-[#3B6D11]';
+    if (isScheduledMaintenanceSeason(request) && !getScheduleDateRef(request)) return 'bg-[#FAEEDA] text-[#BA7517]';
+    if (isScheduledMaintenanceSeason(request) && ['scheduled', 'assigned'].includes(request.status)) return 'bg-[#EEEDFE] text-[#534AB7]';
+    if (getSeasonFromRequest(request) === 'summer' && !closed) return 'bg-[#E6F1FB] text-[#185FA5]';
+    if (request.status === 'scheduled') return 'bg-[#EEEDFE] text-[#534AB7]';
+    return 'bg-[#FAEEDA] text-[#BA7517]';
+  };
+
+  const getStatusLabel = (request) => {
+    const closed = ['completed', 'approved', 'closed'].includes(request.status);
+    if (isOverdue(request)) return 'Overdue';
+    if (request.status === 'pending') return 'Pending';
+    if (isScheduledMaintenanceSeason(request) && !getScheduleDateRef(request)) return 'Unscheduled';
+    if (getSeasonFromRequest(request) === 'summer' && !closed) return 'Reactive';
+    if (!request.status) return 'Unscheduled';
+    return request.status
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+  };
+
+  const getDateTimeTone = (request) => {
+    const closed = ['completed', 'approved', 'closed'].includes(request.status);
+    if (isOverdue(request) || request.status === 'pending') return 'text-[#A32D2D]';
+    if (closed) return 'text-[#3B6D11]';
+    if (isScheduledMaintenanceSeason(request) && !getScheduleDateRef(request)) return 'text-[#BA7517]';
+    if (isScheduledMaintenanceSeason(request) && ['scheduled', 'assigned'].includes(request.status)) return 'text-[#534AB7]';
+    if (getSeasonFromRequest(request) === 'summer' && !closed) return 'text-[#185FA5]';
+    if (request.status === 'scheduled') return 'text-[#534AB7]';
+    return 'text-[#BA7517]';
+  };
+
+  const formatScheduleDateTime = (dateRef) => {
+    if (!dateRef) return '—';
+    const dt = new Date(dateRef);
+    const hasTime = dt.getHours() !== 0 || dt.getMinutes() !== 0;
+    return hasTime ? format(dt, 'MMM d • h:mm a') : format(dt, 'MMM d');
+  };
+
+  const formatScheduledStartDateTime = (dateRef) => {
+    if (!dateRef) return '—';
+    return format(new Date(dateRef), 'MMM d • h:mm a');
+  };
+
+  const overdueRequests = useMemo(
+    () => requests.filter((r) => isOverdue(r) || r.status === 'pending').sort((a, b) => new Date(a.scheduled_date || 0) - new Date(b.scheduled_date || 0)),
+    [requests]
+  );
+
+  const openRequests = useMemo(
+    () => requests.filter((r) => !['completed', 'approved', 'closed'].includes(r.status) && !isOverdue(r)),
+    [requests]
+  );
+
+  const metrics = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const clientIdsWithScheduledOrCompleted = new Set(
+      requests
+        .filter((r) => ['scheduled', 'completed'].includes(r.status) && r.client_id != null)
+        .map((r) => String(r.client_id))
+    );
+
+    const unscheduled = clients
+      .filter((c) => {
+        const lat = c.location?.lat ?? c.latitude;
+        const lng = c.location?.lng ?? c.longitude;
+        return lat != null && lng != null && !Number.isNaN(Number(lat)) && !Number.isNaN(Number(lng));
+      })
+      .filter((c) => !clientIdsWithScheduledOrCompleted.has(String(c.id))).length;
+
+    const overduePending = requests.filter((r) => {
+      if (r.status !== 'scheduled') return false;
+      if (!r.scheduled_end_time) return false;
+      const endDate = new Date(r.scheduled_end_time);
+      if (Number.isNaN(endDate.getTime())) return false;
+      endDate.setHours(0, 0, 0, 0);
+      return endDate < today;
+    }).length;
+
+    return {
+      open: requests.filter((r) => !['completed', 'approved', 'closed'].includes(r.status) && !isOverdue(r)).length,
+      overduePending,
+      completedSeason: requests.filter((r) => r.status === 'completed').length,
+      unscheduled,
+    };
+  }, [requests, clients]);
 
   return (
-    <div data-source-location="pages/ServiceRequests:208:4" data-dynamic-content="true" className="space-y-6">
-      <div className="space-y-4 pb-4 border-b border-gray-200 bg-gray-50">
-      <PageHeader data-source-location="pages/ServiceRequests:209:6" data-dynamic-content="false"
-      title="Service Requests"
-      className="mb-0"
-      subtitle={
-        total > 0
-          ? `${total.toLocaleString()} request${total === 1 ? '' : 's'} (this view)`
-          : 'Service requests'
-      }
-      action={() => setShowForm(true)}
-      actionLabel="New Request"
-      actionIcon={Plus} />
-
-
-      {/* Tabs */}
-      <Tabs data-source-location="pages/ServiceRequests:218:6" data-dynamic-content="true" value={activeTab} onValueChange={setActiveTab}>
-        <TabsList data-source-location="pages/ServiceRequests:219:8" data-dynamic-content="true" className="bg-gray-100 p-1">
-          <TabsTrigger data-source-location="pages/ServiceRequests:220:10" data-dynamic-content="true" value="all" className="data-[state=active]:bg-white">
-            All ({(tabCounts?.all ?? 0).toLocaleString()})
-          </TabsTrigger>
-          <TabsTrigger data-source-location="pages/ServiceRequests:223:10" data-dynamic-content="true" value="active" className="data-[state=active]:bg-white">
-            Active ({(tabCounts?.active ?? 0).toLocaleString()})
-          </TabsTrigger>
-          <TabsTrigger data-source-location="pages/ServiceRequests:226:10" data-dynamic-content="true" value="pending" className="data-[state=active]:bg-white">
-            Pending Approval ({(tabCounts?.pending ?? 0).toLocaleString()})
-          </TabsTrigger>
-          <TabsTrigger data-source-location="pages/ServiceRequests:229:10" data-dynamic-content="true" value="closed" className="data-[state=active]:bg-white">
-            Closed ({(tabCounts?.closed ?? 0).toLocaleString()})
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
-
-      {/* Filters */}
-      <div data-source-location="pages/ServiceRequests:236:6" data-dynamic-content="true" className="flex flex-col sm:flex-row gap-4">
-        <div data-source-location="pages/ServiceRequests:237:8" data-dynamic-content="true" className="relative flex-1">
-          <Search data-source-location="pages/ServiceRequests:238:10" data-dynamic-content="false" className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <Input data-source-location="pages/ServiceRequests:239:10" data-dynamic-content="false"
-          placeholder="Search by client, farm, or request number..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="pl-10" />
-
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Service Requests</h1>
+          <p className="mt-1 text-gray-500">Review, reschedule, and manage active service requests</p>
         </div>
-        
-        <div data-source-location="pages/ServiceRequests:247:8" data-dynamic-content="true" className="flex gap-2 flex-wrap">
-          <Select data-source-location="pages/ServiceRequests:248:10" data-dynamic-content="true" value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger data-source-location="pages/ServiceRequests:249:12" data-dynamic-content="false" className="w-[140px]">
-              <SelectValue data-source-location="pages/ServiceRequests:250:14" data-dynamic-content="false" placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent data-source-location="pages/ServiceRequests:252:12" data-dynamic-content="true">
-              {statusFilters.map((s) =>
-              <SelectItem data-source-location="pages/ServiceRequests:254:16" data-dynamic-content="true" key={s.value} value={s.value}>{s.label}</SelectItem>
-              )}
-            </SelectContent>
-          </Select>
-
-          <Select data-source-location="pages/ServiceRequests:259:10" data-dynamic-content="true" value={priorityFilter} onValueChange={setPriorityFilter}>
-            <SelectTrigger data-source-location="pages/ServiceRequests:260:12" data-dynamic-content="false" className="w-[130px]">
-              <SelectValue data-source-location="pages/ServiceRequests:261:14" data-dynamic-content="false" placeholder="Priority" />
-            </SelectTrigger>
-            <SelectContent data-source-location="pages/ServiceRequests:263:12" data-dynamic-content="true">
-              {priorityFilters.map((p) =>
-              <SelectItem data-source-location="pages/ServiceRequests:265:16" data-dynamic-content="true" key={p.value} value={p.value}>{p.label}</SelectItem>
-              )}
-            </SelectContent>
-          </Select>
-
-          <Select data-source-location="pages/ServiceRequests:270:10" data-dynamic-content="true" value={irrigationFilter} onValueChange={setIrrigationFilter}>
-            <SelectTrigger data-source-location="pages/ServiceRequests:271:12" data-dynamic-content="false" className="w-[140px]">
-              <SelectValue data-source-location="pages/ServiceRequests:272:14" data-dynamic-content="false" placeholder="Irrigation" />
-            </SelectTrigger>
-            <SelectContent data-source-location="pages/ServiceRequests:274:12" data-dynamic-content="true">
-              {irrigationFilters.map((i) =>
-              <SelectItem data-source-location="pages/ServiceRequests:276:16" data-dynamic-content="true" key={i.value} value={i.value}>{i.label}</SelectItem>
-              )}
-            </SelectContent>
-          </Select>
-
-          {hasActiveFilters &&
-          <Button data-source-location="pages/ServiceRequests:282:12" data-dynamic-content="false" variant="outline" size="icon" onClick={clearFilters} className="border-primary text-primary hover:bg-primary hover:text-primary-foreground">
-              <X data-source-location="pages/ServiceRequests:283:14" data-dynamic-content="false" className="w-4 h-4" />
-            </Button>
-          }
-
-          <Button data-source-location="pages/ServiceRequests:287:10" data-dynamic-content="false" variant="outline" size="icon" onClick={() => refetch()} className="border-primary text-primary hover:bg-primary hover:text-primary-foreground">
-            <RefreshCw data-source-location="pages/ServiceRequests:288:12" data-dynamic-content="false" className="w-4 h-4" />
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => refetch()}
+            className="h-9 w-9 border-primary/30 text-primary hover:bg-primary/10"
+            aria-label="Refresh requests"
+          >
+            <RefreshCw className="h-4 w-4" />
           </Button>
-
-          <div data-source-location="pages/ServiceRequests:291:10" data-dynamic-content="true" className="flex border border-primary/30 rounded-lg overflow-hidden">
-            <Button data-source-location="pages/ServiceRequests:292:12" data-dynamic-content="false"
-            variant={viewMode === 'card' ? 'default' : 'ghost'}
-            size="icon"
-            onClick={() => setViewMode('card')}
-            className={viewMode === 'card' ? 'bg-primary hover:bg-primary/90 text-primary-foreground' : 'hover:bg-primary/10 text-primary'}>
-
-              <Grid3X3 data-source-location="pages/ServiceRequests:298:14" data-dynamic-content="false" className="w-4 h-4" />
-            </Button>
-            <Button data-source-location="pages/ServiceRequests:300:12" data-dynamic-content="false"
-            variant={viewMode === 'list' ? 'default' : 'ghost'}
-            size="icon"
-            onClick={() => setViewMode('list')}
-            className={viewMode === 'list' ? 'bg-primary hover:bg-primary/90 text-primary-foreground' : 'hover:bg-primary/10 text-primary'}>
-
-              <List data-source-location="pages/ServiceRequests:306:14" data-dynamic-content="false" className="w-4 h-4" />
-            </Button>
+          <Button onClick={() => setShowForm(true)} className="h-9">
+            <Plus className="mr-1.5 h-4 w-4" />
+            New Request
+          </Button>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+        <div className="rounded-md border border-black/10 bg-white px-3 py-2.5">
+          <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
+            <span>Open requests</span>
+            <FileText className="h-3.5 w-3.5 text-[#534AB7]" />
           </div>
+          <div className="text-[22px] font-medium text-[#534AB7]">{metrics.open}</div>
         </div>
-      </div>
-      </div>
-
-      {/* Active Filters */}
-      {hasActiveFilters &&
-      <div data-source-location="pages/ServiceRequests:314:8" data-dynamic-content="true" className="flex flex-wrap gap-2">
-          {searchQuery &&
-        <Badge data-source-location="pages/ServiceRequests:316:12" data-dynamic-content="true" variant="secondary" className="gap-1">
-              Search: {searchQuery}
-              <X data-source-location="pages/ServiceRequests:318:14" data-dynamic-content="false" className="w-3 h-3 cursor-pointer" onClick={() => setSearchQuery('')} />
-            </Badge>
-        }
-          {statusFilter !== 'all' &&
-        <Badge data-source-location="pages/ServiceRequests:322:12" data-dynamic-content="true" variant="secondary" className="gap-1">
-              Status: {statusFilter}
-              <X data-source-location="pages/ServiceRequests:324:14" data-dynamic-content="false" className="w-3 h-3 cursor-pointer" onClick={() => setStatusFilter('all')} />
-            </Badge>
-        }
-          {priorityFilter !== 'all' &&
-        <Badge data-source-location="pages/ServiceRequests:328:12" data-dynamic-content="true" variant="secondary" className="gap-1">
-              Priority: {priorityFilter}
-              <X data-source-location="pages/ServiceRequests:330:14" data-dynamic-content="false" className="w-3 h-3 cursor-pointer" onClick={() => setPriorityFilter('all')} />
-            </Badge>
-        }
-          {irrigationFilter !== 'all' &&
-        <Badge data-source-location="pages/ServiceRequests:334:12" data-dynamic-content="true" variant="secondary" className="gap-1">
-              Type: {irrigationFilter}
-              <X data-source-location="pages/ServiceRequests:336:14" data-dynamic-content="false" className="w-3 h-3 cursor-pointer" onClick={() => setIrrigationFilter('all')} />
-            </Badge>
-        }
-        </div>
-      }
-
-      {/* Results */}
-      {pageResult && total === 0 ? (
-      <div className="flex min-h-[min(50vh,28rem)] items-center justify-center py-8">
-      <EmptyState data-source-location="pages/ServiceRequests:344:8" data-dynamic-content="false"
-      icon={Filter}
-      title={debouncedSearch || hasActiveFilters ? 'No matching requests' : 'No requests yet'}
-      description={
-        debouncedSearch || hasActiveFilters
-          ? 'Try different search terms or filters'
-          : 'Create your first service request'
-      }
-      action={debouncedSearch || hasActiveFilters ? clearFilters : () => setShowForm(true)}
-      actionLabel={debouncedSearch || hasActiveFilters ? 'Clear filters' : 'New Request'} />
-      </div>
-      ) : (
-      <>
-      {viewMode === 'card' ? (
-      showPageSkeleton ? (
-      <div
-        className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"
-        aria-busy="true"
-        aria-label="Loading service requests"
-      >
-        {Array.from({ length: Math.min(pageSize, 24) }).map((_, i) => (
-          <ServiceRequestCardSkeleton key={`sk-${i}`} />
-        ))}
-      </div>
-      ) : (
-      <div data-source-location="pages/ServiceRequests:352:8" data-dynamic-content="true" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          <AnimatePresence data-source-location="pages/ServiceRequests:353:10" data-dynamic-content="true" mode="popLayout">
-            {requests.map((request) =>
-          <motion.div data-source-location="pages/ServiceRequests:355:14" data-dynamic-content="true"
-          key={request.id}
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.95 }}
-          className="relative group">
-
-                <JobCard data-source-location="pages/ServiceRequests:362:16" data-dynamic-content="false"
-            job={request}
-            onClick={() => handleEdit(request)}
-            showTechnician />
-
-                {/* {!request.assigned_technician_id && ['new', 'scheduled'].includes(request.status) &&
-            <div data-source-location="pages/ServiceRequests:368:18" data-dynamic-content="true" className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                    <Button data-source-location="pages/ServiceRequests:369:20" data-dynamic-content="false"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleAutoAssign(request);
-              }}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground h-8">
-
-                      <Sparkles data-source-location="pages/ServiceRequests:377:22" data-dynamic-content="false" className="w-3 h-3 mr-1" />
-                      Auto
-                    </Button>
-                    <Button data-source-location="pages/ServiceRequests:380:20" data-dynamic-content="false"
-              size="sm"
-              variant="outline"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleManualAssign(request);
-              }}
-              className="h-8 border-primary text-primary hover:bg-primary hover:text-primary-foreground">
-
-                      <UserCheck data-source-location="pages/ServiceRequests:389:22" data-dynamic-content="false" className="w-3 h-3" />
-                    </Button>
-                  </div>
-            } */}
-              </motion.div>
-          )}
-          </AnimatePresence>
-        </div>
-      )) : (
-      showPageSkeleton ? (
-      <Card data-source-location="pages/ServiceRequests:398:8" data-dynamic-content="true">
-        <ServiceRequestTableSkeleton rows={pageSize} />
-      </Card>
-      ) : (
-      <Card data-source-location="pages/ServiceRequests:398:8" data-dynamic-content="true">
-          <div data-source-location="pages/ServiceRequests:399:10" data-dynamic-content="true" className="overflow-x-auto">
-            <table data-source-location="pages/ServiceRequests:400:12" data-dynamic-content="true" className="w-full">
-              <thead data-source-location="pages/ServiceRequests:401:14" data-dynamic-content="false" className="bg-gray-50 border-b">
-                <tr data-source-location="pages/ServiceRequests:402:16" data-dynamic-content="false">
-                  <th data-source-location="pages/ServiceRequests:403:18" data-dynamic-content="false" className="text-left px-4 py-3 text-sm font-medium text-gray-600">Request #</th>
-                  <th data-source-location="pages/ServiceRequests:404:18" data-dynamic-content="false" className="text-left px-4 py-3 text-sm font-medium text-gray-600">Client</th>
-                  <th data-source-location="pages/ServiceRequests:405:18" data-dynamic-content="false" className="text-left px-4 py-3 text-sm font-medium text-gray-600">Type</th>
-                  <th data-source-location="pages/ServiceRequests:406:18" data-dynamic-content="false" className="text-left px-4 py-3 text-sm font-medium text-gray-600">Issue</th>
-                  <th data-source-location="pages/ServiceRequests:407:18" data-dynamic-content="false" className="text-left px-4 py-3 text-sm font-medium text-gray-600">Status</th>
-                  <th data-source-location="pages/ServiceRequests:408:18" data-dynamic-content="false" className="text-left px-4 py-3 text-sm font-medium text-gray-600">Priority</th>
-                  <th data-source-location="pages/ServiceRequests:409:18" data-dynamic-content="false" className="text-left px-4 py-3 text-sm font-medium text-gray-600">Scheduled</th>
-                  <th data-source-location="pages/ServiceRequests:410:18" data-dynamic-content="false" className="text-left px-4 py-3 text-sm font-medium text-gray-600">Technician</th>
-                </tr>
-              </thead>
-              <tbody data-source-location="pages/ServiceRequests:413:14" data-dynamic-content="true" className="divide-y">
-                {requests.map((request) =>
-              <tr data-source-location="pages/ServiceRequests:415:18" data-dynamic-content="true"
-              key={request.id}
-              className="hover:bg-gray-50 cursor-pointer transition-colors"
-              onClick={() => handleEdit(request)}>
-
-                    <td data-source-location="pages/ServiceRequests:420:20" data-dynamic-content="true" className="px-4 py-3 text-sm font-medium text-gray-900">{request.request_number}</td>
-                    <td data-source-location="pages/ServiceRequests:421:20" data-dynamic-content="true" className="px-4 py-3">
-                      <div data-source-location="pages/ServiceRequests:422:22" data-dynamic-content="true">
-                        <p data-source-location="pages/ServiceRequests:423:24" data-dynamic-content="true" className="text-sm font-medium text-gray-900">{request.client_name}</p>
-                        <p data-source-location="pages/ServiceRequests:424:24" data-dynamic-content="true" className="text-xs text-gray-500">{request.farm_name}</p>
-                      </div>
-                    </td>
-                    <td data-source-location="pages/ServiceRequests:427:20" data-dynamic-content="true" className="px-4 py-3 text-sm text-gray-600 capitalize">
-                      {request.irrigation_type?.replace(/_/g, ' ')}
-                    </td>
-                    <td data-source-location="pages/ServiceRequests:430:20" data-dynamic-content="true" className="px-4 py-3 text-sm text-gray-600 capitalize">
-                      {request.issue_category?.replace(/_/g, ' ')}
-                    </td>
-                    <td data-source-location="pages/ServiceRequests:433:20" data-dynamic-content="true" className="px-4 py-3">
-                      <StatusBadge data-source-location="pages/ServiceRequests:434:22" data-dynamic-content="false" status={request.status} size="sm" />
-                    </td>
-                    <td data-source-location="pages/ServiceRequests:436:20" data-dynamic-content="true" className="px-4 py-3">
-                      <StatusBadge data-source-location="pages/ServiceRequests:437:22" data-dynamic-content="false" status={request.priority} size="sm" />
-                    </td>
-                    <td data-source-location="pages/ServiceRequests:439:20" data-dynamic-content="true" className="px-4 py-3 text-sm text-gray-600">
-                      {request.scheduled_date ? format(new Date(request.scheduled_date), 'MMM d') : '-'}
-                    </td>
-                    <td data-source-location="pages/ServiceRequests:442:20" data-dynamic-content="true" className="px-4 py-3 text-sm text-gray-600">
-                      {request.assigned_technician_name || '-'}
-                    </td>
-                  </tr>
-              )}
-              </tbody>
-            </table>
+        <div className="rounded-md border border-black/10 bg-white px-3 py-2.5">
+          <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
+            <span>Overdue / pending</span>
+            <AlertTriangle className="h-3.5 w-3.5 text-[#A32D2D]" />
           </div>
-        </Card>
-      )
-      )}
+          <div className="text-[22px] font-medium text-[#A32D2D]">{metrics.overduePending}</div>
+        </div>
+        <div className="rounded-md border border-black/10 bg-white px-3 py-2.5">
+          <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
+            <span>Completed this season</span>
+            <CheckCircle className="h-3.5 w-3.5 text-[#1D9E75]" />
+          </div>
+          <div className="text-[22px] font-medium text-[#0F6E56]">{metrics.completedSeason}</div>
+        </div>
+        <div className="rounded-md border border-black/10 bg-white px-3 py-2.5">
+          <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
+            <span>Unscheduled</span>
+            <Clock3 className="h-3.5 w-3.5 text-[#BA7517]" />
+          </div>
+          <div className="text-[22px] font-medium text-[#BA7517]">{metrics.unscheduled}</div>
+        </div>
+      </div>
 
-      {pageResult && total > 0 && (
-        <div className="mt-4 pt-3 border-t border-gray-200 bg-gray-50 rounded-lg px-1 pb-2">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-gray-600 leading-tight">
-              Showing{' '}
-              <span className="font-medium text-gray-900">
-                {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()}
-              </span>{' '}
-              of <span className="font-medium text-gray-900">{total.toLocaleString()}</span>
-            </p>
-            <div className="flex flex-wrap items-center gap-2 justify-end">
-              <Select
-                value={String(pageSize)}
-                onValueChange={(v) => setPageSize(Number(v))}
-              >
-                <SelectTrigger className="w-[130px] border-primary/30">
-                  <SelectValue placeholder="Per page" />
-                </SelectTrigger>
-                <SelectContent>
-                  {PAGE_SIZE_OPTIONS.map((n) => (
-                    <SelectItem key={n} value={String(n)}>
-                      {n} per page
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <div className="flex items-center gap-1">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-9 w-9"
-                  disabled={page <= 1 || isFetching}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  aria-label="Previous page"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <span className="text-sm text-gray-700 px-2 min-w-[7rem] text-center tabular-nums">
-                  Page {page} / {totalPages}
-                </span>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-9 w-9"
-                  disabled={page >= totalPages || isFetching}
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  aria-label="Next page"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
+      {isFetching ? (
+        <div className="flex min-h-[50vh] items-center justify-center">
+          <LoadingSpinner size="lg" text="Loading requests..." />
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div>
+            <div className="mb-2.5 text-[12px] font-medium uppercase tracking-[0.06em] text-[#888780]">Overdue / Pending</div>
+            <div className="overflow-hidden rounded-lg border border-[#F7C1C1] bg-white">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px] border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-[#FFF8F8]">
+                      <th className="border-b border-[#F7C1C1] px-3.5 py-2 text-left text-[11px] font-medium text-[#A32D2D]">Client</th>
+                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-[11px] font-medium text-[#A32D2D]">Service type</th>
+                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-[11px] font-medium text-[#A32D2D]">Due date</th>
+                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-[11px] font-medium text-[#A32D2D]">Technician</th>
+                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-[11px] font-medium text-[#A32D2D]">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {overdueRequests.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="px-3.5 py-6 text-center text-xs text-[#888780]">No overdue or pending requests.</td>
+                      </tr>
+                    ) : overdueRequests.map((request) => (
+                      <tr key={request.id} className="border-b border-[#F7C1C1] last:border-b-0">
+                        <td className="px-3.5 py-2 font-medium text-gray-900">{request.client_name || '-'}</td>
+                        <td className="px-2 py-2 text-black">{getServiceTypeLabel(request)}</td>
+                        <td className={`px-2 py-2 font-medium ${getDateTimeTone(request)}`}>{formatScheduleDateTime(getDueDateRef(request))}</td>
+                        <td className="px-2 py-2 text-gray-800">{request.assigned_technician_name || 'Unassigned'}</td>
+                        <td className="px-2 py-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 rounded-[4px] border-[#F7C1C1] bg-[#FCEBEB] px-2.5 text-[10px] font-medium text-[#A32D2D] hover:border-[#9E3B3B] hover:bg-[#FBE1E1] hover:text-[#B81414]"
+                            onClick={() => handleReschedule(request)}
+                          >
+                            Reschedule
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div>
+            <div className="mb-2.5 text-[12px] font-medium uppercase tracking-[0.06em] text-[#888780]">All open requests</div>
+            <div className="overflow-hidden rounded-lg border border-black/10 bg-white">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px] border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-[#f8f8f7]">
+                      <th className="border-b border-black/10 px-3.5 py-2 text-left text-[11px] font-medium text-[#888780]">Client</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-[11px] font-medium text-[#888780]">Service type</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-[11px] font-medium text-[#888780]">Scheduled</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-[11px] font-medium text-[#888780]">Tech</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-[11px] font-medium text-[#888780]">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {openRequests.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="px-3.5 py-6 text-center text-xs text-[#888780]">No open requests.</td>
+                      </tr>
+                    ) : openRequests.map((request) => (
+                      <tr key={request.id} className="border-b border-black/10 last:border-b-0">
+                        <td className="px-3.5 py-2 font-medium text-gray-900">{request.client_name || '-'}</td>
+                        <td className="px-2 py-2 text-black">{getServiceTypeLabel(request)}</td>
+                        <td className={`px-2 py-2 font-medium ${getDateTimeTone(request)}`}>
+                          {formatScheduledStartDateTime(getScheduledDateRef(request))}
+                        </td>
+                        <td className="px-2 py-2 text-gray-800">{request.assigned_technician_name || 'Unassigned'}</td>
+                        <td className="px-2 py-2">
+                          <span className={`inline-block rounded-[10px] px-2 py-0.5 text-[10px] font-medium ${getStatusTone(request)}`}>
+                            {getStatusLabel(request)}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
         </div>
-      )}
-      </>
       )}
 
       {/* Form Dialog */}
@@ -651,33 +489,80 @@ export default function ServiceRequests() {
         </DialogContent>
       </Dialog>
 
-      {/* Auto Assignment Dialog */}
-      {assigningRequest &&
-      <AutoAssignDialog data-source-location="pages/ServiceRequests:480:8" data-dynamic-content="false"
-      serviceRequest={assigningRequest}
-      open={showAutoAssign}
-      onOpenChange={(open) => {
-        setShowAutoAssign(open);
-        if (!open) setAssigningRequest(null);
-      }} />
-
-      }
-
-      {/* Manual Assignment Panel */}
-      <Dialog data-source-location="pages/ServiceRequests:491:6" data-dynamic-content="true" open={showAssignPanel} onOpenChange={(open) => {
-        setShowAssignPanel(open);
-        if (!open) setAssigningRequest(null);
+      <Dialog open={showRescheduleDialog} onOpenChange={(open) => {
+        setShowRescheduleDialog(open);
+        if (!open) {
+          setRescheduleRequest(null);
+          setRescheduleDateTime(null);
+          setRescheduleTechnicianId('');
+        }
       }}>
-        <DialogContent data-source-location="pages/ServiceRequests:495:8" data-dynamic-content="true" className="max-w-lg">
-          {assigningRequest &&
-          <AssignmentPanel data-source-location="pages/ServiceRequests:497:12" data-dynamic-content="false"
-          serviceRequest={assigningRequest}
-          onClose={() => {
-            setShowAssignPanel(false);
-            setAssigningRequest(null);
-          }} />
-
-          }
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reschedule Job</DialogTitle>
+            <DialogDescription>
+              {rescheduleRequest
+                ? `Update schedule for #${rescheduleRequest.request_number || rescheduleRequest.id} — ${rescheduleRequest.client_name || 'Client'}`
+                : 'Choose a new schedule date'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="mb-2 block text-sm">Schedule date</Label>
+              <DateTimePicker
+                date={rescheduleDateTime}
+                onDateChange={setRescheduleDateTime}
+                placeholder="Select schedule date & time"
+              />
+            </div>
+            <div>
+              <Label className="mb-2 block text-sm">Technician</Label>
+              <Select value={rescheduleTechnicianId} onValueChange={setRescheduleTechnicianId}>
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue placeholder="Select technician..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {technicians.length > 0 ? (
+                    technicians.map((tech) => (
+                      <SelectItem key={tech.id} value={String(tech.id)}>
+                        {tech.name}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <SelectItem value="__no-techs" disabled>No technicians available</SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setShowRescheduleDialog(false);
+                  setRescheduleRequest(null);
+                  setRescheduleDateTime(null);
+                  setRescheduleTechnicianId('');
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                disabled={!rescheduleRequest || !rescheduleDateTime || !rescheduleTechnicianId || rescheduleMutation.isPending}
+                onClick={() => {
+                  if (!rescheduleRequest || !rescheduleDateTime || !rescheduleTechnicianId) return;
+                  rescheduleMutation.mutate({
+                    request: rescheduleRequest,
+                    nextDate: rescheduleDateTime,
+                    technicianId: rescheduleTechnicianId
+                  });
+                }}
+              >
+                {rescheduleMutation.isPending ? 'Saving...' : 'Save schedule'}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>);

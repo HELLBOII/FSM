@@ -140,23 +140,23 @@ export default function WeekView({ date, appointments, onReschedule, onAppointme
     <DragDropContext onDragEnd={handleDragEnd}>
       <div className="overflow-hidden">
         <div className="w-full border border-gray-200 rounded-b-lg">
-          <div className={cn('grid border-b-2 border-gray-300 bg-gray-50 sticky top-0 z-10', WEEK_GRID_COLS)}>
-            <div className="p-2 text-xs font-medium text-gray-600 border-r border-gray-200 min-w-0">Time</div>
-            {weekDays.map((day, idx) => (
-              <div key={idx} className="p-2 text-center border-r border-gray-200 last:border-r-0 min-w-0">
-                <div className="text-xs font-semibold text-gray-900">{format(day, 'EEE')}</div>
-                <div
-                  className={cn(
-                    'text-base font-bold mt-0.5',
-                    isSameDay(day, new Date()) ? 'text-primary' : 'text-gray-600'
-                  )}
-                >
-                  {format(day, 'd')}
+          <div className="overflow-y-auto max-h-[calc(100vh-350px)] [scrollbar-gutter:stable]">
+            <div className={cn('grid border-b-2 border-gray-300 bg-gray-50 sticky top-0 z-10', WEEK_GRID_COLS)}>
+              <div className="p-2 text-xs font-medium text-gray-600 border-r border-gray-200 min-w-0">Time</div>
+              {weekDays.map((day, idx) => (
+                <div key={idx} className="p-2 text-center border-r border-gray-200 last:border-r-0 min-w-0">
+                  <div className="text-xs font-semibold text-gray-900">{format(day, 'EEE')}</div>
+                  <div
+                    className={cn(
+                      'text-base font-bold mt-0.5',
+                      isSameDay(day, new Date()) ? 'text-primary' : 'text-gray-600'
+                    )}
+                  >
+                    {format(day, 'd')}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-          <div className="overflow-y-auto max-h-[calc(100vh-350px)]">
+              ))}
+            </div>
             {HOURLY_SLOTS.map((timeSlot) => (
               <div key={timeSlot} className={cn('grid min-h-[56px] border-b border-gray-200', WEEK_GRID_COLS)}>
                 <div className="py-1.5 px-2 text-xs font-medium text-gray-600 border-r border-gray-200 flex items-center bg-gray-50/50 min-w-0">

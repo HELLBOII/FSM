@@ -47,11 +47,29 @@ export default function MonthView({ date, appointments, onReschedule, onAppointm
     }
   };
 
-  const getStatusColor = (status, priority) => {
-    if (priority === 'urgent') return 'bg-red-100 border-red-300 text-red-700';
-    if (status === 'in_progress') return 'bg-yellow-100 border-yellow-300 text-yellow-700';
-    if (status === 'completed') return 'bg-green-100 border-green-300 text-green-700';
-    return 'bg-blue-100 border-blue-300 text-blue-700';
+  const getStatusColor = (appointment) => {
+    const end = appointment?.scheduled_end_time ? parseISO(appointment.scheduled_end_time) : null;
+    const isClosed = ['completed', 'approved', 'closed'].includes(appointment?.status);
+    const isOverdue = (() => {
+      if (appointment?.status === 'overdue' || appointment?.is_sla_breached) return true;
+      if (isClosed || !end || Number.isNaN(end.getTime())) return false;
+      const due = new Date(end);
+      due.setHours(0, 0, 0, 0);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      return due < today;
+    })();
+    const status = (appointment?.status || '').toLowerCase();
+
+    if (isOverdue || appointment?.priority === 'urgent') return 'bg-red-100 border-red-200 text-red-700';
+    if (status === 'completed') return 'bg-green-100 border-green-200 text-green-700';
+    if (status === 'approved') return 'bg-emerald-100 border-emerald-200 text-emerald-700';
+    if (status === 'closed') return 'bg-gray-100 border-gray-200 text-gray-700';
+    if (status === 'new') return 'bg-blue-100 border-blue-200 text-blue-700';
+    if (status === 'scheduled' || status === 'assigned' || status === 'in_progress') {
+      return 'bg-[#EEEDFE] border-[#D8D4FB] text-[#534AB7]';
+    }
+    return 'bg-gray-100 border-gray-200 text-gray-600';
   };
 
   return (
@@ -83,31 +101,36 @@ export default function MonthView({ date, appointments, onReschedule, onAppointm
                         ref={provided.innerRef}
                         {...provided.droppableProps}
                         onClick={(e) => {
-                          // Only open form if clicking on the day cell itself (not on appointments) and there are no appointments
-                          if (dayAppointments.length === 0 && (e.target === e.currentTarget || e.target.closest('.day-number'))) {
+                          // Only open form for current-month empty day cells.
+                          if (
+                            isCurrentMonth &&
+                            dayAppointments.length === 0 &&
+                            (e.target === e.currentTarget || e.target.closest('.day-number'))
+                          ) {
                             onDateClick?.(day);
                           }
                         }}
                         className={cn(
                           "border rounded-lg p-2 min-h-[120px] transition-colors",
-                          snapshot.isDraggingOver && "bg-emerald-50 border-emerald-300",
-                          !snapshot.isDraggingOver && "bg-white",
-                          !isCurrentMonth && "bg-gray-50",
-                          dayAppointments.length === 0 && "cursor-pointer hover:bg-gray-50"
+                          isCurrentMonth ? "bg-white" : "bg-gray-100",
+                          isCurrentMonth && snapshot.isDraggingOver && "bg-emerald-50 border-emerald-300",
+                          isCurrentMonth && isToday && "border-2 border-emerald-600",
+                          isCurrentMonth && dayAppointments.length === 0 && "cursor-pointer hover:bg-gray-50",
+                          !isCurrentMonth && "border-gray-200"
                         )}
                       >
                         <div 
                           className={cn(
                             "text-sm font-medium mb-2 day-number",
-                            isToday && "inline-flex items-center justify-center w-7 h-7 rounded-full bg-emerald-600 text-white hover:bg-emerald-700",
+                            isToday && isCurrentMonth && "inline-flex items-center justify-center w-7 h-7 rounded-full border-emerald-600 bg-emerald-700 text-white",
                             !isToday && isCurrentMonth && "text-gray-900",
-                            !isToday && !isCurrentMonth && "text-gray-400"
+                            !isCurrentMonth && "invisible"
                           )}
                         >
-                          {format(day, 'd')}
+                          {isCurrentMonth ? format(day, 'd') : ''}
                         </div>
                         
-                        <div className="space-y-1">
+                        <div className={cn("space-y-1", !isCurrentMonth && "hidden")}>
                           {dayAppointments.slice(0, 3).map((apt, index) => (
                             <Draggable 
                               key={apt.id} 
@@ -125,7 +148,7 @@ export default function MonthView({ date, appointments, onReschedule, onAppointm
                                   }}
                                   className={cn(
                                     "text-xs p-1.5 rounded border cursor-pointer truncate",
-                                    getStatusColor(apt.status, apt.priority),
+                                    getStatusColor(apt),
                                     snapshot.isDragging && "shadow-lg rotate-2",
                                     !snapshot.isDragging && "hover:opacity-80"
                                   )}

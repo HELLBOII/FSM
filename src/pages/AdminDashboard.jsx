@@ -1,31 +1,11 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { serviceRequestService, technicianService, workReportService, clientService } from '@/services';
+import { serviceRequestService, clientService } from '@/services';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { motion } from 'framer-motion';
-import {
-  FileText,
-  Calendar,
-  Clock,
-  AlertTriangle,
-  MapPin,
-  TrendingUp,
-  Users,
-  CheckCircle,
-  ArrowRight,
-  Droplets,
-  Activity,
-  Expand,
-} from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Expand, CheckCircle, Calendar, Clock3, AlertTriangle } from 'lucide-react';
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import StatCard from '@/components/ui/StatCard';
-import TechnicianPerformanceCard from '@/components/dashboard/TechnicianPerformanceCard';
-import StatusBadge from '@/components/ui/StatusBadge';
-import JobCard from '@/components/ui/JobCard';
-import DashboardMap from '@/components/map/DashboardMap';
+import DashboardMap, { MAP_PIN_COLORS } from '@/components/map/DashboardMap';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
 import ServiceRequestForm from '@/components/forms/ServiceRequestForm';
 import {
@@ -35,34 +15,137 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
+import { cn } from '@/lib/utils';
+
+const CLOSED_STATUSES = ['completed', 'approved', 'closed'];
+
+function isReactiveRequest(r) {
+  return (
+    r.priority === 'urgent' ||
+    ['leak_repair', 'pump_issue', 'pipe_repair', 'valve_replacement'].includes(r.issue_category)
+  );
+}
+
+function isRequestOverdue(r) {
+  if (CLOSED_STATUSES.includes(r.status)) return false;
+  if (r.is_sla_breached) return true;
+  if (r.scheduled_date) {
+    const d = new Date(r.scheduled_date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    d.setHours(0, 0, 0, 0);
+    if (d < today && ['scheduled', 'assigned', 'new'].includes(r.status)) return true;
+  }
+  return false;
+}
+
+function formatRequestAppt(r) {
+  if (r?.scheduled_start_time) {
+    try {
+      return format(new Date(r.scheduled_start_time), 'MMM d • h:mm a');
+    } catch {
+      // fallback below
+    }
+  }
+  if (!r?.scheduled_date) return '—';
+  try {
+    const d = format(new Date(r.scheduled_date), 'MMM d');
+    return r.scheduled_time_slot ? `${d}, ${r.scheduled_time_slot}` : d;
+  } catch {
+    return r.scheduled_date;
+  }
+}
+
+/** Wireframe-style map pin bucket from Supabase service_requests for a client. */
+function deriveClientMapContext(sortedRequestsForClient) {
+  const list = sortedRequestsForClient;
+  if (!list.length) {
+    return {
+      mapStatus: 'unscheduled',
+      mapStatusLabel: 'Unscheduled',
+      pinColor: MAP_PIN_COLORS.unscheduled,
+      nextApptText: '—',
+      primaryRequest: null,
+    };
+  }
+  const active = list.filter((r) => !CLOSED_STATUSES.includes(r.status));
+  const pickPrimary = (pred) => active.find(pred) || list[0];
+
+  if (active.some((r) => isRequestOverdue(r))) {
+    const r = pickPrimary((x) => isRequestOverdue(x));
+    return {
+      mapStatus: 'overdue',
+      mapStatusLabel: 'Overdue',
+      pinColor: MAP_PIN_COLORS.overdue,
+      nextApptText: formatRequestAppt(r),
+      primaryRequest: r,
+    };
+  }
+  if (active.some((r) => r.status === 'new' && !r.scheduled_date)) {
+    const r = pickPrimary((x) => x.status === 'new' && !x.scheduled_date);
+    return {
+      mapStatus: 'unscheduled',
+      mapStatusLabel: 'Unscheduled',
+      pinColor: MAP_PIN_COLORS.unscheduled,
+      nextApptText: '—',
+      primaryRequest: r,
+    };
+  }
+  if (active.some((r) => r.status === 'in_progress' && isReactiveRequest(r))) {
+    const r = pickPrimary((x) => x.status === 'in_progress' && isReactiveRequest(x));
+    return {
+      mapStatus: 'reactive',
+      mapStatusLabel: 'Reactive / Repair',
+      pinColor: MAP_PIN_COLORS.reactive,
+      nextApptText: formatRequestAppt(r),
+      primaryRequest: r,
+    };
+  }
+  if (active.some((r) => ['scheduled', 'assigned', 'in_progress'].includes(r.status))) {
+    const r = pickPrimary((x) => ['scheduled', 'assigned', 'in_progress'].includes(x.status));
+    return {
+      mapStatus: 'scheduled',
+      mapStatusLabel: 'Scheduled',
+      pinColor: MAP_PIN_COLORS.scheduled,
+      nextApptText: formatRequestAppt(r),
+      primaryRequest: r,
+    };
+  }
+  const lastDone = list.find((r) => r.status === 'completed') || list[0];
+  return {
+    mapStatus: 'completed',
+    mapStatusLabel: 'Completed',
+    pinColor: MAP_PIN_COLORS.completed,
+    nextApptText: lastDone?.actual_end_time
+      ? format(new Date(lastDone.actual_end_time), 'MMM d')
+      : formatRequestAppt(lastDone),
+    primaryRequest: lastDone,
+  };
+}
 
 export default function AdminDashboard() {
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState('overview');
   const [showServiceRequestDialog, setShowServiceRequestDialog] = useState(false);
   const [clientForServiceRequest, setClientForServiceRequest] = useState(null);
   const [mapFullScreen, setMapFullScreen] = useState(false);
+  const [mapBaseLayer, setMapBaseLayer] = useState('streets');
+  const [selectedMapJobId, setSelectedMapJobId] = useState(null);
+  const [lassoSelectedIds, setLassoSelectedIds] = useState([]);
+  const [mapDetailOpen, setMapDetailOpen] = useState(false);
+  const [flyToTarget, setFlyToTarget] = useState(null);
 
   const { data: requests = [], isLoading: requestsLoading } = useQuery({
     queryKey: ['serviceRequests'],
     queryFn: () => serviceRequestService.list('created_at', 'desc', 100)
-  });
-
-  const { data: technicians = [], isLoading: techLoading } = useQuery({
-    queryKey: ['technicians'],
-    queryFn: () => technicianService.list()
-  });
-
-  const { data: workReports = [] } = useQuery({
-    queryKey: ['workReports'],
-    queryFn: () => workReportService.list('created_at', 'desc')
-  });
-
-  const { data: allReports = [] } = useQuery({
-    queryKey: ['allReports'],
-    queryFn: () => workReportService.list('created_at', 'desc')
   });
 
   const { data: clients = [] } = useQuery({
@@ -91,62 +174,140 @@ export default function AdminDashboard() {
     }
   };
 
-  // Clients with location for map (same format as LiveTracking clients map)
-  const clientsForMap = clients
-    .filter(client => {
-      const lat = client.location?.lat ?? client.latitude;
-      const lng = client.location?.lng ?? client.longitude;
-      return lat != null && lng != null && !isNaN(Number(lat)) && !isNaN(Number(lng));
-    })
-    .map(client => {
-      const lat = client.location?.lat ?? client.latitude;
-      const lng = client.location?.lng ?? client.longitude;
-      return {
-        id: client.id,
-        client_name: client.name,
-        farm_name: client.farm_name,
-        location: {
-          lat: parseFloat(lat),
-          lng: parseFloat(lng),
-          address: client.address || ''
-        },
-        priority: 'medium'
-      };
-    });
+  const requestsByClientId = useMemo(() => {
+    const m = new Map();
+    for (const r of requests) {
+      if (!r.client_id) continue;
+      if (!m.has(r.client_id)) m.set(r.client_id, []);
+      m.get(r.client_id).push(r);
+    }
+    for (const arr of m.values()) {
+      arr.sort((a, b) => {
+        const tb = new Date(b.updated_at || b.created_at).getTime();
+        const ta = new Date(a.updated_at || a.created_at).getTime();
+        return tb - ta;
+      });
+    }
+    return m;
+  }, [requests]);
 
-  // Calculate stats
-  const stats = {
-    total: requests.length,
-    scheduled: requests.filter((r) => r.status === 'scheduled').length,
-    inProgress: requests.filter((r) => r.status === 'in_progress').length,
-    slaAlerts: requests.filter((r) => r.is_sla_breached).length,
-    pendingApproval: workReports.filter((r) => r.status === 'submitted').length,
-    availableTechs: technicians.filter((t) => t.availability_status === 'available').length
+  const mapJobs = useMemo(
+    () =>
+      clients
+        .filter((client) => {
+          const lat = client.location?.lat ?? client.latitude;
+          const lng = client.location?.lng ?? client.longitude;
+          return lat != null && lng != null && !Number.isNaN(Number(lat)) && !Number.isNaN(Number(lng));
+        })
+        .map((client) => {
+          const lat = parseFloat(client.location?.lat ?? client.latitude);
+          const lng = parseFloat(client.location?.lng ?? client.longitude);
+          const reqs = requestsByClientId.get(client.id) || [];
+          const ctx = deriveClientMapContext(reqs);
+          return {
+            id: client.id,
+            client_name: client.name,
+            farm_name: client.farm_name,
+            location: {
+              lat,
+              lng,
+              address: client.address || '',
+            },
+            mapStatus: ctx.mapStatus,
+            mapStatusLabel: ctx.mapStatusLabel,
+            pinColor: ctx.pinColor,
+            nextApptText: ctx.nextApptText,
+            primaryRequest: ctx.primaryRequest,
+          };
+        }),
+    [clients, requestsByClientId]
+  );
+
+  const filteredMapClients = useMemo(() => {
+    if (!lassoSelectedIds.length) return mapJobs;
+    const selectedSet = new Set(lassoSelectedIds.map(String));
+    return mapJobs.filter((job) => selectedSet.has(String(job.id)));
+  }, [mapJobs, lassoSelectedIds]);
+
+  const mapMetrics = useMemo(() => {
+    const year = new Date().getFullYear();
+    const completed = requests.filter((r) => r.status === 'completed').length;
+    const scheduled = requests.filter((r) => r.status === 'scheduled').length;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const clientIdsWithScheduledOrCompleted = new Set(
+      requests
+        .filter((r) => ['scheduled', 'completed'].includes(r.status) && r.client_id != null)
+        .map((r) => String(r.client_id))
+    );
+    const unscheduled = clients
+      .filter((c) => {
+        const lat = c.location?.lat ?? c.latitude;
+        const lng = c.location?.lng ?? c.longitude;
+        return lat != null && lng != null && !Number.isNaN(Number(lat)) && !Number.isNaN(Number(lng));
+      })
+      .filter((c) => !clientIdsWithScheduledOrCompleted.has(String(c.id))).length;
+
+    const overdue = requests.filter((r) => {
+      if (r.status !== 'scheduled') return false;
+      if (!r.scheduled_end_time) return false;
+      const endDate = new Date(r.scheduled_end_time);
+      if (Number.isNaN(endDate.getTime())) return false;
+      endDate.setHours(0, 0, 0, 0);
+      return endDate < today;
+    }).length;
+    return { completed, scheduled, unscheduled, overdue, year };
+  }, [requests, clients]);
+
+  const selectedMapJob = useMemo(
+    () => mapJobs.find((j) => String(j.id) === String(selectedMapJobId)),
+    [mapJobs, selectedMapJobId]
+  );
+  const selectedClientEntity = useMemo(
+    () => clients.find((c) => String(c.id) === String(selectedMapJobId)),
+    [clients, selectedMapJobId]
+  );
+  const selectedClientRequests = useMemo(() => {
+    if (!selectedMapJobId) return [];
+    const list = requestsByClientId.get(selectedMapJobId) || [];
+    return [...list].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  }, [selectedMapJobId, requestsByClientId]);
+  const selectedClientNotesHistory = useMemo(() => {
+    const raw = selectedClientEntity?.notes_history;
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [raw];
+      } catch {
+        return [raw];
+      }
+    }
+    return [raw];
+  }, [selectedClientEntity]);
+
+  const statusPillClass = {
+    scheduled: 'bg-[#EEEDFE] text-[#534AB7]',
+    unscheduled: 'bg-[#FAEEDA] text-[#BA7517]',
+    overdue: 'bg-[#FCEBEB] text-[#A32D2D]',
+    completed: 'bg-[#EAF3DE] text-[#3B6D11]',
+    reactive: 'bg-[#E6F1FB] text-[#185FA5]',
+  };
+  const requestStatusPillClass = {
+    new: 'bg-[#FAEEDA] text-[#BA7517]',
+    scheduled: 'bg-[#EEEDFE] text-[#534AB7]',
+    assigned: 'bg-[#EEEDFE] text-[#534AB7]',
+    in_progress: 'bg-[#E6F1FB] text-[#185FA5]',
+    pending: 'bg-[#FCEBEB] text-[#A32D2D]',
+    overdue: 'bg-[#FCEBEB] text-[#A32D2D]',
+    completed: 'bg-[#EAF3DE] text-[#3B6D11]',
+    approved: 'bg-[#EAF3DE] text-[#3B6D11]',
+    closed: 'bg-[#EAF3DE] text-[#3B6D11]',
   };
 
-  const recentRequests = requests.slice(0, 5);
-  const urgentRequests = requests.filter((r) =>
-  (r.priority === 'urgent' || r.priority === 'high') &&
-  ['new', 'scheduled', 'assigned', 'in_progress'].includes(r.status)
-  ).slice(0, 3);
-
-  const activeTechnicians = technicians.filter((t) =>
-  t.availability_status !== 'offline' && t.current_location?.lat
-  );
-
-
-  // Performance analytics
-  const sortedTechnicians = [...technicians].sort((a, b) => {
-    const scoreA = (a.rating || 0) * 0.5 + (a.jobs_completed || 0) * 0.5;
-    const scoreB = (b.rating || 0) * 0.5 + (b.jobs_completed || 0) * 0.5;
-    return scoreB - scoreA;
-  });
-
-  const needsTraining = technicians.filter((t) =>
-  t.rating && t.rating < 4.0 || (t.jobs_completed || 0) < 10
-  );
-
-  if (requestsLoading || techLoading) {
+  if (requestsLoading) {
     return (
       <div data-source-location="pages/AdminDashboard:125:6" data-dynamic-content="false" className="flex items-center justify-center min-h-[60vh]">
         <LoadingSpinner data-source-location="pages/AdminDashboard:126:8" data-dynamic-content="false" size="lg" text="Loading dashboard..." />
@@ -155,358 +316,410 @@ export default function AdminDashboard() {
   }
 
   return (
-    <div data-source-location="pages/AdminDashboard:132:4" data-dynamic-content="true" className="space-y-6">
-      {/* Page Header */}
-      <div data-source-location="pages/AdminDashboard:134:6" data-dynamic-content="true" className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div data-source-location="pages/AdminDashboard:135:8" data-dynamic-content="false">
-          <h1 data-source-location="pages/AdminDashboard:136:10" data-dynamic-content="false" className="text-2xl sm:text-3xl font-bold text-gray-900">Dashboard</h1>
-          <p data-source-location="pages/AdminDashboard:137:10" data-dynamic-content="false" className="text-gray-500 mt-1">Welcome back! Here's your field operations overview.</p>
-        </div>
-        <div data-source-location="pages/AdminDashboard:139:8" data-dynamic-content="true" className="flex gap-3">
-          <Button data-source-location="pages/AdminDashboard:140:10" data-dynamic-content="true" variant="outline" className="border-primary/30 hover:bg-primary/10 hover:border-primary" asChild>
-            <Link data-source-location="pages/AdminDashboard:141:12" data-dynamic-content="false" to={createPageUrl('Reports')}>
-              <TrendingUp data-source-location="pages/AdminDashboard:142:14" data-dynamic-content="false" className="w-4 h-4 mr-2" />
-              View Reports
-            </Link>
-          </Button>
-          <Button data-source-location="pages/AdminDashboard:146:10" data-dynamic-content="true" className="bg-primary hover:bg-primary/90 text-primary-foreground" asChild>
-            <Link data-source-location="pages/AdminDashboard:147:12" data-dynamic-content="false" to={createPageUrl('ServiceRequests') + '?action=new'}>
-              <FileText data-source-location="pages/AdminDashboard:148:14" data-dynamic-content="false" className="w-4 h-4 mr-2" />
-              New Request
-            </Link>
-          </Button>
-        </div>
-      </div>
-
-      <Tabs data-source-location="pages/AdminDashboard:155:6" data-dynamic-content="true" value={activeTab} onValueChange={setActiveTab}>
-        <TabsList data-source-location="pages/AdminDashboard:156:8" data-dynamic-content="false">
-          <TabsTrigger data-source-location="pages/AdminDashboard:157:10" data-dynamic-content="false" value="overview">Overview</TabsTrigger>
-          <TabsTrigger data-source-location="pages/AdminDashboard:158:10" data-dynamic-content="false" value="team">Team Performance</TabsTrigger>
-        </TabsList>
-
-        <TabsContent data-source-location="pages/AdminDashboard:161:8" data-dynamic-content="true" value="overview" className="space-y-6">
-          {/* KPI Cards */}
-          <div data-source-location="pages/AdminDashboard:163:10" data-dynamic-content="true" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard data-source-location="pages/AdminDashboard:164:8" data-dynamic-content="false"
-            title="Total Requests"
-            value={stats.total}
-            icon={FileText}
-            color="blue"
-            // trend="up"
-            // trendValue="+12% this month" 
-          />
-
-        <StatCard data-source-location="pages/AdminDashboard:172:8" data-dynamic-content="false"
-            title="Scheduled Jobs"
-            value={stats.scheduled}
-            icon={Calendar}
-            color="orange" />
-
-        <StatCard data-source-location="pages/AdminDashboard:178:8" data-dynamic-content="false"
-            title="In Progress"
-            value={stats.inProgress}
-            icon={Clock}
-            color="yellow" />
-
-        <StatCard data-source-location="pages/AdminDashboard:184:8" data-dynamic-content="false"
-            title="SLA Alerts"
-            value={stats.slaAlerts}
-            icon={AlertTriangle}
-            color={stats.slaAlerts > 0 ? 'red' : 'emerald'} />
-
-      </div>
-
-      {/* Quick Stats Row */}
-      <div data-source-location="pages/AdminDashboard:193:6" data-dynamic-content="true" className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <Card data-source-location="pages/AdminDashboard:194:8" data-dynamic-content="true" className="bg-gradient-to-br from-emerald-500 to-emerald-600 text-white">
-          <CardContent data-source-location="pages/AdminDashboard:195:10" data-dynamic-content="true" className="p-4">
-            <div data-source-location="pages/AdminDashboard:196:12" data-dynamic-content="true" className="flex items-center justify-between">
-              <div data-source-location="pages/AdminDashboard:197:14" data-dynamic-content="true">
-                <p data-source-location="pages/AdminDashboard:198:16" data-dynamic-content="false" className="text-emerald-100 text-sm">Available Technicians</p>
-                <p data-source-location="pages/AdminDashboard:199:16" data-dynamic-content="true" className="text-2xl font-bold mt-1">{stats.availableTechs}/{technicians.length}</p>
+    <div
+      data-source-location="pages/AdminDashboard:132:4"
+      data-dynamic-content="true"
+      className="h-[calc(100dvh-6.5rem)] overflow-hidden lg:h-[calc(100dvh-2.5rem)]"
+    >
+      <div className="h-full">
+          <div className="flex h-full flex-col overflow-hidden rounded-xl border border-black/[0.08] bg-white shadow-sm">
+            <div className="flex flex-wrap items-center gap-2 border-b border-black/10 bg-white px-4 py-2.5">
+              <div className="mr-auto">
+                <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Dashboard — Map View</h1>
+                <p className="mt-1 text-gray-500">Track clients, map coverage, and service progress</p>
               </div>
-              <Users data-source-location="pages/AdminDashboard:201:14" data-dynamic-content="false" className="w-8 h-8 text-emerald-200" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card data-source-location="pages/AdminDashboard:205:8" data-dynamic-content="true" className="bg-gradient-to-br from-blue-500 to-blue-600 text-white">
-          <CardContent data-source-location="pages/AdminDashboard:206:10" data-dynamic-content="true" className="p-4">
-            <div data-source-location="pages/AdminDashboard:207:12" data-dynamic-content="true" className="flex items-center justify-between">
-              <div data-source-location="pages/AdminDashboard:208:14" data-dynamic-content="true">
-                <p data-source-location="pages/AdminDashboard:209:16" data-dynamic-content="false" className="text-blue-100 text-sm">Pending Approval</p>
-                <p data-source-location="pages/AdminDashboard:210:16" data-dynamic-content="true" className="text-2xl font-bold mt-1">{stats.pendingApproval}</p>
-              </div>
-              <CheckCircle data-source-location="pages/AdminDashboard:212:14" data-dynamic-content="false" className="w-8 h-8 text-blue-200" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card data-source-location="pages/AdminDashboard:216:8" data-dynamic-content="true" className="bg-gradient-to-br from-purple-500 to-purple-600 text-white">
-          <CardContent data-source-location="pages/AdminDashboard:217:10" data-dynamic-content="true" className="p-4">
-            <div data-source-location="pages/AdminDashboard:218:12" data-dynamic-content="true" className="flex items-center justify-between">
-              <div data-source-location="pages/AdminDashboard:219:14" data-dynamic-content="true">
-                <p data-source-location="pages/AdminDashboard:220:16" data-dynamic-content="false" className="text-purple-100 text-sm">Completed Today</p>
-                <p data-source-location="pages/AdminDashboard:221:16" data-dynamic-content="true" className="text-2xl font-bold mt-1">
-                  {requests.filter((r) =>
-                      r.status === 'completed' &&
-                      r.actual_end_time &&
-                      format(new Date(r.actual_end_time), 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd')
-                      ).length}
-                </p>
-              </div>
-              <Activity data-source-location="pages/AdminDashboard:229:14" data-dynamic-content="false" className="w-8 h-8 text-purple-200" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card data-source-location="pages/AdminDashboard:233:8" data-dynamic-content="false" className="bg-gradient-to-br from-cyan-500 to-cyan-600 text-white">
-          <CardContent data-source-location="pages/AdminDashboard:234:10" data-dynamic-content="false" className="p-4">
-            <div data-source-location="pages/AdminDashboard:235:12" data-dynamic-content="false" className="flex items-center justify-between">
-              <div data-source-location="pages/AdminDashboard:236:14" data-dynamic-content="false">
-                <p data-source-location="pages/AdminDashboard:237:16" data-dynamic-content="false" className="text-cyan-100 text-sm">Avg. Response Time</p>
-                <p data-source-location="pages/AdminDashboard:238:16" data-dynamic-content="false" className="text-2xl font-bold mt-1">2.4h</p>
-              </div>
-              <Clock data-source-location="pages/AdminDashboard:240:14" data-dynamic-content="false" className="w-8 h-8 text-cyan-200" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Main Content Grid */}
-      <div data-source-location="pages/AdminDashboard:247:6" data-dynamic-content="true" className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Live Map */}
-        <Card data-source-location="pages/AdminDashboard:249:8" data-dynamic-content="true" className="lg:col-span-2">
-          <CardHeader data-source-location="pages/AdminDashboard:250:10" data-dynamic-content="true" className="pb-2">
-            <div data-source-location="pages/AdminDashboard:251:12" data-dynamic-content="true" className="flex items-center justify-between">
-              <CardTitle data-source-location="pages/AdminDashboard:252:14" data-dynamic-content="false" className="flex items-center gap-2">
-                <MapPin data-source-location="pages/AdminDashboard:253:16" data-dynamic-content="false" className="w-5 h-5 text-emerald-600" />
-                  Map
-              </CardTitle>
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => setMapFullScreen(true)}>
+              <div className="ml-auto flex items-center gap-2">
+                <div className="flex overflow-hidden rounded-md border border-black/10">
+                  <button
+                    type="button"
+                    onClick={() => setMapBaseLayer('streets')}
+                    className={cn(
+                      'px-3 py-1 text-xs text-gray-600 transition-colors',
+                      mapBaseLayer === 'streets' && 'bg-emerald-50 font-medium text-emerald-800'
+                    )}
+                  >
+                    Map
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMapBaseLayer('satellite')}
+                    className={cn(
+                      'border-l border-black/10 px-3 py-1 text-xs text-gray-600 transition-colors',
+                      mapBaseLayer === 'satellite' && 'bg-emerald-50 font-medium text-emerald-800'
+                    )}
+                  >
+                    Satellite
+                  </button>
+                </div>
+                <div className="rounded-md bg-[#f5f5f3] px-2.5 py-1 text-[11px] text-[#888780]">
+                  Spring Startup — Season Active
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+                  onClick={() => setMapFullScreen(true)}
+                  aria-label="Expand map"
+                >
                   <Expand className="h-4 w-4" />
                 </Button>
-                {/* <Button data-source-location="pages/AdminDashboard:256:14" data-dynamic-content="true" variant="ghost" size="sm" asChild>
-                  <Link data-source-location="pages/AdminDashboard:257:16" data-dynamic-content="false" to={createPageUrl('LiveTracking')}>
-                    Full Map <ArrowRight data-source-location="pages/AdminDashboard:258:27" data-dynamic-content="false" className="w-4 h-4 ml-1" />
-                  </Link>
-                </Button> */}
               </div>
             </div>
-          </CardHeader>
-          <CardContent data-source-location="pages/AdminDashboard:263:10" data-dynamic-content="true">
-            <DashboardMap
-                jobs={clientsForMap}
-                className="h-[350px]"
-                onCreateServiceRequest={handleCreateServiceRequestFromMap}
-              />
 
-          </CardContent>
-        </Card>
-
-        {/* Urgent Requests */}
-        <Card data-source-location="pages/AdminDashboard:273:8" data-dynamic-content="true">
-          <CardHeader data-source-location="pages/AdminDashboard:274:10" data-dynamic-content="true" className="pb-2">
-            <div data-source-location="pages/AdminDashboard:275:12" data-dynamic-content="true" className="flex items-center justify-between">
-              <CardTitle data-source-location="pages/AdminDashboard:276:14" data-dynamic-content="false" className="flex items-center gap-2">
-                <AlertTriangle data-source-location="pages/AdminDashboard:277:16" data-dynamic-content="false" className="w-5 h-5 text-red-500" />
-                Urgent Attention
-              </CardTitle>
-              <span data-source-location="pages/AdminDashboard:280:14" data-dynamic-content="true" className="text-sm text-gray-500">{urgentRequests.length} items</span>
-            </div>
-          </CardHeader>
-          <CardContent data-source-location="pages/AdminDashboard:283:10" data-dynamic-content="true" className="space-y-3">
-            {urgentRequests.length === 0 ?
-                <div data-source-location="pages/AdminDashboard:285:14" data-dynamic-content="false" className="flex items-center justify-center min-h-[200px] text-primary">
-                  <div className="text-center">
-                    <AlertTriangle data-source-location="pages/AdminDashboard:286:16" data-dynamic-content="false" className="w-12 h-12 mx-auto mb-2 text-primary" />
-                    <p data-source-location="pages/AdminDashboard:287:16" data-dynamic-content="false" className="text-sm font-medium text-primary">No data found</p>
-                    <p data-source-location="pages/AdminDashboard:287:16" data-dynamic-content="false" className="text-xs text-primary/70 mt-1">No urgent issues at this time</p>
-                  </div>
-                </div> :
-
-                urgentRequests.map((request) =>
-                <Link data-source-location="pages/AdminDashboard:291:16" data-dynamic-content="true"
-                key={request.id}
-                to={createPageUrl('ServiceRequests') + `?id=${request.id}`}
-                className="block">
-
-                  <motion.div data-source-location="pages/AdminDashboard:296:18" data-dynamic-content="true"
-                  whileHover={{ scale: 1.02 }}
-                  className="p-3 rounded-lg border border-red-200 bg-red-50/50 hover:bg-red-50 transition-colors">
-
-                    <div data-source-location="pages/AdminDashboard:300:20" data-dynamic-content="true" className="flex items-center justify-between mb-1">
-                      <span data-source-location="pages/AdminDashboard:301:22" data-dynamic-content="true" className="text-sm font-semibold text-gray-900">#{request.request_number}</span>
-                      <StatusBadge data-source-location="pages/AdminDashboard:302:22" data-dynamic-content="false" status={request.priority} size="xs" />
-                    </div>
-                    <p data-source-location="pages/AdminDashboard:304:20" data-dynamic-content="true" className="text-sm text-gray-600 truncate">{request.client_name}</p>
-                    <p data-source-location="pages/AdminDashboard:305:20" data-dynamic-content="true" className="text-xs text-gray-500 mt-1">
-                      {request.issue_category?.replace(/_/g, ' ')}
-                    </p>
-                  </motion.div>
-                </Link>
-                )
-                }
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Recent Requests & Technician Status */}
-      <div data-source-location="pages/AdminDashboard:317:6" data-dynamic-content="true" className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recent Service Requests */}
-        <Card data-source-location="pages/AdminDashboard:319:8" data-dynamic-content="true">
-          <CardHeader data-source-location="pages/AdminDashboard:320:10" data-dynamic-content="true" className="pb-2">
-            <div data-source-location="pages/AdminDashboard:321:12" data-dynamic-content="true" className="flex items-center justify-between">
-              <CardTitle data-source-location="pages/AdminDashboard:322:14" data-dynamic-content="false" className="flex items-center gap-2">
-                <Droplets data-source-location="pages/AdminDashboard:323:16" data-dynamic-content="false" className="w-5 h-5 text-blue-500" />
-                Recent Requests
-              </CardTitle>
-              <Button data-source-location="pages/AdminDashboard:326:14" data-dynamic-content="true" variant="ghost" size="sm" asChild>
-                <Link data-source-location="pages/AdminDashboard:327:16" data-dynamic-content="false" to={createPageUrl('ServiceRequests')}>
-                  View All <ArrowRight data-source-location="pages/AdminDashboard:328:27" data-dynamic-content="false" className="w-4 h-4 ml-1" />
-                </Link>
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent data-source-location="pages/AdminDashboard:333:10" data-dynamic-content="true" className="space-y-3">
-            {recentRequests.length === 0 ?
-              <div className="text-center py-8 text-primary">
-                <Droplets className="w-12 h-12 mx-auto mb-2 text-primary" />
-                <p className="text-sm font-medium text-primary">No recent requests</p>
-                <p className="text-xs text-primary/70 mt-1">No service requests found</p>
-              </div> :
-              recentRequests.map((request) =>
-                <Link data-source-location="pages/AdminDashboard:335:14" data-dynamic-content="true"
-                key={request.id}
-                to={createPageUrl('ServiceRequests') + `?id=${request.id}`}
-                className="block">
-
-                <div data-source-location="pages/AdminDashboard:340:16" data-dynamic-content="true" className="flex items-center justify-between p-3 rounded-lg border hover:bg-gray-50 transition-colors">
-                  <div data-source-location="pages/AdminDashboard:341:18" data-dynamic-content="true" className="flex-1 min-w-0">
-                    <div data-source-location="pages/AdminDashboard:342:20" data-dynamic-content="true" className="flex items-center gap-2 mb-1">
-                      <span data-source-location="pages/AdminDashboard:343:22" data-dynamic-content="true" className="font-medium text-gray-900">#{request.request_number}</span>
-                      <StatusBadge data-source-location="pages/AdminDashboard:344:22" data-dynamic-content="false" status={request.status} size="xs" />
-                    </div>
-                    <p data-source-location="pages/AdminDashboard:346:20" data-dynamic-content="true" className="text-sm text-gray-600 truncate">{request.client_name} • {request.farm_name}</p>
-                    <p data-source-location="pages/AdminDashboard:347:20" data-dynamic-content="true" className="text-xs text-gray-500">{request.irrigation_type} - {request.issue_category?.replace(/_/g, ' ')}</p>
-                  </div>
-                  <ArrowRight data-source-location="pages/AdminDashboard:349:18" data-dynamic-content="false" className="w-4 h-4 text-gray-400" />
+            <div className="grid grid-cols-2 gap-2.5 border-b border-black/10 bg-[#f5f5f3] px-4 py-3 lg:grid-cols-4">
+              <div className="rounded-md border border-black/10 bg-white px-3 py-2.5">
+                <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
+                  <span>Completed jobs</span>
+                  <CheckCircle className="h-3.5 w-3.5 text-[#1D9E75]" />
                 </div>
-              </Link>
-                )
-            }
-          </CardContent>
-        </Card>
-
-        {/* Technician Status */}
-        <Card data-source-location="pages/AdminDashboard:357:8" data-dynamic-content="true">
-          <CardHeader data-source-location="pages/AdminDashboard:358:10" data-dynamic-content="true" className="pb-2">
-            <div data-source-location="pages/AdminDashboard:359:12" data-dynamic-content="true" className="flex items-center justify-between">
-              <CardTitle data-source-location="pages/AdminDashboard:360:14" data-dynamic-content="false" className="flex items-center gap-2">
-                <Users data-source-location="pages/AdminDashboard:361:16" data-dynamic-content="false" className="w-5 h-5 text-purple-500" />
-                Technician Status
-              </CardTitle>
-              <Button data-source-location="pages/AdminDashboard:364:14" data-dynamic-content="true" variant="ghost" size="sm" asChild>
-                <Link data-source-location="pages/AdminDashboard:365:16" data-dynamic-content="false" to={createPageUrl('Technicians')}>
-                  Manage <ArrowRight data-source-location="pages/AdminDashboard:366:25" data-dynamic-content="false" className="w-4 h-4 ml-1" />
-                </Link>
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent data-source-location="pages/AdminDashboard:371:10" data-dynamic-content="true" className="space-y-3">
-            {technicians.length === 0 ?
-              <div className="text-center py-8 text-primary">
-                <Users className="w-12 h-12 mx-auto mb-2 text-primary" />
-                <p className="text-sm font-medium text-primary">No technicians</p>
-                <p className="text-xs text-primary/70 mt-1">No technicians found</p>
-              </div> :
-              technicians.slice(0, 5).map((tech) =>
-                <div data-source-location="pages/AdminDashboard:373:14" data-dynamic-content="true" key={tech.id} className="flex items-center justify-between p-3 rounded-lg border">
-                <div data-source-location="pages/AdminDashboard:374:16" data-dynamic-content="true" className="flex items-center gap-3">
-                  <div data-source-location="pages/AdminDashboard:375:18" data-dynamic-content="true" className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-100 to-blue-100 flex items-center justify-center">
-                    <span data-source-location="pages/AdminDashboard:376:20" data-dynamic-content="true" className="text-sm font-semibold text-emerald-700">
-                      {tech.name?.split(' ').map((n) => n[0]).join('')}
-                    </span>
-                  </div>
-                  <div data-source-location="pages/AdminDashboard:380:18" data-dynamic-content="true">
-                    <p data-source-location="pages/AdminDashboard:381:20" data-dynamic-content="true" className="font-medium text-gray-900">{tech.name}</p>
-                    <p data-source-location="pages/AdminDashboard:382:20" data-dynamic-content="true" className="text-xs text-gray-500">{tech.employee_id}</p>
-                  </div>
-                </div>
-                <StatusBadge data-source-location="pages/AdminDashboard:385:16" data-dynamic-content="false" status={tech.availability_status} size="sm" />
+                <div className="text-[22px] font-medium text-[#0F6E56]">{mapMetrics.completed}</div>
+                <div className="mt-0.5 text-[10px] text-[#888780]">Spring {mapMetrics.year}</div>
               </div>
-                )
-            }
-          </CardContent>
-        </Card>
-      </div>
-        </TabsContent>
-
-        <TabsContent data-source-location="pages/AdminDashboard:393:8" data-dynamic-content="true" value="team" className="space-y-6">
-          <Card data-source-location="pages/AdminDashboard:394:10" data-dynamic-content="true">
-            <CardHeader data-source-location="pages/AdminDashboard:395:12" data-dynamic-content="false">
-              <CardTitle data-source-location="pages/AdminDashboard:396:14" data-dynamic-content="false">Top Performers</CardTitle>
-            </CardHeader>
-            <CardContent data-source-location="pages/AdminDashboard:398:12" data-dynamic-content="true" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {sortedTechnicians.length === 0 ?
-                <div className="col-span-full text-center py-12 text-primary">
-                  <Users className="w-12 h-12 mx-auto mb-2 text-primary" />
-                  <p className="text-sm font-medium text-primary">No data found</p>
-                  <p className="text-xs text-primary/70 mt-1">No technician performance data available</p>
-                </div> :
-                sortedTechnicians.slice(0, 6).map((tech) => {
-                  const techJobs = requests.filter((r) => r.assigned_technician_id === tech.id);
-                  const techReports = allReports.filter((r) => r.technician_id === tech.id);
-                  return (
-                    <TechnicianPerformanceCard data-source-location="pages/AdminDashboard:403:18" data-dynamic-content="false"
-                    key={tech.id}
-                    technician={tech}
-                    jobs={techJobs}
-                    reports={techReports} />);
-                })
-              }
-            </CardContent>
-          </Card>
-
-          {needsTraining.length > 0 &&
-          <Card data-source-location="pages/AdminDashboard:415:12" data-dynamic-content="true">
-              <CardHeader data-source-location="pages/AdminDashboard:416:14" data-dynamic-content="false">
-                <CardTitle data-source-location="pages/AdminDashboard:417:16" data-dynamic-content="false" className="flex items-center gap-2">
-                  <AlertTriangle data-source-location="pages/AdminDashboard:418:18" data-dynamic-content="false" className="w-5 h-5 text-orange-500" />
-                  Training Recommendations
-                </CardTitle>
-              </CardHeader>
-              <CardContent data-source-location="pages/AdminDashboard:422:14" data-dynamic-content="true">
-                <div data-source-location="pages/AdminDashboard:423:16" data-dynamic-content="true" className="space-y-3">
-                  {needsTraining.map((tech) =>
-                <div data-source-location="pages/AdminDashboard:425:20" data-dynamic-content="true" key={tech.id} className="flex items-center justify-between p-3 bg-orange-50 rounded-lg border border-orange-200">
-                      <div data-source-location="pages/AdminDashboard:426:22" data-dynamic-content="true">
-                        <p data-source-location="pages/AdminDashboard:427:24" data-dynamic-content="true" className="font-medium text-gray-900">{tech.name}</p>
-                        <p data-source-location="pages/AdminDashboard:428:24" data-dynamic-content="true" className="text-sm text-gray-600">
-                          {(tech.rating || 0) < 4.0 && 'Low customer rating - '}
-                          {(tech.jobs_completed || 0) < 10 && 'Needs more experience'}
-                        </p>
-                      </div>
-                      <Button data-source-location="pages/AdminDashboard:433:22" data-dynamic-content="false" size="sm" variant="outline" className="border-primary/30 hover:bg-primary/10 hover:border-primary">Schedule Training</Button>
-                    </div>
-                )}
+              <div className="rounded-md border border-black/10 bg-white px-3 py-2.5">
+                <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
+                  <span>Scheduled</span>
+                  <Calendar className="h-3.5 w-3.5 text-[#534AB7]" />
                 </div>
-              </CardContent>
-            </Card>
-          }
-        </TabsContent>
-      </Tabs>
+                <div className="text-[22px] font-medium text-[#534AB7]">{mapMetrics.scheduled}</div>
+                <div className="mt-0.5 text-[10px] text-[#888780]">appointments set</div>
+              </div>
+              <div className="rounded-md border border-black/10 bg-white px-3 py-2.5">
+                <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
+                  <span>Unscheduled</span>
+                  <Clock3 className="h-3.5 w-3.5 text-[#BA7517]" />
+                </div>
+                <div className="text-[22px] font-medium text-[#BA7517]">{mapMetrics.unscheduled}</div>
+                <div className="mt-0.5 text-[10px] text-[#888780]">need booking</div>
+              </div>
+              <div className="rounded-md border border-black/10 bg-white px-3 py-2.5">
+                <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
+                  <span>Overdue</span>
+                  <AlertTriangle className="h-3.5 w-3.5 text-[#A32D2D]" />
+                </div>
+                <div className="text-[22px] font-medium text-[#A32D2D]">{mapMetrics.overdue}</div>
+                <div className="mt-0.5 text-[10px] text-[#888780]">past due date</div>
+              </div>
+            </div>
+
+            <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-4">
+              <div className="relative min-h-[320px] lg:col-span-3 lg:min-h-0">
+                <DashboardMap
+                  jobs={mapJobs}
+                  variant="embedded"
+                  className="absolute inset-0 h-full min-h-[320px]"
+                  center={[39.5, -98.5]}
+                  zoom={4}
+                  autoCenterFromJobs={false}
+                  baseLayer={mapBaseLayer === 'satellite' ? 'satellite' : 'streets'}
+                  selectedJobId={selectedMapJobId}
+                  onSelectJob={(job) => setSelectedMapJobId(job.id)}
+                  onLassoSelectionChange={setLassoSelectedIds}
+                  onOpenClientDetail={(job) => {
+                    setSelectedMapJobId(job.id);
+                    setMapDetailOpen(true);
+                  }}
+                  onCreateServiceRequest={handleCreateServiceRequestFromMap}
+                  flyToTarget={flyToTarget}
+                />
+                <div className="pointer-events-none absolute bottom-3 left-3 z-20 max-w-[200px] select-none rounded-md border border-black/10 bg-white p-2.5 shadow-sm">
+                  <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-[#888780]">
+                    Spring startup status
+                  </div>
+                  {[
+                    { key: 'unscheduled', label: 'Unscheduled', dot: 'bg-[#EF9F27]' },
+                    { key: 'scheduled', label: 'Scheduled', dot: 'bg-[#534AB7]' },
+                    { key: 'overdue', label: 'Overdue', dot: 'bg-[#E24B4A]' },
+                    { key: 'completed', label: 'Completed', dot: 'bg-[#1D9E75]' },
+                    { key: 'reactive', label: 'Reactive / As-needed', dot: 'bg-[#378ADD]' },
+                  ].map((row) => (
+                    <div key={row.key} className="mb-1 flex items-center gap-2 text-[11px] text-gray-600 last:mb-0">
+                      <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', row.dot)} />
+                      {row.label}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex w-full min-w-0 flex-col border-t border-black/10 bg-white lg:col-span-1 lg:border-l lg:border-t-0">
+                <div className="flex items-center justify-between border-b border-black/10 px-3.5 py-3">
+                  <span className="text-[13px] font-medium text-gray-900">Clients in view</span>
+                  <span className="text-[11px] text-[#888780]">{filteredMapClients.length} shown</span>
+                </div>
+                <div className="max-h-[280px] flex-1 overflow-y-auto lg:max-h-none">
+                  {filteredMapClients.length === 0 ? (
+                    <div className="px-3.5 py-8 text-center text-xs text-muted-foreground">
+                      {lassoSelectedIds.length ?
+                      'No clients found in lasso selection.' :
+                      'No clients with map coordinates available.'}
+                    </div>
+                  ) : (
+                    filteredMapClients.map((job) => (
+                      <button
+                        key={job.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedMapJobId(job.id);
+                          setFlyToTarget({ lat: job.location.lat, lng: job.location.lng });
+                          window.setTimeout(() => setFlyToTarget(null), 2000);
+                        }}
+                        className={cn(
+                          'flex w-full cursor-pointer gap-2.5 border-b border-black/10 px-3.5 py-2.5 text-left transition-colors hover:bg-[#f5f5f3]',
+                          String(selectedMapJobId) === String(job.id) && 'bg-emerald-50'
+                        )}
+                      >
+                        <span
+                          className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: job.pinColor }}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-xs font-medium text-gray-900">{job.client_name}</div>
+                          <div className="truncate text-[11px] text-[#888780]">{job.location?.address || '—'}</div>
+                          <div className="mt-1">
+                            <span
+                              className={cn(
+                                'inline-block rounded-[10px] px-2 py-0.5 text-[10px] font-medium',
+                                statusPillClass[job.mapStatus] || statusPillClass.unscheduled
+                              )}
+                            >
+                              {job.mapStatus === 'scheduled' && job.nextApptText && job.nextApptText !== '—'
+                                ? `${job.mapStatusLabel} — ${job.nextApptText}`
+                                : job.mapStatusLabel}
+                            </span>
+                          </div>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+      </div>
+
+      <Sheet open={mapDetailOpen} onOpenChange={setMapDetailOpen}>
+        <SheetContent
+          side="right"
+          overlayClassName="bg-black/40"
+          className="w-full overflow-y-auto sm:max-w-md"
+        >
+          {selectedClientEntity && selectedMapJob ? (
+            <>
+              <SheetHeader>
+                <SheetTitle className="pr-8 text-left">Client card</SheetTitle>
+                <SheetDescription className="text-left">
+                  {selectedMapJob.location?.address || 'Address on file'}
+                </SheetDescription>
+              </SheetHeader>
+              <div className="mt-6 space-y-5">
+                <div className="flex gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-sm font-medium text-emerald-800">
+                    {(selectedClientEntity.name || '?')
+                      .split(/\s+/)
+                      .filter(Boolean)
+                      .map((n) => n[0])
+                      .join('')
+                      .slice(0, 2)
+                      .toUpperCase()}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900">{selectedClientEntity.name}</p>
+                    {selectedClientEntity.farm_name && (
+                      <p className="text-xs text-muted-foreground">{selectedClientEntity.farm_name}</p>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Contact details
+                  </p>
+                  <div className="space-y-1.5 text-xs">
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Phone</span>
+                      <span>{selectedClientEntity.phone || '—'}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Address</span>
+                      <span className="max-w-[70%] text-right">
+                        {selectedMapJob.location?.address || selectedClientEntity.address || '—'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Email</span>
+                      <span className="truncate text-right text-[11px] text-blue-700">
+                        {selectedClientEntity.email || '—'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-3 border-t border-black/10" />
+                </div>
+
+                <div>
+                  <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Current season
+                  </p>
+                  <div className="space-y-1.5 text-xs">
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Map status</span>
+                      <span
+                        className={cn(
+                          'rounded-[10px] px-2 py-0.5 text-[10px] font-medium',
+                          statusPillClass[selectedMapJob.mapStatus] || statusPillClass.unscheduled
+                        )}
+                      >
+                        {selectedMapJob.mapStatusLabel}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Next appt</span>
+                      <span>{selectedMapJob.nextApptText || '—'}</span>
+                    </div>
+                  </div>
+                  <div className="mt-3 border-t border-black/10" />
+                </div>
+
+                <div>
+                  <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Service history
+                  </p>
+                  <div className="space-y-2">
+                    {selectedClientRequests.slice(0, 5).map((r) => (
+                      <Link
+                        key={r.id}
+                        to={createPageUrl('ServiceRequests') + `?id=${r.id}`}
+                        className="block rounded-md border border-border bg-muted/40 px-2 py-2 text-[11px] transition-colors hover:bg-muted/60"
+                      >
+                        <div className="flex items-center gap-1.5 font-medium text-foreground">
+                          <span>#{r.request_number}</span>
+                          <span
+                            className={cn(
+                              'inline-block rounded-[10px] px-2 py-0.5 text-[10px] font-medium',
+                              requestStatusPillClass[r.status] || requestStatusPillClass.new
+                            )}
+                          >
+                            {(r.status || 'new').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 text-[10px] text-muted-foreground">
+                          {r.issue_category?.replace(/_/g, ' ') || 'Request'}
+                          {r.created_at && ` · ${format(new Date(r.created_at), 'MMM d, yyyy')}`}
+                        </div>
+                      </Link>
+                    ))}
+                    {selectedClientRequests.length === 0 && (
+                      <p className="text-xs text-muted-foreground">No service requests for this client yet.</p>
+                    )}
+                  </div>
+                  <div className="mt-3 border-t border-black/10" />
+                </div>
+
+                <div>
+                  <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Notes history
+                  </p>
+                  <div className="space-y-2">
+                    {selectedClientNotesHistory
+                      .slice(0, 5)
+                      .map((entry, idx) => {
+                        const text =
+                          typeof entry === 'string'
+                            ? entry
+                            : entry?.note || entry?.text || entry?.message || JSON.stringify(entry);
+                        const whenRaw = entry?.created_at || entry?.date || entry?.timestamp;
+                        const when = whenRaw ? format(new Date(whenRaw), 'MMM d, yyyy') : null;
+                        return (
+                        <div
+                          key={`note-${idx}`}
+                          className="rounded-md border border-border bg-muted/30 px-2 py-2 text-[11px]"
+                        >
+                          {when && <div className="mb-1 text-[10px] text-muted-foreground">{when}</div>}
+                          <div className="line-clamp-3 text-foreground/90">
+                            {text}
+                          </div>
+                        </div>
+                      )})}
+                    {selectedClientNotesHistory.length === 0 && (
+                      <p className="text-xs text-muted-foreground">No notes history available.</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="pt-1">
+                  <Button
+                    className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
+                    onClick={() => {
+                      setMapDetailOpen(false);
+                      setClientForServiceRequest(selectedClientEntity);
+                      setShowServiceRequestDialog(true);
+                    }}
+                  >
+                    + Schedule service / new job
+                  </Button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <SheetHeader>
+              <SheetTitle>Client</SheetTitle>
+              <SheetDescription>No client selected.</SheetDescription>
+            </SheetHeader>
+          )}
+        </SheetContent>
+      </Sheet>
 
       {/* Full-screen map modal */}
       <Dialog open={mapFullScreen} onOpenChange={(open) => !open && setMapFullScreen(false)}>
         <DialogContent className="max-w-none w-[95vw] h-[90vh] sm:w-[98vw] sm:h-[95vh] rounded-lg p-0 gap-0 overflow-hidden border-0">
-          <div className="flex flex-col h-full">
-            <div className="flex items-center min-h-12 shrink-0 px-4 pr-12 border-b bg-background">
-              <DialogTitle className="text-lg font-semibold m-0">Live Field Tracking</DialogTitle>
+          <div className="flex h-full flex-col">
+            <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b bg-background px-4 py-2 pr-12">
+              <DialogTitle className="m-0 text-lg font-semibold">Dashboard — Map View</DialogTitle>
+              <div className="ml-auto flex items-center gap-2">
+                <div className="flex overflow-hidden rounded-md border text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setMapBaseLayer('streets')}
+                    className={cn(
+                      'px-2.5 py-1',
+                      mapBaseLayer === 'streets' && 'bg-emerald-50 font-medium text-emerald-800'
+                    )}
+                  >
+                    Map
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMapBaseLayer('satellite')}
+                    className={cn(
+                      'border-l px-2.5 py-1',
+                      mapBaseLayer === 'satellite' && 'bg-emerald-50 font-medium text-emerald-800'
+                    )}
+                  >
+                    Satellite
+                  </button>
+                </div>
+              </div>
             </div>
-            <div className="flex-1 min-h-0 p-2">
+            <div className="min-h-0 flex-1 p-2">
               <DashboardMap
-                jobs={clientsForMap}
-                className="h-full min-h-[70vh]"
-                onCreateServiceRequest={handleCreateServiceRequestFromMap}
+                jobs={mapJobs}
+                variant="embedded"
+                className="h-full min-h-[70vh] rounded-lg border border-border"
+                center={[39.5, -98.5]}
+                zoom={4}
+                autoCenterFromJobs={false}
+                baseLayer={mapBaseLayer === 'satellite' ? 'satellite' : 'streets'}
+                selectedJobId={selectedMapJobId}
+                onSelectJob={(job) => setSelectedMapJobId(job.id)}
+                onLassoSelectionChange={setLassoSelectedIds}
+                onOpenClientDetail={(job) => {
+                  setSelectedMapJobId(job.id);
+                  setMapFullScreen(false);
+                  setMapDetailOpen(true);
+                }}
+                onCreateServiceRequest={(job) => {
+                  setMapFullScreen(false);
+                  handleCreateServiceRequestFromMap(job);
+                }}
               />
             </div>
           </div>

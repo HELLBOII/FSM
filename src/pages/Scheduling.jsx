@@ -1,73 +1,33 @@
-import React, { useState } from 'react';
-import { serviceRequestService, technicianService } from '@/services';
+import React, { useMemo, useState } from 'react';
+import { serviceRequestService, technicianService, clientService, emailService } from '@/services';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { motion } from 'framer-motion';
-import {
-  Calendar as CalendarIcon,
-  ChevronLeft,
-  ChevronRight,
-  Clock,
-  MapPin,
-  User,
-  Plus,
-  Droplets } from
-'lucide-react';
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue } from
-"@/components/ui/select";
+  SelectValue
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
-  DialogTitle } from
-"@/components/ui/dialog";
-import { Calendar } from "@/components/ui/calendar";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import PageHeader from '@/components/common/PageHeader';
-import StatusBadge from '@/components/ui/StatusBadge';
+  DialogTitle
+} from "@/components/ui/dialog";
+import { DateTimePicker } from "@/components/ui/DateTimePicker";
 import LoadingSpinner from '@/components/common/LoadingSpinner';
 import { toast } from 'sonner';
-import {
-  format,
-  startOfWeek,
-  endOfWeek,
-  eachDayOfInterval,
-  isSameDay,
-  addWeeks,
-  subWeeks,
-  isToday,
-  parseISO } from
-'date-fns';
-
-const timeSlots = [
-'08:00 AM', '09:00 AM', '10:00 AM', '11:00 AM',
-'12:00 PM', '01:00 PM', '02:00 PM', '03:00 PM',
-'04:00 PM', '05:00 PM'];
+import { differenceInCalendarDays, format, isBefore, parseISO, startOfToday } from 'date-fns';
 
 
 export default function Scheduling() {
   const queryClient = useQueryClient();
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [showScheduleDialog, setShowScheduleDialog] = useState(false);
-  const [scheduleForm, setScheduleForm] = useState({
-    date: null,
-    timeSlot: '',
-    technicianId: ''
-  });
-
-  const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
-  const weekEnd = endOfWeek(currentDate, { weekStartsOn: 1 });
-  const weekDays = eachDayOfInterval({ start: weekStart, end: weekEnd });
+  const [rescheduleDateTime, setRescheduleDateTime] = useState(null);
+  const [rescheduleTechnicianId, setRescheduleTechnicianId] = useState('');
 
   const { data: requests = [], isLoading: requestsLoading } = useQuery({
     queryKey: ['serviceRequests'],
@@ -78,64 +38,161 @@ export default function Scheduling() {
     queryKey: ['technicians'],
     queryFn: () => technicianService.filter({ status: 'active' })
   });
+  const { data: clients = [] } = useQuery({
+    queryKey: ['clients'],
+    queryFn: () => clientService.list()
+  });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => serviceRequestService.update(id, data),
+    mutationFn: async ({ request, nextDate, technicianId }) => {
+      const nextStart = new Date(nextDate);
+      let durationMs = 60 * 60 * 1000;
+      if (request?.scheduled_start_time && request?.scheduled_end_time) {
+        const existing = new Date(request.scheduled_end_time).getTime() - new Date(request.scheduled_start_time).getTime();
+        if (existing > 0) durationMs = existing;
+      }
+      const nextEnd = new Date(nextStart.getTime() + durationMs);
+      const selectedTechnician = technicians.find((t) => String(t.id) === String(technicianId));
+      const updatePayload = {
+        scheduled_start_time: nextStart.toISOString(),
+        scheduled_end_time: nextEnd.toISOString(),
+        scheduled_date: format(nextEnd, 'yyyy-MM-dd'),
+        assigned_technician_id: technicianId || null,
+        assigned_technician_name: selectedTechnician?.name || null,
+      };
+      const updated = await serviceRequestService.update(request.id, updatePayload);
+
+      const submitData = {
+        ...request,
+        ...updatePayload,
+        request_number: request.request_number || `SR-${request.id}`,
+        client_name: request.client_name || '',
+        contact_phone: request.contact_phone || '',
+        location: request.location || { address: request.address || '' },
+        technician_mobile: selectedTechnician?.phone || '',
+      };
+      const client = clients.find((c) => String(c.id) === String(request.client_id));
+
+      if (client?.email) {
+        try {
+          await emailService.sendClientNotification(submitData, client, true);
+        } catch {
+          // Do not block successful reschedule on email failure.
+        }
+      }
+      if (selectedTechnician?.email) {
+        try {
+          await emailService.sendTechnicianNotification(submitData, selectedTechnician, true);
+        } catch {
+          // Do not block successful reschedule on email failure.
+        }
+      }
+
+      return updated;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['serviceRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['technicianJobs'] });
       setShowScheduleDialog(false);
       setSelectedRequest(null);
-      toast.success('Job scheduled successfully');
+      setRescheduleDateTime(null);
+      setRescheduleTechnicianId('');
+      toast.success('Job rescheduled successfully');
     }
   });
 
-  // Filter unscheduled and scheduled requests
-  const unscheduledRequests = requests.filter((r) => r.status === 'new' && !r.scheduled_date);
+  const overduePendingRequests = useMemo(() => {
+    const today = startOfToday();
+    return requests
+      .filter((r) => {
+        if (['completed', 'approved', 'closed'].includes(r.status)) return false;
+        if (r.status === 'pending') return true;
+        const dueRef = r.scheduled_end_time || r.scheduled_date || r.scheduled_start_time;
+        if (!dueRef) return false;
+        const due = parseISO(dueRef);
+        return isBefore(due, today);
+      })
+      .sort((a, b) => {
+        const daRef = a.scheduled_end_time || a.scheduled_date || a.scheduled_start_time;
+        const dbRef = b.scheduled_end_time || b.scheduled_date || b.scheduled_start_time;
+        const da = daRef ? new Date(daRef).getTime() : Number.MAX_SAFE_INTEGER;
+        const db = dbRef ? new Date(dbRef).getTime() : Number.MAX_SAFE_INTEGER;
+        return da - db;
+      });
+  }, [requests]);
 
-  const scheduledJobs = requests.filter((r) => r.scheduled_date);
-
-  const getJobsForDay = (date) => {
-    return scheduledJobs.filter((job) => {
-      if (!job.scheduled_date) return false;
-      return isSameDay(parseISO(job.scheduled_date), date);
-    });
+  const getSeasonFromRequest = (request) => {
+    const dateRef = request.scheduled_start_time || null;
+    const d = dateRef ? new Date(dateRef) : new Date();
+    const month = d.getMonth() + 1;
+    if (month >= 3 && month <= 5) return 'spring';
+    if (month >= 6 && month <= 8) return 'summer';
+    if (month >= 9 && month <= 11) return 'winter';
+    return 'off';
   };
 
-  const getJobsForTimeSlot = (date, timeSlot) => {
-    return getJobsForDay(date).filter((job) => job.scheduled_time_slot === timeSlot);
+  const isScheduledMaintenanceSeason = (request) =>
+    ['spring', 'winter'].includes(getSeasonFromRequest(request));
+
+  const getServiceTypeLabel = (request) => {
+    const season = getSeasonFromRequest(request);
+    if (season === 'spring') return 'Spring Startup';
+    if (season === 'winter') return 'Winterization (Blowout)';
+    if (season === 'summer') return 'Reactive Service';
+    return 'Service request';
   };
 
-  const getTechnicianJobs = (techId, date) => {
-    return getJobsForDay(date).filter((job) => job.assigned_technician_id === techId);
+  const getStatusTone = (request) => {
+    const closed = ['completed', 'approved', 'closed'].includes(request.status);
+    const dueRef = request.scheduled_end_time || request.scheduled_date || request.scheduled_start_time;
+    const overdue = dueRef ? isBefore(new Date(dueRef), startOfToday()) : false;
+    if (overdue || request.status === 'pending') return 'bg-[#FCEBEB] text-[#A32D2D]';
+    if (closed) return 'bg-[#EAF3DE] text-[#3B6D11]';
+    if (isScheduledMaintenanceSeason(request) && !dueRef) return 'bg-[#FAEEDA] text-[#BA7517]';
+    if (isScheduledMaintenanceSeason(request) && ['scheduled', 'assigned'].includes(request.status)) return 'bg-[#EEEDFE] text-[#534AB7]';
+    if (getSeasonFromRequest(request) === 'summer' && !closed) return 'bg-[#E6F1FB] text-[#185FA5]';
+    if (request.status === 'scheduled') return 'bg-[#EEEDFE] text-[#534AB7]';
+    return 'bg-[#FAEEDA] text-[#BA7517]';
+  };
+
+  const getStatusLabel = (request) => {
+    const closed = ['completed', 'approved', 'closed'].includes(request.status);
+    const dueRef = request.scheduled_end_time || request.scheduled_date || request.scheduled_start_time;
+    const overdue = dueRef ? isBefore(new Date(dueRef), startOfToday()) : false;
+    if (overdue) return 'Overdue';
+    if (request.status === 'pending') return 'Pending';
+    if (isScheduledMaintenanceSeason(request) && !dueRef) return 'Unscheduled';
+    if (getSeasonFromRequest(request) === 'summer' && !closed) return 'Reactive';
+    if (!request.status) return 'Unscheduled';
+    return request.status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  };
+
+  const getDateTimeTone = (request) => {
+    const closed = ['completed', 'approved', 'closed'].includes(request.status);
+    const dueRef = request.scheduled_end_time || request.scheduled_date || request.scheduled_start_time;
+    const overdue = dueRef ? isBefore(new Date(dueRef), startOfToday()) : false;
+    if (overdue || request.status === 'pending') return 'text-[#A32D2D]';
+    if (closed) return 'text-[#3B6D11]';
+    if (isScheduledMaintenanceSeason(request) && !dueRef) return 'text-[#BA7517]';
+    if (isScheduledMaintenanceSeason(request) && ['scheduled', 'assigned'].includes(request.status)) return 'text-[#534AB7]';
+    if (getSeasonFromRequest(request) === 'summer' && !closed) return 'text-[#185FA5]';
+    if (request.status === 'scheduled') return 'text-[#534AB7]';
+    return 'text-[#BA7517]';
   };
 
   const handleSchedule = () => {
-    if (!selectedRequest || !scheduleForm.date || !scheduleForm.timeSlot) {
-      toast.error('Please select date and time');
+    if (!selectedRequest || !rescheduleDateTime || !rescheduleTechnicianId) {
+      toast.error('Please select schedule date and technician');
       return;
     }
-
-    const tech = technicians.find((t) => t.id === scheduleForm.technicianId);
-
-    updateMutation.mutate({
-      id: selectedRequest.id,
-      data: {
-        scheduled_date: format(scheduleForm.date, 'yyyy-MM-dd'),
-        scheduled_time_slot: scheduleForm.timeSlot,
-        assigned_technician_id: scheduleForm.technicianId || null,
-        assigned_technician_name: tech?.name || null,
-        status: scheduleForm.technicianId ? 'assigned' : 'scheduled'
-      }
-    });
+    updateMutation.mutate({ request: selectedRequest, nextDate: rescheduleDateTime, technicianId: rescheduleTechnicianId });
   };
 
   const openScheduleDialog = (request) => {
     setSelectedRequest(request);
-    setScheduleForm({
-      date: request.scheduled_date ? parseISO(request.scheduled_date) : selectedDate,
-      timeSlot: request.scheduled_time_slot || '',
-      technicianId: request.assigned_technician_id || ''
-    });
+    const initial = request.scheduled_end_time || request.scheduled_start_time || request.scheduled_date;
+    setRescheduleDateTime(initial ? new Date(initial) : new Date());
+    setRescheduleTechnicianId(request.assigned_technician_id ? String(request.assigned_technician_id) : '');
     setShowScheduleDialog(true);
   };
 
@@ -148,308 +205,153 @@ export default function Scheduling() {
   }
 
   return (
-    <div data-source-location="pages/Scheduling:151:4" data-dynamic-content="true" className="space-y-6">
-      <PageHeader data-source-location="pages/Scheduling:152:6" data-dynamic-content="false"
-      title="Scheduling"
-      subtitle="Manage appointments and technician assignments" />
-
-
-      <div data-source-location="pages/Scheduling:157:6" data-dynamic-content="true" className="grid grid-cols-1 xl:grid-cols-4 gap-6">
-        {/* Calendar Sidebar */}
-        <div data-source-location="pages/Scheduling:159:8" data-dynamic-content="true" className="xl:col-span-1 space-y-4">
-          {/* Mini Calendar */}
-          <Card data-source-location="pages/Scheduling:161:10" data-dynamic-content="true">
-            <CardContent data-source-location="pages/Scheduling:162:12" data-dynamic-content="true" className="p-4">
-              <Calendar data-source-location="pages/Scheduling:163:14" data-dynamic-content="false"
-              mode="single"
-              selected={selectedDate}
-              onSelect={(date) => {
-                if (date) {
-                  setSelectedDate(date);
-                  setCurrentDate(date);
-                }
-              }}
-              className="rounded-md" />
-
-            </CardContent>
-          </Card>
-
-          {/* Unscheduled Requests */}
-          <Card data-source-location="pages/Scheduling:178:10" data-dynamic-content="true">
-            <CardHeader data-source-location="pages/Scheduling:179:12" data-dynamic-content="true" className="pb-2">
-              <CardTitle data-source-location="pages/Scheduling:180:14" data-dynamic-content="true" className="text-base flex items-center justify-between">
-                Unscheduled Jobs
-                <Badge data-source-location="pages/Scheduling:182:16" data-dynamic-content="true" variant="secondary">{unscheduledRequests.length}</Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent data-source-location="pages/Scheduling:185:12" data-dynamic-content="true" className="space-y-2 max-h-[300px] overflow-y-auto">
-              {unscheduledRequests.map((request) =>
-              <motion.div data-source-location="pages/Scheduling:187:16" data-dynamic-content="true"
-              key={request.id}
-              whileHover={{ scale: 1.02 }}
-              className="p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
-              onClick={() => openScheduleDialog(request)}
-              draggable>
-
-                  <div data-source-location="pages/Scheduling:194:18" data-dynamic-content="true" className="flex items-center gap-2 mb-1">
-                    <span data-source-location="pages/Scheduling:195:20" data-dynamic-content="true" className="text-sm font-medium">#{request.request_number}</span>
-                    <StatusBadge data-source-location="pages/Scheduling:196:20" data-dynamic-content="false" status={request.priority} size="xs" />
-                  </div>
-                  <p data-source-location="pages/Scheduling:198:18" data-dynamic-content="true" className="text-sm text-gray-600 truncate">{request.client_name}</p>
-                  <p data-source-location="pages/Scheduling:199:18" data-dynamic-content="true" className="text-xs text-gray-500">{request.irrigation_type}</p>
-                </motion.div>
-              )}
-              {unscheduledRequests.length === 0 &&
-              <p data-source-location="pages/Scheduling:203:16" data-dynamic-content="false" className="text-sm text-gray-500 text-center py-4">No pending jobs</p>
-              }
-            </CardContent>
-          </Card>
-
-          {/* Technician Availability */}
-          <Card data-source-location="pages/Scheduling:209:10" data-dynamic-content="true">
-            <CardHeader data-source-location="pages/Scheduling:210:12" data-dynamic-content="false" className="pb-2">
-              <CardTitle data-source-location="pages/Scheduling:211:14" data-dynamic-content="false" className="text-base">Technician Availability</CardTitle>
-            </CardHeader>
-            <CardContent data-source-location="pages/Scheduling:213:12" data-dynamic-content="true" className="space-y-2">
-              {technicians.slice(0, 5).map((tech) => {
-                const dayJobs = getTechnicianJobs(tech.id, selectedDate);
-                return (
-                  <div data-source-location="pages/Scheduling:217:18" data-dynamic-content="true" key={tech.id} className="flex items-center justify-between py-2">
-                    <div data-source-location="pages/Scheduling:218:20" data-dynamic-content="true" className="flex items-center gap-2">
-                      <Avatar data-source-location="pages/Scheduling:219:22" data-dynamic-content="true" className="h-8 w-8">
-                        <AvatarFallback data-source-location="pages/Scheduling:220:24" data-dynamic-content="true" className="bg-emerald-100 text-emerald-700 text-xs">
-                          {tech.name?.split(' ').map((n) => n[0]).join('')}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div data-source-location="pages/Scheduling:224:22" data-dynamic-content="true">
-                        <p data-source-location="pages/Scheduling:225:24" data-dynamic-content="true" className="text-sm font-medium">{tech.name}</p>
-                        <p data-source-location="pages/Scheduling:226:24" data-dynamic-content="true" className="text-xs text-gray-500">{dayJobs.length} jobs</p>
-                      </div>
-                    </div>
-                    <StatusBadge data-source-location="pages/Scheduling:229:20" data-dynamic-content="false" status={tech.availability_status} size="xs" />
-                  </div>);
-
-              })}
-            </CardContent>
-          </Card>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Overdue / Pending</h1>
+          <p className="mt-1 text-gray-500">Prioritize overdue jobs and reschedule pending work</p>
         </div>
-
-        {/* Week View */}
-        <Card data-source-location="pages/Scheduling:238:8" data-dynamic-content="true" className="xl:col-span-3">
-          <CardHeader data-source-location="pages/Scheduling:239:10" data-dynamic-content="true" className="pb-4">
-            <div data-source-location="pages/Scheduling:240:12" data-dynamic-content="true" className="flex items-center justify-between">
-              <div data-source-location="pages/Scheduling:241:14" data-dynamic-content="true" className="flex items-center gap-4">
-                <Button data-source-location="pages/Scheduling:242:16" data-dynamic-content="false"
-                variant="outline"
-                size="icon"
-                onClick={() => setCurrentDate(subWeeks(currentDate, 1))}>
-
-                  <ChevronLeft data-source-location="pages/Scheduling:247:18" data-dynamic-content="false" className="w-4 h-4" />
-                </Button>
-                <h2 data-source-location="pages/Scheduling:249:16" data-dynamic-content="true" className="text-lg font-semibold">
-                  {format(weekStart, 'MMM d')} - {format(weekEnd, 'MMM d, yyyy')}
-                </h2>
-                <Button data-source-location="pages/Scheduling:252:16" data-dynamic-content="false"
-                variant="outline"
-                size="icon"
-                onClick={() => setCurrentDate(addWeeks(currentDate, 1))}>
-
-                  <ChevronRight data-source-location="pages/Scheduling:257:18" data-dynamic-content="false" className="w-4 h-4" />
-                </Button>
-              </div>
-              <Button data-source-location="pages/Scheduling:260:14" data-dynamic-content="false"
-              variant="outline"
-              onClick={() => setCurrentDate(new Date())}>
-
-                Today
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent data-source-location="pages/Scheduling:268:10" data-dynamic-content="true" className="p-0 overflow-x-auto">
-            <div data-source-location="pages/Scheduling:269:12" data-dynamic-content="true" className="min-w-[800px]">
-              {/* Header */}
-              <div data-source-location="pages/Scheduling:271:14" data-dynamic-content="true" className="grid grid-cols-8 border-b">
-                <div data-source-location="pages/Scheduling:272:16" data-dynamic-content="false" className="p-3 border-r bg-gray-50">
-                  <span data-source-location="pages/Scheduling:273:18" data-dynamic-content="false" className="text-xs font-medium text-gray-500">Time</span>
-                </div>
-                {weekDays.map((day) =>
-                <div data-source-location="pages/Scheduling:276:18" data-dynamic-content="true"
-                key={day.toISOString()}
-                className={`p-3 text-center border-r ${
-                isSameDay(day, selectedDate) ? 'bg-emerald-50' :
-                isToday(day) ? 'bg-blue-50' : ''}`
-                }
-                onClick={() => setSelectedDate(day)}>
-
-                    <p data-source-location="pages/Scheduling:284:20" data-dynamic-content="true" className="text-xs text-gray-500 uppercase">{format(day, 'EEE')}</p>
-                    <p data-source-location="pages/Scheduling:285:20" data-dynamic-content="true" className={`text-lg font-semibold ${
-                  isToday(day) ? 'text-blue-600' :
-                  isSameDay(day, selectedDate) ? 'text-emerald-600' : 'text-gray-900'}`
-                  }>
-                      {format(day, 'd')}
-                    </p>
-                    <p data-source-location="pages/Scheduling:291:20" data-dynamic-content="true" className="text-xs text-gray-500">{getJobsForDay(day).length} jobs</p>
-                  </div>
-                )}
-              </div>
-
-              {/* Time Slots */}
-              <div data-source-location="pages/Scheduling:297:14" data-dynamic-content="true" className="max-h-[500px] overflow-y-auto">
-                {timeSlots.map((timeSlot) =>
-                <div data-source-location="pages/Scheduling:299:18" data-dynamic-content="true" key={timeSlot} className="grid grid-cols-8 border-b hover:bg-gray-50/50">
-                    <div data-source-location="pages/Scheduling:300:20" data-dynamic-content="true" className="p-2 border-r bg-gray-50 text-xs font-medium text-gray-500">
-                      {timeSlot}
-                    </div>
-                    {weekDays.map((day) => {
-                    const jobs = getJobsForTimeSlot(day, timeSlot);
-                    return (
-                      <div data-source-location="pages/Scheduling:306:24" data-dynamic-content="true"
-                      key={`${day.toISOString()}-${timeSlot}`}
-                      className="p-1 border-r min-h-[60px] cursor-pointer hover:bg-emerald-50/50"
-                      onClick={() => {
-                        setSelectedDate(day);
-                        setScheduleForm((prev) => ({ ...prev, date: day, timeSlot }));
-                      }}>
-
-                          {jobs.map((job) =>
-                        <motion.div data-source-location="pages/Scheduling:315:28" data-dynamic-content="true"
-                        key={job.id}
-                        whileHover={{ scale: 1.02 }}
-                        className={`p-1.5 rounded text-xs mb-1 cursor-pointer ${
-                        job.priority === 'urgent' ? 'bg-red-100 border-l-2 border-red-500' :
-                        job.priority === 'high' ? 'bg-orange-100 border-l-2 border-orange-500' :
-                        'bg-blue-100 border-l-2 border-blue-500'}`
-                        }
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openScheduleDialog(job);
-                        }}>
-
-                              <p data-source-location="pages/Scheduling:328:30" data-dynamic-content="true" className="font-medium truncate">{job.client_name}</p>
-                              <div data-source-location="pages/Scheduling:329:30" data-dynamic-content="true" className="flex items-center gap-1 text-gray-600">
-                                <Droplets data-source-location="pages/Scheduling:330:32" data-dynamic-content="false" className="w-3 h-3" />
-                                <span data-source-location="pages/Scheduling:331:32" data-dynamic-content="true" className="truncate">{job.irrigation_type}</span>
-                              </div>
-                              {job.assigned_technician_name &&
-                          <div data-source-location="pages/Scheduling:334:32" data-dynamic-content="true" className="flex items-center gap-1 text-gray-500">
-                                  <User data-source-location="pages/Scheduling:335:34" data-dynamic-content="false" className="w-3 h-3" />
-                                  <span data-source-location="pages/Scheduling:336:34" data-dynamic-content="true" className="truncate">{job.assigned_technician_name}</span>
-                                </div>
-                          }
-                            </motion.div>
+      </div>
+      <div className="overflow-hidden rounded-lg border border-[#F7C1C1] bg-white">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[860px] border-collapse text-xs">
+            <thead>
+              <tr className="bg-[#FFF8F8]">
+                <th className="border-b border-[#F7C1C1] px-3.5 py-2 text-left text-[11px] font-medium text-[#A32D2D]">Client</th>
+                <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-[11px] font-medium text-[#A32D2D]">Service type</th>
+                <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-[11px] font-medium text-[#A32D2D]">Due date</th>
+                <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-[11px] font-medium text-[#A32D2D]">Days overdue</th>
+                <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-[11px] font-medium text-[#A32D2D]">Tech</th>
+                <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-[11px] font-medium text-[#A32D2D]">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {overduePendingRequests.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-3.5 py-8 text-center text-xs text-[#888780]">
+                    No overdue or pending requests.
+                  </td>
+                </tr>
+              ) : (
+                overduePendingRequests.map((request) => {
+                  const dueRef = request.scheduled_end_time || request.scheduled_date || request.scheduled_start_time;
+                  const dueDate = dueRef ? parseISO(dueRef) : null;
+                  const daysOverdue = dueDate ? Math.max(1, differenceInCalendarDays(startOfToday(), dueDate)) : null;
+                  const actionLabel = request.assigned_technician_id ? 'Reschedule' : 'Assign & Schedule';
+                  return (
+                    <tr key={request.id} className="border-b border-[#F7C1C1] last:border-b-0">
+                      <td className="px-3.5 py-2 font-medium text-gray-900">{request.client_name || '-'}</td>
+                      <td className="px-2 py-2 text-black">{getServiceTypeLabel(request)}</td>
+                      <td className={`px-2 py-2 font-medium ${getDateTimeTone(request)}`}>
+                        {dueDate ? format(dueDate, 'MMM d, h:mm a') : 'Unscheduled'}
+                      </td>
+                      <td className="px-2 py-2 font-medium text-[#A32D2D]">
+                        {daysOverdue ? `+${daysOverdue} day${daysOverdue > 1 ? 's' : ''}` : '—'}
+                      </td>
+                      <td className="px-2 py-2 text-gray-800">{request.assigned_technician_name || 'Unassigned'}</td>
+                      <td className="px-2 py-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 rounded-[4px] border-[#F7C1C1] bg-[#FCEBEB] px-2.5 text-[10px] font-medium text-[#A32D2D] hover:border-[#9E3B3B] hover:bg-[#FBE1E1] hover:text-[#B81414]"
+                          onClick={() => openScheduleDialog(request)}
+                        >
+                          {actionLabel}
+                        </Button>
+                        {getStatusLabel(request) !== 'Overdue' && (
+                          <div className="mt-1">
+                            <span className={`inline-block rounded-[10px] px-2 py-0.5 text-[10px] font-medium ${getStatusTone(request)}`}>
+                              {getStatusLabel(request)}
+                            </span>
+                          </div>
                         )}
-                        </div>);
-
-                  })}
-                  </div>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Schedule Dialog */}
-      <Dialog data-source-location="pages/Scheduling:353:6" data-dynamic-content="true" open={showScheduleDialog} onOpenChange={setShowScheduleDialog}>
-        <DialogContent data-source-location="pages/Scheduling:354:8" data-dynamic-content="true" className="max-w-lg">
-          <DialogHeader data-source-location="pages/Scheduling:355:10" data-dynamic-content="true">
-            <DialogTitle data-source-location="pages/Scheduling:356:12" data-dynamic-content="false">Schedule Job</DialogTitle>
-            <DialogDescription data-source-location="pages/Scheduling:357:12" data-dynamic-content="true">
-              {selectedRequest && `#${selectedRequest.request_number} - ${selectedRequest.client_name}`}
+      <Dialog open={showScheduleDialog} onOpenChange={(open) => {
+        setShowScheduleDialog(open);
+        if (!open) {
+          setSelectedRequest(null);
+          setRescheduleDateTime(null);
+          setRescheduleTechnicianId('');
+        }
+      }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reschedule Job</DialogTitle>
+            <DialogDescription>
+              {selectedRequest
+                ? `Update schedule for #${selectedRequest.request_number || selectedRequest.id} — ${selectedRequest.client_name || 'Client'}`
+                : 'Choose a new schedule date'}
             </DialogDescription>
           </DialogHeader>
 
-          {selectedRequest &&
-          <div data-source-location="pages/Scheduling:363:12" data-dynamic-content="true" className="space-y-4">
-              {/* Job Summary */}
-              <div data-source-location="pages/Scheduling:365:14" data-dynamic-content="true" className="p-4 bg-gray-50 rounded-lg">
-                <div data-source-location="pages/Scheduling:366:16" data-dynamic-content="true" className="flex items-center gap-2 mb-2">
-                  <StatusBadge data-source-location="pages/Scheduling:367:18" data-dynamic-content="false" status={selectedRequest.status} />
-                  <StatusBadge data-source-location="pages/Scheduling:368:18" data-dynamic-content="false" status={selectedRequest.priority} />
-                </div>
-                <p data-source-location="pages/Scheduling:370:16" data-dynamic-content="true" className="text-sm text-gray-600 mb-1">
-                  <strong data-source-location="pages/Scheduling:371:18" data-dynamic-content="false">Farm:</strong> {selectedRequest.farm_name}
-                </p>
-                <p data-source-location="pages/Scheduling:373:16" data-dynamic-content="true" className="text-sm text-gray-600 mb-1">
-                  <strong data-source-location="pages/Scheduling:374:18" data-dynamic-content="false">Issue:</strong> {selectedRequest.issue_category?.replace(/_/g, ' ')}
-                </p>
-                <p data-source-location="pages/Scheduling:376:16" data-dynamic-content="true" className="text-sm text-gray-600">
-                  <strong data-source-location="pages/Scheduling:377:18" data-dynamic-content="false">Type:</strong> {selectedRequest.irrigation_type?.replace(/_/g, ' ')}
-                </p>
+          {selectedRequest && (
+          <div className="space-y-3">
+              <div>
+                <label className="mb-2 block text-sm">Schedule date</label>
+                <DateTimePicker
+                  date={rescheduleDateTime}
+                  onDateChange={setRescheduleDateTime}
+                  placeholder="Select schedule date & time"
+                />
               </div>
-
-              {/* Date Selection */}
-              <div data-source-location="pages/Scheduling:382:14" data-dynamic-content="true">
-                <label data-source-location="pages/Scheduling:383:16" data-dynamic-content="false" className="text-sm font-medium mb-2 block">Select Date</label>
-                <Calendar data-source-location="pages/Scheduling:384:16" data-dynamic-content="false"
-              mode="single"
-              selected={scheduleForm.date}
-              onSelect={(date) => setScheduleForm((prev) => ({ ...prev, date }))}
-              className="rounded-md border"
-              disabled={(date) => date < new Date()} />
-
-              </div>
-
-              {/* Time Slot */}
-              <div data-source-location="pages/Scheduling:394:14" data-dynamic-content="true">
-                <label data-source-location="pages/Scheduling:395:16" data-dynamic-content="false" className="text-sm font-medium mb-2 block">Time Slot</label>
-                <Select data-source-location="pages/Scheduling:396:16" data-dynamic-content="true"
-              value={scheduleForm.timeSlot}
-              onValueChange={(v) => setScheduleForm((prev) => ({ ...prev, timeSlot: v }))}>
-
-                  <SelectTrigger data-source-location="pages/Scheduling:400:18" data-dynamic-content="false">
-                    <SelectValue data-source-location="pages/Scheduling:401:20" data-dynamic-content="false" placeholder="Select time..." />
+              <div>
+                <label className="mb-2 block text-sm">Technician</label>
+                <Select
+                  value={rescheduleTechnicianId}
+                  onValueChange={setRescheduleTechnicianId}
+                >
+                  <SelectTrigger className="h-9 text-sm">
+                    <SelectValue placeholder="Select technician..." />
                   </SelectTrigger>
-                  <SelectContent data-source-location="pages/Scheduling:403:18" data-dynamic-content="true">
-                    {timeSlots.map((slot) =>
-                  <SelectItem data-source-location="pages/Scheduling:405:22" data-dynamic-content="true" key={slot} value={slot}>{slot}</SelectItem>
-                  )}
+                  <SelectContent>
+                    {technicians.length > 0 ? (
+                      technicians.map((tech) => (
+                        <SelectItem key={tech.id} value={String(tech.id)}>
+                          {tech.name}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="__no-techs" disabled>No technicians available</SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
               </div>
-
-              {/* Technician Assignment */}
-              <div data-source-location="pages/Scheduling:412:14" data-dynamic-content="true">
-                <label data-source-location="pages/Scheduling:413:16" data-dynamic-content="false" className="text-sm font-medium mb-2 block">Assign Technician (Optional)</label>
-                <Select data-source-location="pages/Scheduling:414:16" data-dynamic-content="true"
-              value={scheduleForm.technicianId}
-              onValueChange={(v) => setScheduleForm((prev) => ({ ...prev, technicianId: v }))}>
-
-                  <SelectTrigger data-source-location="pages/Scheduling:418:18" data-dynamic-content="false">
-                    <SelectValue data-source-location="pages/Scheduling:419:20" data-dynamic-content="false" placeholder="Select technician..." />
-                  </SelectTrigger>
-                  <SelectContent data-source-location="pages/Scheduling:421:18" data-dynamic-content="true">
-                    <SelectItem data-source-location="pages/Scheduling:422:20" data-dynamic-content="false" value={null}>Unassigned</SelectItem>
-                    {technicians.map((tech) =>
-                  <SelectItem data-source-location="pages/Scheduling:424:22" data-dynamic-content="true" key={tech.id} value={tech.id}>
-                        {tech.name} ({tech.employee_id})
-                      </SelectItem>
-                  )}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Actions */}
-              <div data-source-location="pages/Scheduling:433:14" data-dynamic-content="true" className="flex gap-3 pt-4">
-                <Button data-source-location="pages/Scheduling:434:16" data-dynamic-content="false"
-              variant="outline"
-              className="flex-1"
-              onClick={() => setShowScheduleDialog(false)}>
-
+              <div className="flex justify-end gap-2 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setShowScheduleDialog(false);
+                    setSelectedRequest(null);
+                    setRescheduleDateTime(null);
+                    setRescheduleTechnicianId('');
+                  }}
+                >
                   Cancel
                 </Button>
-                <Button data-source-location="pages/Scheduling:441:16" data-dynamic-content="true"
-              className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground"
-              onClick={handleSchedule}
-              disabled={updateMutation.isPending}>
-
-                  {updateMutation.isPending ? 'Scheduling...' : 'Confirm Schedule'}
+                <Button
+                  type="button"
+                  onClick={handleSchedule}
+                  disabled={!selectedRequest || !rescheduleDateTime || !rescheduleTechnicianId || updateMutation.isPending}
+                >
+                  {updateMutation.isPending ? 'Saving...' : 'Save schedule'}
                 </Button>
               </div>
             </div>
-          }
+          )}
         </DialogContent>
       </Dialog>
-    </div>);
-
+    </div>
+  );
 }

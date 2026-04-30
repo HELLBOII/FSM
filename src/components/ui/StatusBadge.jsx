@@ -4,13 +4,14 @@ import { cn } from "@/lib/utils";
 const statusConfig = {
   // Service Request Status
   new: { label: 'New', bg: 'bg-blue-100', text: 'text-blue-700', border: 'border-blue-200' },
-  scheduled: { label: 'Scheduled', bg: 'bg-orange-100', text: 'text-orange-700', border: 'border-orange-200' },
-  assigned: { label: 'Assigned', bg: 'bg-purple-100', text: 'text-purple-700', border: 'border-purple-200' },
-  in_progress: { label: 'In Progress', bg: 'bg-yellow-100', text: 'text-yellow-700', border: 'border-yellow-200' },
+  scheduled: { label: 'Scheduled', bg: 'bg-[#EEEDFE]', text: 'text-[#534AB7]', border: 'border-[#D8D4FB]' },
+  assigned: { label: 'Assigned', bg: 'bg-[#EEEDFE]', text: 'text-[#534AB7]', border: 'border-[#D8D4FB]' },
+  in_progress: { label: 'In Progress', bg: 'bg-[#EEEDFE]', text: 'text-[#534AB7]', border: 'border-[#D8D4FB]' },
   completed: { label: 'Completed', bg: 'bg-green-100', text: 'text-green-700', border: 'border-green-200' },
   approved: { label: 'Approved', bg: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-200' },
   closed: { label: 'Closed', bg: 'bg-gray-100', text: 'text-gray-700', border: 'border-gray-200' },
   rework: { label: 'Rework', bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-200' },
+  overdue: { label: 'Overdue', bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-200' },
 
   // Priority
   low: { label: 'Low', bg: 'bg-slate-100', text: 'text-slate-600', border: 'border-slate-200' },
