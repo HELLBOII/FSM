@@ -383,14 +383,14 @@ export default function ServiceRequests() {
             <div className="mb-2.5 text-[12px] font-medium uppercase tracking-[0.06em] text-[#888780]">Overdue / Pending</div>
             <div className="overflow-hidden rounded-lg border border-[#F7C1C1] bg-white">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[760px] border-collapse text-xs">
+                <table className="w-full min-w-[760px] border-collapse text-sm">
                   <thead>
                     <tr className="bg-[#FFF8F8]">
-                      <th className="border-b border-[#F7C1C1] px-3.5 py-2 text-left text-[11px] font-medium text-[#A32D2D]">Client</th>
-                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-[11px] font-medium text-[#A32D2D]">Service type</th>
-                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-[11px] font-medium text-[#A32D2D]">Due date</th>
-                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-[11px] font-medium text-[#A32D2D]">Technician</th>
-                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-[11px] font-medium text-[#A32D2D]">Action</th>
+                      <th className="border-b border-[#F7C1C1] px-3.5 py-2 text-left text-sm font-medium text-[#A32D2D]">Client</th>
+                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-sm font-medium text-[#A32D2D]">Service type</th>
+                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-sm font-medium text-[#A32D2D]">Due date</th>
+                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-sm font-medium text-[#A32D2D]">Technician</th>
+                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-sm font-medium text-[#A32D2D]">Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -409,7 +409,7 @@ export default function ServiceRequests() {
                             type="button"
                             variant="outline"
                             size="sm"
-                            className="h-7 rounded-[4px] border-[#F7C1C1] bg-[#FCEBEB] px-2.5 text-[10px] font-medium text-[#A32D2D] hover:border-[#9E3B3B] hover:bg-[#FBE1E1] hover:text-[#B81414]"
+                            className="h-7 rounded-[4px] border-[#F7C1C1] bg-[#FCEBEB] px-2.5 text-xs font-medium text-[#A32D2D] hover:border-[#9E3B3B] hover:bg-[#FBE1E1] hover:text-[#B81414]"
                             onClick={() => handleReschedule(request)}
                           >
                             Reschedule
@@ -426,14 +426,14 @@ export default function ServiceRequests() {
             <div className="mb-2.5 text-[12px] font-medium uppercase tracking-[0.06em] text-[#888780]">All open requests</div>
             <div className="overflow-hidden rounded-lg border border-black/10 bg-white">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[760px] border-collapse text-xs">
+                <table className="w-full min-w-[760px] border-collapse text-sm">
                   <thead>
                     <tr className="bg-[#f8f8f7]">
-                      <th className="border-b border-black/10 px-3.5 py-2 text-left text-[11px] font-medium text-[#888780]">Client</th>
-                      <th className="border-b border-black/10 px-2 py-2 text-left text-[11px] font-medium text-[#888780]">Service type</th>
-                      <th className="border-b border-black/10 px-2 py-2 text-left text-[11px] font-medium text-[#888780]">Scheduled</th>
-                      <th className="border-b border-black/10 px-2 py-2 text-left text-[11px] font-medium text-[#888780]">Tech</th>
-                      <th className="border-b border-black/10 px-2 py-2 text-left text-[11px] font-medium text-[#888780]">Status</th>
+                      <th className="border-b border-black/10 px-3.5 py-2 text-left text-sm font-medium text-[#888780]">Client</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-sm font-medium text-[#888780]">Service type</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-sm font-medium text-[#888780]">Scheduled</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-sm font-medium text-[#888780]">Tech</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-sm font-medium text-[#888780]">Status</th>
                     </tr>
                   </thead>
                   <tbody>

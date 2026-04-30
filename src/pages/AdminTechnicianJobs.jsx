@@ -351,15 +351,15 @@ export default function AdminTechnicianJobs() {
                 </div>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[820px] border-collapse text-xs">
+                <table className="w-full min-w-[820px] border-collapse text-sm">
                   <thead>
                     <tr className="bg-[#f8f8f7]">
-                      <th className="border-b border-black/10 px-3.5 py-2 text-left text-[11px] font-medium text-[#888780]">Client</th>
-                      <th className="border-b border-black/10 px-2.5 py-2 text-left text-[11px] font-medium text-[#888780]">Address</th>
-                      <th className="border-b border-black/10 px-2.5 py-2 text-left text-[11px] font-medium text-[#888780]">Service</th>
-                      <th className="border-b border-black/10 px-2.5 py-2 text-left text-[11px] font-medium text-[#888780]">Date & Time</th>
-                      <th className="border-b border-black/10 px-2.5 py-2 text-left text-[11px] font-medium text-[#888780]">Status</th>
-                      <th className="border-b border-black/10 px-2.5 py-2 text-left text-[11px] font-medium text-[#888780]">Reassign</th>
+                      <th className="border-b border-black/10 px-3.5 py-2 text-left text-sm font-medium text-[#888780]">Client</th>
+                      <th className="border-b border-black/10 px-2.5 py-2 text-left text-sm font-medium text-[#888780]">Address</th>
+                      <th className="border-b border-black/10 px-2.5 py-2 text-left text-sm font-medium text-[#888780]">Service</th>
+                      <th className="border-b border-black/10 px-2.5 py-2 text-left text-sm font-medium text-[#888780]">Date & Time</th>
+                      <th className="border-b border-black/10 px-2.5 py-2 text-left text-sm font-medium text-[#888780]">Status</th>
+                      <th className="border-b border-black/10 px-2.5 py-2 text-left text-sm font-medium text-[#888780]">Reassign</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -382,7 +382,7 @@ export default function AdminTechnicianJobs() {
                             {formatDateTime(job)}
                           </td>
                           <td className="px-2.5 py-2.5">
-                            <span className={`inline-block rounded-[10px] px-2 py-0.5 text-[10px] font-medium ${statusTone(job, overdue)}`}>
+                            <span className={`inline-block rounded-[10px] px-2 py-0.5 text-xs font-medium ${statusTone(job, overdue)}`}>
                               {statusLabel(job, overdue)}
                             </span>
                             {job.priority === 'urgent' && (
@@ -397,13 +397,13 @@ export default function AdminTechnicianJobs() {
                                 type="button"
                                 variant="outline"
                                 size="sm"
-                                className="h-7 rounded-[4px] px-2.5 text-[10px] font-normal"
+                                className="h-7 rounded-[4px] px-2.5 text-xs font-normal"
                                 onClick={() => setReassignJob(job)}
                               >
                                 Reassign
                               </Button>
                             ) : (
-                              <span className="text-[10px] text-[#888780]">—</span>
+                              <span className="text-xs text-[#888780]">—</span>
                             )}
                           </td>
                         </tr>
