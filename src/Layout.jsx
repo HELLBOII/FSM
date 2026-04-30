@@ -304,7 +304,7 @@ export default function Layout({ children, currentPageName }) {
         </div>
 
         {/* Navigation */}
-        <nav data-source-location="Layout:157:8" data-dynamic-content="true" className="flex-1 p-4 space-y-5 overflow-y-auto">
+        <nav data-source-location="Layout:157:8" data-dynamic-content="true" className="flex-1 p-1.5 space-y-5 overflow-y-auto">
           {webNavSections.map((section) =>
           <div key={section.label} className="space-y-1">
               <p className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
