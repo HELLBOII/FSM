@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { serviceRequestService, clientService, technicianService, emailService } from '@/services';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, RefreshCw, FileText, AlertTriangle, CheckCircle, Clock3 } from 'lucide-react';
+import { Plus, RefreshCw, FileText, AlertTriangle, CheckCircle, Clock3, Pencil, Ban, UserRoundCog } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -18,9 +18,20 @@ import { DateTimePicker } from "@/components/ui/DateTimePicker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from 'sonner';
 import { format, isBefore, startOfToday } from 'date-fns';
+import { useAuth } from '@/lib/AuthContext';
+import { mergeServiceRequestUpdateAudit } from '@/utils/serviceRequestAudit';
+import {
+  getSeasonFromServiceRequest,
+  getServiceTypeLabelForSeason,
+  formatRequestStatusLabel,
+} from '@/utils/serviceRequestSeason';
+import { cn } from '@/lib/utils';
+
+const CLOSED_STATUSES = ['completed', 'approved', 'closed'];
 
 export default function ServiceRequests() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [showForm, setShowForm] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [activeTab] = useState('all');
@@ -31,6 +42,8 @@ export default function ServiceRequests() {
   const [debouncedSearch] = useState('');
   const [page] = useState(1);
   const [pageSize] = useState(200);
+  const [assignRequest, setAssignRequest] = useState(null);
+  const [assignSelectedTechnician, setAssignSelectedTechnician] = useState(null);
 
   // Check URL params for actions
   useEffect(() => {
@@ -46,7 +59,6 @@ export default function ServiceRequests() {
   const {
     data: pageResult,
     isFetching,
-    refetch
   } = useQuery({
     queryKey: [
       'serviceRequests',
@@ -68,6 +80,11 @@ export default function ServiceRequests() {
       }),
     placeholderData: (previousData) => previousData
   });
+  const { data: cancelledCount = 0 } = useQuery({
+    queryKey: ['serviceRequests', 'cancelledCount'],
+    queryFn: () => serviceRequestService.countCancelled(),
+  });
+
   const { data: clients = [] } = useQuery({
     queryKey: ['clients'],
     queryFn: () => clientService.list()
@@ -75,6 +92,11 @@ export default function ServiceRequests() {
   const { data: technicians = [] } = useQuery({
     queryKey: ['technicians', 'active'],
     queryFn: () => technicianService.filter({ status: 'active' })
+  });
+  const { data: techniciansForAssign = [], isLoading: isLoadingTechniciansForAssign } = useQuery({
+    queryKey: ['technicians', 'forAssignDialog'],
+    queryFn: () => technicianService.list(),
+    enabled: !!assignRequest,
   });
 
   const requests = pageResult?.data ?? [];
@@ -129,6 +151,55 @@ export default function ServiceRequests() {
     setShowRescheduleDialog(true);
   };
 
+  const assignTechnicianMutation = useMutation({
+    mutationFn: async ({ request, technician }) => {
+      let updatePayload = {
+        assigned_technician_id: technician.id,
+        assigned_technician_name: technician.name || null,
+      };
+      updatePayload = mergeServiceRequestUpdateAudit(request, updatePayload, user?.id ?? null, {
+        alwaysSetModified: true,
+      });
+      const updated = await serviceRequestService.update(request.id, updatePayload);
+
+      const submitData = {
+        ...request,
+        ...updatePayload,
+        request_number: request.request_number || `SR-${request.id}`,
+        technician_mobile: technician.phone || '',
+        location: request.location || { address: request.address || '' },
+      };
+      const client = clients.find((c) => String(c.id) === String(request.client_id));
+
+      if (client?.email) {
+        try {
+          await emailService.sendClientNotification(submitData, client, true);
+        } catch {
+          // Do not block successful assignment on email failure.
+        }
+      }
+      if (technician?.email) {
+        try {
+          await emailService.sendTechnicianNotification(submitData, technician, true);
+        } catch {
+          // Do not block successful assignment on email failure.
+        }
+      }
+
+      return updated;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['serviceRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['technicianJobs'] });
+      setAssignRequest(null);
+      setAssignSelectedTechnician(null);
+      toast.success('Technician assigned successfully');
+    },
+    onError: (err) => {
+      toast.error(err?.message || 'Failed to assign technician');
+    },
+  });
+
   const rescheduleMutation = useMutation({
     mutationFn: async ({ request, nextDate, technicianId }) => {
       const nextStart = new Date(nextDate);
@@ -139,13 +210,16 @@ export default function ServiceRequests() {
       }
       const nextEnd = new Date(nextStart.getTime() + durationMs);
       const selectedTechnician = technicians.find((t) => String(t.id) === String(technicianId));
-      const updatePayload = {
+      let updatePayload = {
         scheduled_start_time: nextStart.toISOString(),
         scheduled_end_time: nextEnd.toISOString(),
         scheduled_date: format(nextEnd, 'yyyy-MM-dd'),
         assigned_technician_id: technicianId || null,
         assigned_technician_name: selectedTechnician?.name || null,
       };
+      updatePayload = mergeServiceRequestUpdateAudit(request, updatePayload, user?.id ?? null, {
+        alwaysSetModified: true,
+      });
       const updated = await serviceRequestService.update(request.id, updatePayload);
 
       const submitData = {
@@ -198,75 +272,48 @@ export default function ServiceRequests() {
     return isBefore(d, startOfToday());
   };
 
-  const getScheduleDateRef = (request) =>
-    request.scheduled_end_time || request.scheduled_date || request.scheduled_start_time || null;
-
   const getDueDateRef = (request) =>
     request.scheduled_end_time || request.scheduled_date || request.scheduled_start_time || null;
 
   const getScheduledDateRef = (request) =>
     request.scheduled_start_time || null;
 
-  const getSeasonFromRequest = (request) => {
-    const dateRef = request.scheduled_start_time || null;
-    const d = dateRef ? new Date(dateRef) : new Date();
-    const month = d.getMonth() + 1;
-    if (month >= 3 && month <= 5) return 'spring';
-    if (month >= 6 && month <= 8) return 'summer';
-    if (month >= 9 && month <= 11) return 'winter';
-    return 'off';
-  };
-
-  const isScheduledMaintenanceSeason = (request) =>
-    ['spring', 'winter'].includes(getSeasonFromRequest(request));
-
-  const getServiceTypeLabel = (request) => {
-    const season = getSeasonFromRequest(request);
-    if (season === 'spring') return 'Spring Startup';
-    if (season === 'winter') return 'Winterization (Blowout)';
-    if (season === 'summer') return 'Reactive Service';
-    return 'Service';
-  };
+  const getServiceTypeLabel = (request) =>
+    getServiceTypeLabelForSeason(getSeasonFromServiceRequest(request));
 
   const getStatusTone = (request) => {
     const closed = ['completed', 'approved', 'closed'].includes(request.status);
     if (isOverdue(request) || request.status === 'pending') return 'bg-[#FCEBEB] text-[#A32D2D]';
     if (closed) return 'bg-[#EAF3DE] text-[#3B6D11]';
-    if (isScheduledMaintenanceSeason(request) && !getScheduleDateRef(request)) return 'bg-[#FAEEDA] text-[#BA7517]';
-    if (isScheduledMaintenanceSeason(request) && ['scheduled', 'assigned'].includes(request.status)) return 'bg-[#EEEDFE] text-[#534AB7]';
-    if (getSeasonFromRequest(request) === 'summer' && !closed) return 'bg-[#E6F1FB] text-[#185FA5]';
-    if (request.status === 'scheduled') return 'bg-[#EEEDFE] text-[#534AB7]';
+    if (request.status === 'scheduled' || request.status === 'assigned') return 'bg-[#EEEDFE] text-[#534AB7]';
+    if (request.status === 'in_progress') return 'bg-[#E6F1FB] text-[#185FA5]';
     return 'bg-[#FAEEDA] text-[#BA7517]';
   };
 
   const getStatusLabel = (request) => {
-    const closed = ['completed', 'approved', 'closed'].includes(request.status);
     if (isOverdue(request)) return 'Overdue';
     if (request.status === 'pending') return 'Pending';
-    if (isScheduledMaintenanceSeason(request) && !getScheduleDateRef(request)) return 'Unscheduled';
-    if (getSeasonFromRequest(request) === 'summer' && !closed) return 'Reactive';
-    if (!request.status) return 'Unscheduled';
-    return request.status
-      .replace(/_/g, ' ')
-      .replace(/\b\w/g, (c) => c.toUpperCase());
+    return formatRequestStatusLabel(request.status);
   };
+
+  const canShowAssignTechnician = (request) =>
+    !CLOSED_STATUSES.includes(request.status) && !request.assigned_technician_id;
 
   const getDateTimeTone = (request) => {
     const closed = ['completed', 'approved', 'closed'].includes(request.status);
     if (isOverdue(request) || request.status === 'pending') return 'text-[#A32D2D]';
     if (closed) return 'text-[#3B6D11]';
-    if (isScheduledMaintenanceSeason(request) && !getScheduleDateRef(request)) return 'text-[#BA7517]';
-    if (isScheduledMaintenanceSeason(request) && ['scheduled', 'assigned'].includes(request.status)) return 'text-[#534AB7]';
-    if (getSeasonFromRequest(request) === 'summer' && !closed) return 'text-[#185FA5]';
-    if (request.status === 'scheduled') return 'text-[#534AB7]';
+    if (request.status === 'scheduled' || request.status === 'assigned') return 'text-[#534AB7]';
+    if (request.status === 'in_progress') return 'text-[#185FA5]';
     return 'text-[#BA7517]';
   };
 
-  const formatScheduleDateTime = (dateRef) => {
+  /** Due date column: always show date + time (date-only values display as midnight local). */
+  const formatDueDateTime = (dateRef) => {
     if (!dateRef) return '—';
     const dt = new Date(dateRef);
-    const hasTime = dt.getHours() !== 0 || dt.getMinutes() !== 0;
-    return hasTime ? format(dt, 'MMM d • h:mm a') : format(dt, 'MMM d');
+    if (Number.isNaN(dt.getTime())) return '—';
+    return format(dt, 'MMM d • h:mm a');
   };
 
   const formatScheduledStartDateTime = (dateRef) => {
@@ -321,7 +368,7 @@ export default function ServiceRequests() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Service Requests</h1>
           <p className="mt-1 text-gray-500">Review, reschedule, and manage active service requests</p>
@@ -330,7 +377,7 @@ export default function ServiceRequests() {
           <Button
             variant="outline"
             size="icon"
-            onClick={() => refetch()}
+            onClick={() => void queryClient.invalidateQueries({ queryKey: ['serviceRequests'] })}
             className="h-9 w-9 border-primary/30 text-primary hover:bg-primary/10"
             aria-label="Refresh requests"
           >
@@ -342,7 +389,7 @@ export default function ServiceRequests() {
           </Button>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <div className="rounded-md border border-black/10 bg-white px-3 py-2.5">
           <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
             <span>Open requests</span>
@@ -371,6 +418,13 @@ export default function ServiceRequests() {
           </div>
           <div className="text-[22px] font-medium text-[#BA7517]">{metrics.unscheduled}</div>
         </div>
+        <div className="rounded-md border border-black/10 bg-white px-3 py-2.5">
+          <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
+            <span>Cancelled requests</span>
+            <Ban className="h-3.5 w-3.5 text-[#78716C]" />
+          </div>
+          <div className="text-[22px] font-medium text-[#57534E]">{cancelledCount}</div>
+        </div>
       </div>
 
       {isFetching ? (
@@ -383,14 +437,14 @@ export default function ServiceRequests() {
             <div className="mb-2.5 text-[12px] font-medium uppercase tracking-[0.06em] text-[#888780]">Overdue / Pending</div>
             <div className="overflow-hidden rounded-lg border border-[#F7C1C1] bg-white">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[760px] border-collapse text-sm">
+                <table className="w-full min-w-[700px] border-collapse text-xs sm:min-w-[760px] sm:text-sm">
                   <thead>
                     <tr className="bg-[#FFF8F8]">
-                      <th className="border-b border-[#F7C1C1] px-3.5 py-2 text-left text-sm font-medium text-[#A32D2D]">Client</th>
-                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-sm font-medium text-[#A32D2D]">Service type</th>
-                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-sm font-medium text-[#A32D2D]">Due date</th>
-                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-sm font-medium text-[#A32D2D]">Technician</th>
-                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-sm font-medium text-[#A32D2D]">Action</th>
+                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Client</th>
+                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:text-sm">Service type</th>
+                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:text-sm">Due date</th>
+                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:text-sm">Technician</th>
+                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:text-sm">Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -400,20 +454,44 @@ export default function ServiceRequests() {
                       </tr>
                     ) : overdueRequests.map((request) => (
                       <tr key={request.id} className="border-b border-[#F7C1C1] last:border-b-0">
-                        <td className="px-3.5 py-2 font-medium text-gray-900">{request.client_name || '-'}</td>
+                        <td className="px-2 py-2 font-medium text-gray-900 sm:px-3.5">{request.client_name || '-'}</td>
                         <td className="px-2 py-2 text-black">{getServiceTypeLabel(request)}</td>
-                        <td className={`px-2 py-2 font-medium ${getDateTimeTone(request)}`}>{formatScheduleDateTime(getDueDateRef(request))}</td>
+                        <td className={`px-2 py-2 font-medium ${getDateTimeTone(request)}`}>{formatDueDateTime(getDueDateRef(request))}</td>
                         <td className="px-2 py-2 text-gray-800">{request.assigned_technician_name || 'Unassigned'}</td>
                         <td className="px-2 py-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-7 rounded-[4px] border-[#F7C1C1] bg-[#FCEBEB] px-2.5 text-xs font-medium text-[#A32D2D] hover:border-[#9E3B3B] hover:bg-[#FBE1E1] hover:text-[#B81414]"
-                            onClick={() => handleReschedule(request)}
-                          >
-                            Reschedule
-                          </Button>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="default"
+                              className="h-7 gap-1.5 rounded-[4px] bg-primary px-2.5 text-xs font-medium text-white hover:bg-primary/90 hover:text-white"
+                              onClick={() => handleEdit(request)}
+                            >
+                              <Pencil className="h-3.5 w-3.5 shrink-0" />
+                              Edit
+                            </Button>
+                            {canShowAssignTechnician(request) ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="default"
+                                className="h-7 gap-1.5 rounded-[4px] bg-primary px-2.5 text-xs font-medium text-white hover:bg-primary/90 hover:text-white"
+                                onClick={() => setAssignRequest(request)}
+                              >
+                                <UserRoundCog className="h-3.5 w-3.5 shrink-0" />
+                                Assign technician
+                              </Button>
+                            ) : null}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 rounded-[4px] border-[#F7C1C1] bg-[#FCEBEB] px-2.5 text-xs font-medium text-[#A32D2D] hover:border-[#9E3B3B] hover:bg-[#FBE1E1] hover:text-[#B81414]"
+                              onClick={() => handleReschedule(request)}
+                            >
+                              Reschedule
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -426,24 +504,25 @@ export default function ServiceRequests() {
             <div className="mb-2.5 text-[12px] font-medium uppercase tracking-[0.06em] text-[#888780]">All open requests</div>
             <div className="overflow-hidden rounded-lg border border-black/10 bg-white">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[760px] border-collapse text-sm">
+                <table className="w-full min-w-[700px] border-collapse text-xs sm:min-w-[760px] sm:text-sm">
                   <thead>
                     <tr className="bg-[#f8f8f7]">
-                      <th className="border-b border-black/10 px-3.5 py-2 text-left text-sm font-medium text-[#888780]">Client</th>
-                      <th className="border-b border-black/10 px-2 py-2 text-left text-sm font-medium text-[#888780]">Service type</th>
-                      <th className="border-b border-black/10 px-2 py-2 text-left text-sm font-medium text-[#888780]">Scheduled</th>
-                      <th className="border-b border-black/10 px-2 py-2 text-left text-sm font-medium text-[#888780]">Tech</th>
-                      <th className="border-b border-black/10 px-2 py-2 text-left text-sm font-medium text-[#888780]">Status</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Client</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:text-sm">Service type</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:text-sm">Scheduled</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:text-sm">Tech</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:text-sm">Status</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:text-sm">Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {openRequests.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="px-3.5 py-6 text-center text-xs text-[#888780]">No open requests.</td>
+                        <td colSpan={6} className="px-3.5 py-6 text-center text-xs text-[#888780]">No open requests.</td>
                       </tr>
                     ) : openRequests.map((request) => (
                       <tr key={request.id} className="border-b border-black/10 last:border-b-0">
-                        <td className="px-3.5 py-2 font-medium text-gray-900">{request.client_name || '-'}</td>
+                        <td className="px-2 py-2 font-medium text-gray-900 sm:px-3.5">{request.client_name || '-'}</td>
                         <td className="px-2 py-2 text-black">{getServiceTypeLabel(request)}</td>
                         <td className={`px-2 py-2 font-medium ${getDateTimeTone(request)}`}>
                           {formatScheduledStartDateTime(getScheduledDateRef(request))}
@@ -453,6 +532,32 @@ export default function ServiceRequests() {
                           <span className={`inline-block rounded-[10px] px-2 py-0.5 text-[10px] font-medium ${getStatusTone(request)}`}>
                             {getStatusLabel(request)}
                           </span>
+                        </td>
+                        <td className="px-2 py-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="default"
+                              className="h-7 gap-1.5 rounded-[4px] bg-primary px-2.5 text-xs font-medium text-white hover:bg-primary/90 hover:text-white"
+                              onClick={() => handleEdit(request)}
+                            >
+                              <Pencil className="h-3.5 w-3.5 shrink-0" />
+                              Edit
+                            </Button>
+                            {canShowAssignTechnician(request) ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="default"
+                                className="h-7 gap-1.5 rounded-[4px] bg-primary px-2.5 text-xs font-medium text-white hover:bg-primary/90 hover:text-white"
+                                onClick={() => setAssignRequest(request)}
+                              >
+                                <UserRoundCog className="h-3.5 w-3.5 shrink-0" />
+                                Assign technician
+                              </Button>
+                            ) : null}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -486,6 +591,100 @@ export default function ServiceRequests() {
             setSelectedRequest(null);
           }} />
 
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!assignRequest}
+        onOpenChange={(open) => {
+          if (!open) {
+            setAssignRequest(null);
+            setAssignSelectedTechnician(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Assign technician</DialogTitle>
+            <DialogDescription>
+              {assignRequest && (
+                <>
+                  Choose a technician for #{assignRequest.request_number || assignRequest.id} —{' '}
+                  {assignRequest.client_name || 'Client'}, then click Save.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-1 pr-2">
+            {isLoadingTechniciansForAssign ? (
+              <div className="flex justify-center py-8">
+                <LoadingSpinner size="md" text="Loading technicians..." />
+              </div>
+            ) : techniciansForAssign.length === 0 ? (
+              <p className="text-sm text-gray-500 text-center py-6">No technicians available to assign.</p>
+            ) : (
+              techniciansForAssign.map((tech) => {
+                const isSelected =
+                  assignSelectedTechnician &&
+                  String(assignSelectedTechnician.id) === String(tech.id);
+                return (
+                  <button
+                    key={tech.id}
+                    type="button"
+                    className={cn(
+                      'w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-colors',
+                      'bg-card hover:bg-muted/50',
+                      isSelected && 'border-primary bg-primary/5 ring-1 ring-primary/30'
+                    )}
+                    onClick={() => setAssignSelectedTechnician(tech)}
+                    disabled={assignTechnicianMutation.isPending}
+                  >
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
+                      {(tech.name || '?')
+                        .split(/\s+/)
+                        .filter(Boolean)
+                        .map((n) => n[0])
+                        .join('')
+                        .slice(0, 2)
+                        .toUpperCase() || '?'}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium text-gray-900">{tech.name}</p>
+                      <p className="truncate text-xs text-gray-500">{tech.employee_id || tech.email}</p>
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+          <div className="mt-3 flex shrink-0 flex-wrap justify-end gap-2 border-t border-black/10 pt-3">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={assignTechnicianMutation.isPending}
+              onClick={() => {
+                setAssignRequest(null);
+                setAssignSelectedTechnician(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                !assignRequest || !assignSelectedTechnician || assignTechnicianMutation.isPending
+              }
+              onClick={() => {
+                if (!assignRequest || !assignSelectedTechnician) return;
+                assignTechnicianMutation.mutate({
+                  request: assignRequest,
+                  technician: assignSelectedTechnician,
+                });
+              }}
+            >
+              {assignTechnicianMutation.isPending ? 'Saving...' : 'Save'}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 

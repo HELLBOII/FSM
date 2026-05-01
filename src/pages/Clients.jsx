@@ -46,6 +46,7 @@ import {
 "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { DateTimePicker } from "@/components/ui/DateTimePicker";
 import PageHeader from '@/components/common/PageHeader';
 import StatusBadge from '@/components/ui/StatusBadge';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
@@ -120,6 +121,7 @@ export default function Clients() {
   const [newIrrigationSystem, setNewIrrigationSystem] = useState('');
   const [notesHistoryOpen, setNotesHistoryOpen] = useState(false);
   const [notesHistoryTarget, setNotesHistoryTarget] = useState(null);
+  const [inactiveDateTime, setInactiveDateTime] = useState(null);
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
@@ -262,6 +264,7 @@ export default function Clients() {
   const resetForm = () => {
     setShowForm(false);
     setSelectedClient(null);
+    setInactiveDateTime(null);
     setFormData({
       name: '',
       phone: '',
@@ -283,6 +286,12 @@ export default function Clients() {
 
   const handleEdit = (client) => {
     setSelectedClient(client);
+    if (client.inactivedate) {
+      const d = new Date(client.inactivedate);
+      setInactiveDateTime(Number.isNaN(d.getTime()) ? null : d);
+    } else {
+      setInactiveDateTime(null);
+    }
     setFormData({
       name: client.name || '',
       phone: client.phone || '',
@@ -305,15 +314,24 @@ export default function Clients() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (formData.status === 'inactive' && !inactiveDateTime) {
+      toast.error('Inactive date and time are required when status is inactive');
+      return;
+    }
     const lat = parseOptionalNumber(formData.latitude);
     const lng = parseOptionalNumber(formData.longitude);
+    const inactiveIso =
+      formData.status === 'inactive' && inactiveDateTime
+        ? inactiveDateTime.toISOString()
+        : null;
     const submitData = {
       ...formData,
       total_acreage: parseOptionalNumber(formData.total_acreage),
       latitude: lat,
       longitude: lng,
       location: lat != null && lng != null ? { lat, lng } : null,
-      notes_history: selectedClient ? normalizeNotesHistory(selectedClient.notes_history) : []
+      notes_history: selectedClient ? normalizeNotesHistory(selectedClient.notes_history) : [],
+      inactivedate: inactiveIso
     };
     if (selectedClient) {
       await updateMutation.mutateAsync({ id: selectedClient.id, data: submitData });
@@ -792,7 +810,10 @@ export default function Clients() {
                   <Select data-source-location="pages/Clients:434:14" data-dynamic-content="false"
                   value={formData.status}
                   required
-                  onValueChange={(v) => setFormData((prev) => ({ ...prev, status: v }))}>
+                  onValueChange={(v) => {
+                    if (v === 'active') setInactiveDateTime(null);
+                    setFormData((prev) => ({ ...prev, status: v }));
+                  }}>
 
                     <SelectTrigger data-source-location="pages/Clients:438:16" data-dynamic-content="false" className="border-primary/30 focus:ring-primary focus:border-primary">
                       <SelectValue data-source-location="pages/Clients:439:18" data-dynamic-content="false" />
@@ -803,6 +824,21 @@ export default function Clients() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {formData.status === 'inactive' && (
+                  <div data-source-location="pages/Clients:status-inactive-date" data-dynamic-content="true">
+                    <Label className="text-sm mb-2 block">
+                      Inactive date
+                      <RequiredMark />
+                    </Label>
+                    <DateTimePicker
+                      date={inactiveDateTime}
+                      onDateChange={setInactiveDateTime}
+                      placeholder="Select inactive date & time"
+                      className="border-primary/30 focus-visible:ring-primary"
+                    />
+                  </div>
+                )}
 
                 <div data-source-location="pages/Clients:422:12" data-dynamic-content="true">
                   <div className="flex items-center justify-between gap-2 mb-2">

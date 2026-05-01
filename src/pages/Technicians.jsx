@@ -42,6 +42,7 @@ import {
 "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { DateTimePicker } from "@/components/ui/DateTimePicker";
 import PageHeader from '@/components/common/PageHeader';
 import StatusBadge from '@/components/ui/StatusBadge';
 import EmptyState from '@/components/common/EmptyState';
@@ -116,6 +117,7 @@ export default function Technicians() {
   const [selectedTech, setSelectedTech] = useState(null);
   const [showAddSpecializationDialog, setShowAddSpecializationDialog] = useState(false);
   const [newSpecialization, setNewSpecialization] = useState('');
+  const [inactiveDateTime, setInactiveDateTime] = useState(null);
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
@@ -249,6 +251,7 @@ export default function Technicians() {
   const resetForm = () => {
     setShowForm(false);
     setSelectedTech(null);
+    setInactiveDateTime(null);
     setFormData({
       name: '',
       phone: '',
@@ -268,6 +271,12 @@ export default function Technicians() {
 
   const handleEdit = (tech) => {
     setSelectedTech(tech);
+    if (tech.inactivedate) {
+      const d = new Date(tech.inactivedate);
+      setInactiveDateTime(Number.isNaN(d.getTime()) ? null : d);
+    } else {
+      setInactiveDateTime(null);
+    }
     setFormData({
       name: tech.name || '',
       phone: tech.phone || '',
@@ -301,6 +310,10 @@ export default function Technicians() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (formData.status === 'inactive' && !inactiveDateTime) {
+      toast.error('Inactive date and time are required when status is inactive');
+      return;
+    }
     let lat = null;
     let lng = null;
     console.log('Form data:', formData);
@@ -319,11 +332,16 @@ export default function Technicians() {
       return;
     }
   }
+    const inactiveIso =
+      formData.status === 'inactive' && inactiveDateTime
+        ? inactiveDateTime.toISOString()
+        : null;
     const submitData = {
       ...formData,
       employee_id: formData.employee_id?.trim() || null,
       latitude: lat,
-      longitude: lng
+      longitude: lng,
+      inactivedate: inactiveIso
     };
 
     if (selectedTech) {
@@ -755,7 +773,10 @@ export default function Technicians() {
                   <Select data-source-location="pages/Technicians:379:14" data-dynamic-content="false"
                   value={formData.status}
                   required
-                  onValueChange={(v) => setFormData((prev) => ({ ...prev, status: v }))}>
+                  onValueChange={(v) => {
+                    if (v === 'active') setInactiveDateTime(null);
+                    setFormData((prev) => ({ ...prev, status: v }));
+                  }}>
 
                     <SelectTrigger data-source-location="pages/Technicians:383:16" data-dynamic-content="false">
                       <SelectValue data-source-location="pages/Technicians:384:18" data-dynamic-content="false" />
@@ -766,6 +787,21 @@ export default function Technicians() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {formData.status === 'inactive' && (
+                  <div data-source-location="pages/Technicians:status-inactive-date" data-dynamic-content="true">
+                    <Label className="text-sm mb-2 block">
+                      Inactive date
+                      <RequiredMark />
+                    </Label>
+                    <DateTimePicker
+                      date={inactiveDateTime}
+                      onDateChange={setInactiveDateTime}
+                      placeholder="Select inactive date & time"
+                      className="border-primary/30 focus-visible:ring-primary"
+                    />
+                  </div>
+                )}
               </div>
             </div>
 

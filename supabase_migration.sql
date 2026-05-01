@@ -633,6 +633,28 @@ ON CONFLICT (specializations) DO NOTHING;
 -- ============================================
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS notes_history JSONB DEFAULT '[]'::jsonb;
 
+-- When status is inactive, UI captures inactive date/time (TIMESTAMPTZ).
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS inactivedate TIMESTAMPTZ;
+ALTER TABLE technicians ADD COLUMN IF NOT EXISTS inactivedate TIMESTAMPTZ;
+
+-- ============================================
+-- Service requests: multi-select irrigation systems (same pattern as clients)
+-- ============================================
+ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS irrigation_systems TEXT[];
+
+-- Cancel flag: 'F' = active, 'T' = cancelled by user
+ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS is_cancelled TEXT NOT NULL DEFAULT 'F'
+  CHECK (is_cancelled IN ('T', 'F'));
+
+-- Audit + append-only reassignment / reschedule history (JSON array of { at, by, action, previous })
+ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS created_by TEXT;
+ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS created_on TIMESTAMPTZ;
+ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS modified_by TEXT;
+ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS modified_on TIMESTAMPTZ;
+ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS assignment_history JSONB DEFAULT '[]'::jsonb;
+
+-- Optional: run supabase_rls_jwt_security.sql for JWT-scoped RLS (TO authenticated) helpers.
+
 -- ============================================
 -- SUCCESS MESSAGE
 -- ============================================

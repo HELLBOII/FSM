@@ -1,5 +1,10 @@
 import { supabase } from '@/lib/supabase';
 
+/** Active requests only (cancelled rows use is_cancelled = 'T'). */
+function activeRequestsOnly(query) {
+  return query.eq('is_cancelled', 'F');
+}
+
 /**
  * Service Request Service - CRUD operations for Service Requests
  */
@@ -12,10 +17,9 @@ export const serviceRequestService = {
    * @returns {Promise<Array>}
    */
   async list(orderBy = 'created_at', orderDirection = 'desc', limit = null) {
-    let query = supabase
-      .from('service_requests')
-      .select('*')
-      .order(orderBy, { ascending: orderDirection === 'asc' });
+    let query = activeRequestsOnly(
+      supabase.from('service_requests').select('*')
+    ).order(orderBy, { ascending: orderDirection === 'asc' });
 
     if (limit) {
       query = query.limit(limit);
@@ -30,16 +34,21 @@ export const serviceRequestService = {
    * Counts for tab badges (All / Active / Pending / Closed) — not affected by search/filters.
    */
   async getTabCounts() {
-    const from = () => supabase.from('service_requests');
+    const head = () =>
+      activeRequestsOnly(
+        supabase.from('service_requests').select('*', { count: 'exact', head: true })
+      );
     const [allRes, activeRes, pendingRes, closedRes] = await Promise.all([
-      from().select('*', { count: 'exact', head: true }),
-      from()
-        .select('*', { count: 'exact', head: true })
-        .in('status', ['new', 'scheduled', 'assigned', 'in_progress']),
-      from().select('*', { count: 'exact', head: true }).eq('status', 'completed'),
-      from()
-        .select('*', { count: 'exact', head: true })
-        .in('status', ['approved', 'closed'])
+      head(),
+      activeRequestsOnly(
+        supabase.from('service_requests').select('*', { count: 'exact', head: true })
+      ).in('status', ['new', 'scheduled', 'assigned', 'in_progress']),
+      activeRequestsOnly(
+        supabase.from('service_requests').select('*', { count: 'exact', head: true })
+      ).eq('status', 'completed'),
+      activeRequestsOnly(
+        supabase.from('service_requests').select('*', { count: 'exact', head: true })
+      ).in('status', ['approved', 'closed'])
     ]);
 
     if (allRes.error) throw allRes.error;
@@ -81,7 +90,9 @@ export const serviceRequestService = {
     const fromIdx = (safePage - 1) * safeSize;
     const toIdx = fromIdx + safeSize - 1;
 
-    let query = supabase.from('service_requests').select('*', { count: 'exact' });
+    let query = activeRequestsOnly(
+      supabase.from('service_requests').select('*', { count: 'exact' })
+    );
 
     if (activeTab === 'active') {
       query = query.in('status', ['new', 'scheduled', 'assigned', 'in_progress']);
@@ -125,6 +136,20 @@ export const serviceRequestService = {
     }
 
     return { data: data || [], total: count ?? 0 };
+  },
+
+  /**
+   * Count requests marked cancelled (is_cancelled = 'T'). Not filtered by active list rules.
+   * @returns {Promise<number>}
+   */
+  async countCancelled() {
+    const { count, error } = await supabase
+      .from('service_requests')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_cancelled', 'T');
+
+    if (error) throw error;
+    return count ?? 0;
   },
 
   /**
@@ -203,11 +228,9 @@ export const serviceRequestService = {
    * @returns {Promise<Array>}
    */
   async getByClientId(clientId) {
-    const { data, error } = await supabase
-      .from('service_requests')
-      .select('*')
-      .eq('client_id', clientId)
-      .order('created_at', { ascending: false });
+    const { data, error } = await activeRequestsOnly(
+      supabase.from('service_requests').select('*').eq('client_id', clientId)
+    ).order('created_at', { ascending: false });
 
     if (error) throw error;
     return data || [];
@@ -219,11 +242,9 @@ export const serviceRequestService = {
    * @returns {Promise<Array>}
    */
   async getByTechnicianId(technicianId) {
-    const { data, error } = await supabase
-      .from('service_requests')
-      .select('*')
-      .eq('assigned_technician_id', technicianId)
-      .order('created_at', { ascending: false });
+    const { data, error } = await activeRequestsOnly(
+      supabase.from('service_requests').select('*').eq('assigned_technician_id', technicianId)
+    ).order('created_at', { ascending: false });
 
     if (error) throw error;
     return data || [];
@@ -235,11 +256,9 @@ export const serviceRequestService = {
    * @returns {Promise<Array>}
    */
   async getByStatus(status) {
-    const { data, error } = await supabase
-      .from('service_requests')
-      .select('*')
-      .eq('status', status)
-      .order('created_at', { ascending: false });
+    const { data, error } = await activeRequestsOnly(
+      supabase.from('service_requests').select('*').eq('status', status)
+    ).order('created_at', { ascending: false });
 
     if (error) throw error;
     return data || [];
@@ -263,6 +282,8 @@ export const serviceRequestService = {
         query = query.eq(key, value);
       }
     });
+
+    query = activeRequestsOnly(query);
 
     const { data, error } = await query.order('created_at', { ascending: false });
     if (error) throw error;

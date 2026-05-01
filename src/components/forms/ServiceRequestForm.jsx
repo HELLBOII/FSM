@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectSeparator } from "@/components/ui/select";
 import { DateTimePicker } from "@/components/ui/DateTimePicker";
 import {
   Dialog,
@@ -12,35 +13,68 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { clientService, storageService, technicianService, emailService } from '@/services';
-import { useQuery } from '@tanstack/react-query';
-import { Loader2, MapPin, Upload, X, Calendar, Eye, History } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { clientService, storageService, technicianService, emailService, serviceRequestService, irrigationSystemsService } from '@/services';
+import { useAuth } from '@/lib/AuthContext';
+import { buildAssignmentHistoryEntry, parseAssignmentHistory } from '@/utils/serviceRequestAudit';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Loader2, MapPin, Upload, X, Calendar, Eye, History, Plus } from 'lucide-react';
 import ClientNotesHistoryDialog from '@/components/clients/ClientNotesHistoryDialog';
 import { toast } from 'sonner';
-import { format } from 'date-fns';
+import { addDays, format } from 'date-fns';
 import DashboardMap, { MAP_PIN_COLORS } from '@/components/map/DashboardMap';
 
-const irrigationTypes = [
-  { value: 'drip', label: 'Drip Irrigation', icon: '💧' },
-  { value: 'sprinkler', label: 'Sprinkler System', icon: '🌊' },
-  { value: 'center_pivot', label: 'Center Pivot', icon: '🔄' },
-  { value: 'flood', label: 'Flood Irrigation', icon: '🌊' },
-  { value: 'micro_sprinkler', label: 'Micro Sprinkler', icon: '💦' },
-  { value: 'subsurface', label: 'Subsurface Drip', icon: '🌱' }
+/** Default irrigation system option labels (merged with DB + client lists). */
+const HARDCODED_IRRIGATION_SYSTEMS = [
+  'Drip Irrigation',
+  'Sprinkler System',
+  'Center Pivot',
+  'Flood Irrigation',
+  'Micro Sprinkler',
+  'Subsurface Drip',
 ];
 
+/** Stored in DB; UI labels per product (Repair & Service maps to `leak_repair` for CHECK constraint). */
 const issueCategories = [
-  { value: 'leak_repair', label: 'Leak Repair' },
-  { value: 'system_installation', label: 'New Installation' },
   { value: 'maintenance', label: 'Scheduled Maintenance' },
-  { value: 'pump_issue', label: 'Pump Issue' },
-  { value: 'valve_replacement', label: 'Valve Replacement' },
-  { value: 'filter_cleaning', label: 'Filter Cleaning' },
-  { value: 'pipe_repair', label: 'Pipe Repair' },
-  { value: 'controller_issue', label: 'Controller/Timer Issue' },
-  { value: 'water_pressure', label: 'Water Pressure Problem' },
-  { value: 'other', label: 'Other' }
+  { value: 'leak_repair', label: 'Repair & Service' },
+  { value: 'other', label: 'Other' },
 ];
+
+const LEGACY_ISSUE_TO_FORM = (ic) => {
+  if (!ic) return 'other';
+  if (ic === 'maintenance') return 'maintenance';
+  if (ic === 'other') return 'other';
+  if (
+    [
+      'leak_repair',
+      'pump_issue',
+      'pipe_repair',
+      'valve_replacement',
+      'filter_cleaning',
+      'controller_issue',
+      'water_pressure',
+      'system_installation',
+    ].includes(ic)
+  ) {
+    return 'leak_repair';
+  }
+  return 'other';
+};
+
+/** API may return 'T'/'F', boolean, or missing */
+function normalizeIsCancelled(value) {
+  if (value === true || value === 'T' || value === 't' || String(value).toLowerCase() === 'true') return 'T';
+  return 'F';
+}
 
 const priorities = [
   { value: 'low', label: 'Low', description: 'Non-urgent, can wait' },
@@ -155,13 +189,15 @@ function deriveClientMapContext(sortedRequestsForClient) {
 }
 
 export default function ServiceRequestForm({ request, onSubmit, onCancel, initialClientId, initialStartTime, initialEndTime }) {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [formData, setFormData] = useState({
     client_id: '',
     client_name: '',
     farm_name: '',
     contact_phone: '',
     location: { lat: null, lng: null, address: '' },
-    irrigation_type: '',
+    irrigation_systems: [],
     issue_category: '',
     priority: 'medium',
     description: '',
@@ -173,7 +209,8 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
     assigned_technician_name: '',
     assigned_technician_phone: '',
     from_time: null,
-    to_time: null
+    to_time: null,
+    is_cancelled: 'F',
   });
   const [fromDateTime, setFromDateTime] = useState(null);
   const [toDateTime, setToDateTime] = useState(null);
@@ -182,7 +219,11 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [showAssignmentDialog, setShowAssignmentDialog] = useState(false);
   const [clientNotesHistoryOpen, setClientNotesHistoryOpen] = useState(false);
+  const [showAddIrrigationDialog, setShowAddIrrigationDialog] = useState(false);
+  const [newIrrigationSystem, setNewIrrigationSystem] = useState('');
   const [errors, setErrors] = useState({});
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
+  const [isCancelSaving, setIsCancelSaving] = useState(false);
 
   const { data: clients = [], isLoading: isLoadingClients } = useQuery({
     queryKey: ['clients'],
@@ -197,6 +238,61 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
     queryKey: ['serviceRequests'],
     queryFn: () => serviceRequestService.list('created_at', 'desc', 100)
   });
+  const { data: dbIrrigationSystems = [] } = useQuery({
+    queryKey: ['irrigationSystems'],
+    queryFn: () => irrigationSystemsService.list()
+  });
+
+  const availableIrrigationSystems = useMemo(() => {
+    const dbNames = dbIrrigationSystems.map((s) => s.irrigation_systems);
+    const fromClients = clients.flatMap((c) => c.irrigation_systems || []);
+    return [...new Set([...HARDCODED_IRRIGATION_SYSTEMS, ...dbNames, ...fromClients])].sort();
+  }, [clients, dbIrrigationSystems]);
+
+  const irrigationPickList = useMemo(
+    () => availableIrrigationSystems.filter((sys) => !formData.irrigation_systems.includes(sys)),
+    [availableIrrigationSystems, formData.irrigation_systems]
+  );
+
+  const createIrrigationSystemMutation = useMutation({
+    mutationFn: (data) => irrigationSystemsService.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['irrigationSystems'] });
+      queryClient.invalidateQueries({ queryKey: ['clients'] });
+      setNewIrrigationSystem('');
+      setShowAddIrrigationDialog(false);
+      toast.success('Irrigation system added successfully');
+    },
+    onError: (error) => {
+      toast.error('Failed to add irrigation system: ' + (error?.message || 'Unknown error'));
+    }
+  });
+
+  const handleAddIrrigationSystem = async () => {
+    const systemName = newIrrigationSystem.trim();
+    if (!systemName || availableIrrigationSystems.includes(systemName)) {
+      if (systemName && availableIrrigationSystems.includes(systemName)) {
+        toast.error('This irrigation system is already in the list');
+      }
+      return;
+    }
+    try {
+      const existing = await irrigationSystemsService.getByName(systemName);
+      if (existing) {
+        toast.error('This irrigation system already exists');
+        return;
+      }
+    } catch (error) {
+      if (error.code !== 'PGRST116') throw error;
+    }
+    await createIrrigationSystemMutation.mutateAsync({ irrigation_systems: systemName });
+    setFormData((prev) => ({
+      ...prev,
+      irrigation_systems: prev.irrigation_systems.includes(systemName)
+        ? prev.irrigation_systems
+        : [...prev.irrigation_systems, systemName],
+    }));
+  };
 
   const requestsByClientId = useMemo(() => {
     const m = new Map();
@@ -249,8 +345,8 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
 
   // Reusable skeleton component for Select fields
   const SelectSkeleton = () => (
-    <div className="h-9 w-full rounded-md border border-input bg-muted animate-pulse flex items-center px-3">
-      <div className="h-4 w-32 bg-muted-foreground/20 rounded"></div>
+    <div className="flex h-10 min-h-10 w-full items-center rounded-md border border-input bg-muted px-3 animate-pulse">
+      <div className="h-4 w-36 rounded bg-muted-foreground/20 sm:h-5" />
     </div>
   );
 
@@ -265,16 +361,38 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
       }
       if (request.scheduled_end_time) {
         toDateTimeValue = new Date(request.scheduled_end_time);
+      } else if (fromDateTimeValue) {
+        toDateTimeValue = addDays(fromDateTimeValue, 7);
       }
 
       setFromDateTime(fromDateTimeValue);
       setToDateTime(toDateTimeValue);
 
+      const irrigationSystemsFromRequest =
+        Array.isArray(request.irrigation_systems) && request.irrigation_systems.length > 0
+          ? [...request.irrigation_systems]
+          : [];
+
+      const {
+        irrigation_type: _omitIrrigationType,
+        irrigation_systems: _omitIrrigationSystems,
+        issue_category: _omitIssueCat,
+        assignment_history: _omitAssignmentHistory,
+        created_by: _omitCreatedBy,
+        created_on: _omitCreatedOn,
+        modified_by: _omitModifiedBy,
+        modified_on: _omitModifiedOn,
+        ...requestRest
+      } = request;
+
       setFormData({
-        ...request,
+        ...requestRest,
         acreage_affected: request.acreage_affected?.toString() || '1',
         from_time: fromDateTimeValue,
-        to_time: toDateTimeValue
+        to_time: toDateTimeValue,
+        issue_category: LEGACY_ISSUE_TO_FORM(request.issue_category),
+        irrigation_systems: irrigationSystemsFromRequest,
+        is_cancelled: normalizeIsCancelled(request.is_cancelled),
       });
       // Extract paths from photo URLs if they exist
       if (request.photos && Array.isArray(request.photos)) {
@@ -301,7 +419,12 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
       // Pre-fill start/end from calendar slot click (initialStartTime, initialEndTime)
       if (initialStartTime != null || initialEndTime != null) {
         const startVal = initialStartTime != null ? new Date(initialStartTime) : null;
-        const endVal = initialEndTime != null ? new Date(initialEndTime) : null;
+        const endVal =
+          initialEndTime != null
+            ? new Date(initialEndTime)
+            : startVal
+              ? addDays(startVal, 7)
+              : null;
         setFromDateTime(startVal);
         setToDateTime(endVal);
         setFormData(prev => ({
@@ -331,6 +454,7 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
             lng,
             address: client.address ?? '',
           },
+          irrigation_systems: client.irrigation_systems?.length ? [...client.irrigation_systems] : prev.irrigation_systems,
         }));
       }
     }
@@ -354,7 +478,8 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
           lat: lat,
           lng: lng,
           address: address
-        }
+        },
+        irrigation_systems: client.irrigation_systems?.length ? [...client.irrigation_systems] : [],
       }));
       setErrors((prev) => ({ ...prev, client_id: '' }));
     }
@@ -363,11 +488,10 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
   const validateForm = () => {
     const nextErrors = {};
     if (!formData.client_id) nextErrors.client_id = 'Client is required.';
-    if (!formData.irrigation_type) nextErrors.irrigation_type = 'Irrigation type is required.';
+    if (!formData.irrigation_systems?.length) nextErrors.irrigation_systems = 'Add at least one irrigation system.';
     if (!formData.issue_category) nextErrors.issue_category = 'Issue category is required.';
     if (!fromDateTime) nextErrors.from_time = 'Start time is required.';
     if (!toDateTime) nextErrors.to_time = 'End time is required.';
-    if (!formData.assigned_technician_id) nextErrors.assigned_technician_id = 'Technician is required.';
     if (fromDateTime && toDateTime && toDateTime <= fromDateTime) {
       nextErrors.to_time = 'End time must be after start time.';
     }
@@ -440,8 +564,30 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
     }
   };
 
+  const handleConfirmCancelRequest = async () => {
+    if (!request?.id) return;
+    setIsCancelSaving(true);
+    try {
+      await onSubmit({
+        is_cancelled: 'T',
+        modified_by: user?.id ?? null,
+        modified_on: new Date().toISOString(),
+      });
+      setFormData((prev) => ({ ...prev, is_cancelled: 'T' }));
+      setCancelConfirmOpen(false);
+    } catch (err) {
+      toast.error(err?.message || 'Failed to cancel request');
+    } finally {
+      setIsCancelSaving(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (normalizeIsCancelled(formData.is_cancelled) === 'T') {
+      toast.error('This request is cancelled and cannot be saved.');
+      return;
+    }
     if (!validateForm()) {
       toast.error('Please fill all mandatory fields.');
       return;
@@ -461,21 +607,50 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
       // Use display state for dates so submitted times match what the user selected (avoids stale state)
       const startTime = fromDateTime ?? formData.from_time
       const endTime = toDateTime ?? formData.to_time
+      const {
+        from_time: _ft,
+        to_time: _tt,
+        assignment_history: _omitHist,
+        created_by: _omitCb,
+        created_on: _omitCon,
+        modified_by: _omitMb,
+        modified_on: _omitMon,
+        ...formFields
+      } = formData;
       const submitData = {
-        ...formData,
+        ...formFields,
         acreage_affected: formData.acreage_affected ? parseFloat(formData.acreage_affected) : null,
         request_number: request?.request_number || `SR-${Date.now().toString(36).toUpperCase()}`,
         scheduled_start_time: startTime ? startTime.toISOString() : null,
         scheduled_end_time: endTime ? endTime.toISOString() : null,
-        // Ensure these fields are explicitly included and properly formatted
         contact_phone: formData.contact_phone || '',
         location: locationData,
-        assigned_technician_phone: formData.assigned_technician_phone || ''
+        irrigation_systems: formData.irrigation_systems || [],
+        assigned_technician_id: formData.assigned_technician_id || null,
+        assigned_technician_name: formData.assigned_technician_id ? formData.assigned_technician_name : null,
+        assigned_technician_phone: formData.assigned_technician_id ? (formData.assigned_technician_phone || '') : '',
+        is_cancelled: 'F',
       };
-      // Remove from_time and to_time from submit data as they're now mapped to scheduled_start_time and scheduled_end_time
-      delete submitData.from_time;
-      delete submitData.to_time;
-      
+
+      const actorId = user?.id ?? null;
+      const nowIso = new Date().toISOString();
+      if (!request) {
+        submitData.created_by = actorId;
+        submitData.created_on = nowIso;
+        submitData.modified_by = null;
+        submitData.modified_on = null;
+      } else {
+        submitData.modified_by = actorId;
+        submitData.modified_on = nowIso;
+        const historyEntry = buildAssignmentHistoryEntry(request, submitData, actorId);
+        if (historyEntry) {
+          submitData.assignment_history = [
+            ...parseAssignmentHistory(request.assignment_history),
+            historyEntry,
+          ];
+        }
+      }
+
       // Submit the form
       await onSubmit(submitData);
       
@@ -519,10 +694,25 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
     }
   };
 
-  // Handle from date/time changes
+  // Handle from date/time changes — default end to start + 7 days (user can edit end afterward)
   const handleFromDateTimeChange = (dateTime) => {
     setFromDateTime(dateTime);
-    setFormData(prev => ({ ...prev, from_time: dateTime }));
+    if (!dateTime) {
+      setToDateTime(null);
+      setFormData((prev) => ({ ...prev, from_time: null, to_time: null }));
+      setErrors((prev) => ({ ...prev, from_time: '', to_time: '' }));
+      return;
+    }
+    const nextEndDefault = addDays(dateTime, 7);
+    setToDateTime((prevTo) => {
+      if (!prevTo || prevTo <= dateTime) return nextEndDefault;
+      return prevTo;
+    });
+    setFormData((prev) => {
+      const prevTo = prev.to_time ? new Date(prev.to_time) : null;
+      const newTo = !prevTo || prevTo <= dateTime ? nextEndDefault : prevTo;
+      return { ...prev, from_time: dateTime, to_time: newTo };
+    });
     setErrors((prev) => ({ ...prev, from_time: '', to_time: '' }));
   };
 
@@ -536,27 +726,36 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <div className="space-y-3">
-        {/* Row 1: Select Client, Irrigation Type, Issue Category */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div>
+        {/* Row 1: Client | Issue category | Irrigation systems */}
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="min-w-0">
             <Label className="text-sm mb-2 block">Select Client <span className="text-red-600">*</span></Label>
             {isLoadingClients ? (
               <SelectSkeleton />
             ) : (
               <div className="flex items-center gap-2">
-                <Select value={formData.client_id} onValueChange={handleClientSelect}>
-                  <SelectTrigger className={`h-9 text-sm flex-1 min-w-0 ${errors.client_id ? 'border-red-500' : ''}`}>
+                <Select
+                  value={formData.client_id ? String(formData.client_id) : undefined}
+                  onValueChange={handleClientSelect}
+                  disabled={clients.length === 0}
+                >
+                  <SelectTrigger
+                    className={`h-10 min-h-10 flex-1 min-w-0 border-primary/30 text-sm focus:border-primary focus:ring-primary sm:text-base ${errors.client_id ? 'border-red-500' : ''}`}
+                    aria-invalid={errors.client_id ? true : undefined}
+                  >
                     <SelectValue placeholder="Choose a client..." />
                   </SelectTrigger>
                   <SelectContent>
                     {clients.length > 0 ? (
-                      clients.map(client => (
-                        <SelectItem key={client.id} value={client.id}>
-                          {client.name} - {client.farm_name}
+                      clients.map((client) => (
+                        <SelectItem key={client.id} value={String(client.id)}>
+                          {[client.name, client.farm_name].filter(Boolean).join(' — ') || String(client.id)}
                         </SelectItem>
                       ))
                     ) : (
-                      <SelectItem value="" disabled>No clients available</SelectItem>
+                      <SelectItem value="__none__" disabled>
+                        No clients available
+                      </SelectItem>
                     )}
                   </SelectContent>
                 </Select>
@@ -565,7 +764,7 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
                     type="button"
                     variant="outline"
                     size="icon"
-                    className="h-9 w-9 shrink-0 border-primary/30"
+                    className="h-10 w-10 shrink-0 border-primary/30"
                     title="Client notes history — view and add entries"
                     aria-label="Open client notes history"
                     onClick={() => setClientNotesHistoryOpen(true)}
@@ -578,48 +777,25 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
             {errors.client_id && <p className="mt-1 text-xs text-red-600">{errors.client_id}</p>}
           </div>
 
-          <div>
-            <Label className="text-sm mb-2 block">Irrigation Type <span className="text-red-600">*</span></Label>
-            <Select 
-              value={formData.irrigation_type} 
+          <div className="min-w-0">
+            <Label className="mb-2 block text-sm">
+              Issue Category <span className="text-red-600">*</span>
+            </Label>
+            <Select
+              value={formData.issue_category || undefined}
               onValueChange={(v) => {
-                setFormData(prev => ({ ...prev, irrigation_type: v }));
-                setErrors((prev) => ({ ...prev, irrigation_type: '' }));
-              }}
-            >
-              <SelectTrigger className={`h-9 text-sm ${errors.irrigation_type ? 'border-red-500' : ''}`}>
-                <SelectValue placeholder="Select type..." />
-              </SelectTrigger>
-              <SelectContent>
-                {irrigationTypes.map(type => (
-                  <SelectItem key={type.value} value={type.value}>
-                    {type.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {errors.irrigation_type && <p className="mt-1 text-xs text-red-600">{errors.irrigation_type}</p>}
-          </div>
-
-          <div>
-            <Label className="text-sm mb-2 block">Issue Category <span className="text-red-600">*</span></Label>
-            <Select 
-              value={formData.issue_category} 
-              onValueChange={(v) => {
-                const selectedCategory = issueCategories.find(cat => cat.value === v);
-                setFormData(prev => ({ 
-                  ...prev, 
-                  issue_category: v,
-                  description: selectedCategory ? selectedCategory.label : prev.description
-                }));
+                setFormData((prev) => ({ ...prev, issue_category: v }));
                 setErrors((prev) => ({ ...prev, issue_category: '' }));
               }}
             >
-              <SelectTrigger className={`h-9 text-sm ${errors.issue_category ? 'border-red-500' : ''}`}>
-                <SelectValue placeholder="Select issue..." />
+              <SelectTrigger
+                className={`h-10 min-h-10 text-sm sm:text-base ${errors.issue_category ? 'border-red-500' : ''}`}
+                aria-invalid={errors.issue_category ? true : undefined}
+              >
+                <SelectValue placeholder="Select issue category..." />
               </SelectTrigger>
               <SelectContent>
-                {issueCategories.map(cat => (
+                {issueCategories.map((cat) => (
                   <SelectItem key={cat.value} value={cat.value}>
                     {cat.label}
                   </SelectItem>
@@ -627,6 +803,73 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
               </SelectContent>
             </Select>
             {errors.issue_category && <p className="mt-1 text-xs text-red-600">{errors.issue_category}</p>}
+          </div>
+
+          <div className="min-w-0">
+            <Label className="mb-2 block text-sm">
+              Irrigation Systems <span className="text-red-600">*</span>
+            </Label>
+            <Select
+              value=""
+              modal={false}
+              onValueChange={(v) => {
+                if (v === '__add_new__') {
+                  setShowAddIrrigationDialog(true);
+                } else if (v && !formData.irrigation_systems.includes(v)) {
+                  setFormData((prev) => ({
+                    ...prev,
+                    irrigation_systems: [...prev.irrigation_systems, v],
+                  }));
+                  setErrors((prev) => ({ ...prev, irrigation_systems: '' }));
+                }
+              }}
+            >
+              <SelectTrigger
+                className={`h-10 min-h-10 border-primary/30 text-sm focus:border-primary focus:ring-primary sm:text-base ${errors.irrigation_systems ? 'border-red-500' : ''}`}
+                aria-invalid={errors.irrigation_systems ? true : undefined}
+              >
+                <SelectValue placeholder="Add system type..." />
+              </SelectTrigger>
+              <SelectContent className="max-h-[300px]">
+                {irrigationPickList.length > 0 ? (
+                  irrigationPickList.map((sys) => (
+                    <SelectItem key={sys} value={sys}>
+                      {sys}
+                    </SelectItem>
+                  ))
+                ) : (
+                  <SelectItem value="__all_added__" disabled>
+                    All listed systems added — add custom below
+                  </SelectItem>
+                )}
+                <SelectSeparator />
+                <SelectItem value="__add_new__" className="font-medium text-primary">
+                  <Plus className="mr-2 inline h-4 w-4" />
+                  Add new Irrigation System
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            {formData.irrigation_systems.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {formData.irrigation_systems.map((sys, idx) => (
+                  <Badge
+                    key={`${sys}-${idx}`}
+                    className="cursor-pointer bg-primary text-primary-foreground transition-colors hover:bg-primary/90"
+                    onClick={() =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        irrigation_systems: prev.irrigation_systems.filter((_, i) => i !== idx),
+                      }))
+                    }
+                  >
+                    {sys} ×
+                  </Badge>
+                ))}
+              </div>
+            )}
+            {errors.irrigation_systems && (
+              <p className="mt-1 text-xs text-red-600">{errors.irrigation_systems}</p>
+            )}
           </div>
         </div>
 
@@ -654,40 +897,41 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
 
           <div className="flex gap-2">
             <div className="flex-1">
-              <Label className="text-sm mb-2 block">Technician <span className="text-red-600">*</span></Label>
+              <Label className="text-sm mb-2 block">Technician</Label>
               {isLoadingTechnicians ? (
                 <SelectSkeleton />
               ) : (
-                <Select 
-                  value={formData.assigned_technician_id || ''} 
+                <Select
+                  value={formData.assigned_technician_id ? String(formData.assigned_technician_id) : undefined}
                   onValueChange={(v) => {
-                    const technician = technicians.find(t => t.id === v);
-                    setFormData(prev => ({ 
-                      ...prev, 
+                    const technician = technicians.find((t) => String(t.id) === String(v));
+                    setFormData((prev) => ({
+                      ...prev,
                       assigned_technician_id: v || '',
                       assigned_technician_name: technician ? technician.name : '',
-                      assigned_technician_phone: technician ? technician.phone : ''
+                      assigned_technician_phone: technician ? technician.phone : '',
                     }));
-                    setErrors((prev) => ({ ...prev, assigned_technician_id: '' }));
                   }}
+                  disabled={technicians.length === 0}
                 >
-                  <SelectTrigger className={`h-9 text-sm ${errors.assigned_technician_id ? 'border-red-500' : ''}`}>
+                  <SelectTrigger className="h-10 min-h-10 text-sm sm:text-base">
                     <SelectValue placeholder="Select technician..." />
                   </SelectTrigger>
                   <SelectContent>
                     {technicians.length > 0 ? (
-                      technicians.map(tech => (
-                        <SelectItem key={tech.id} value={tech.id}>
+                      technicians.map((tech) => (
+                        <SelectItem key={tech.id} value={String(tech.id)}>
                           {tech.name}
                         </SelectItem>
                       ))
                     ) : (
-                      <SelectItem value="" disabled>No technicians available</SelectItem>
+                      <SelectItem value="__no-tech__" disabled>
+                        No technicians available
+                      </SelectItem>
                     )}
                   </SelectContent>
                 </Select>
               )}
-              {errors.assigned_technician_id && <p className="mt-1 text-xs text-red-600">{errors.assigned_technician_id}</p>}
             </div>
             <div className="flex items-end">
               <Button
@@ -695,9 +939,13 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
                 variant="outline"
                 size="icon"
                 onClick={() => setShowAssignmentDialog(true)}
-                className="h-9 w-9 border-primary text-primary hover:bg-primary hover:text-primary-foreground"
-                disabled={!formData.assigned_technician_id || !formData.client_name}
-                title="View assignment details"
+                className="h-10 w-10 border-primary text-primary hover:bg-primary hover:text-primary-foreground"
+                disabled={!formData.client_id || !formData.assigned_technician_id}
+                title={
+                  !formData.client_id || !formData.assigned_technician_id
+                    ? 'Select a client and a technician to view assignment details'
+                    : 'View assignment details'
+                }
               >
                 <Eye className="w-4 h-4" />
               </Button>
@@ -785,20 +1033,104 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
         </DialogContent>
       </Dialog>
 
+      {normalizeIsCancelled(formData.is_cancelled) === 'T' && (
+        <p className="text-sm font-medium text-destructive">This request has been cancelled.</p>
+      )}
+
       {/* Actions */}
-      <div className="flex justify-end gap-3">
+      <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
         <Button type="button" variant="outline" onClick={onCancel} className="border-primary text-primary hover:bg-primary hover:text-primary-foreground">
-          Cancel
+          Close
         </Button>
-        <Button 
-          type="submit" 
+        {request && normalizeIsCancelled(formData.is_cancelled) !== 'T' ? (
+          <Button
+            type="button"
+            variant="outline"
+            className="border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            disabled={isLoading || isCancelSaving}
+            onClick={() => setCancelConfirmOpen(true)}
+          >
+            Cancel Request
+          </Button>
+        ) : null}
+        <Button
+          type="submit"
           className="bg-primary hover:bg-primary/90 text-primary-foreground"
-          disabled={isLoading}
+          disabled={isLoading || isCancelSaving || normalizeIsCancelled(formData.is_cancelled) === 'T'}
         >
-          {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin text-primary-foreground" />}
-          {request ? 'Update Request' : 'Create Request'}
+          {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin text-primary-foreground" />}
+          {request ? 'Edit Request' : 'Save Request'}
         </Button>
       </div>
+
+      <AlertDialog open={cancelConfirmOpen} onOpenChange={setCancelConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel request?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure want to cancel the request
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isCancelSaving}>No</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={isCancelSaving}
+              onClick={() => void handleConfirmCancelRequest()}
+            >
+              {isCancelSaving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Cancelling…
+                </>
+              ) : (
+                'OK'
+              )}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={showAddIrrigationDialog} onOpenChange={setShowAddIrrigationDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add New Irrigation System</DialogTitle>
+            <DialogDescription>
+              Add a new irrigation system type to the available options
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Irrigation System Name</Label>
+              <Input
+                value={newIrrigationSystem}
+                onChange={(e) => setNewIrrigationSystem(e.target.value)}
+                placeholder="e.g., Smart Drip System"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddIrrigationSystem();
+                  }
+                }}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setShowAddIrrigationDialog(false)}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                className="bg-primary text-primary-foreground hover:bg-primary/90"
+                disabled={!newIrrigationSystem.trim() || createIrrigationSystemMutation.isPending}
+                onClick={() => handleAddIrrigationSystem()}
+              >
+                {createIrrigationSystemMutation.isPending ? 'Adding...' : 'Add system'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <ClientNotesHistoryDialog
         open={clientNotesHistoryOpen}

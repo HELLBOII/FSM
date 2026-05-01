@@ -440,12 +440,12 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
-              <div className="flex w-full min-w-0 flex-col border-t border-black/10 bg-white lg:col-span-1 lg:border-l lg:border-t-0">
-                <div className="flex items-center justify-between border-b border-black/10 px-3.5 py-3">
+              <div className="flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden border-t border-black/10 bg-white lg:col-span-1 lg:border-l lg:border-t-0">
+                <div className="flex shrink-0 items-center justify-between border-b border-black/10 px-3.5 py-3">
                   <span className="text-[13px] font-medium text-gray-900">Clients in view</span>
                   <span className="text-[11px] text-[#888780]">{filteredMapClients.length} shown</span>
                 </div>
-                <div className="max-h-[280px] flex-1 overflow-y-auto lg:max-h-none">
+                <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain max-h-[min(50dvh,22rem)] lg:max-h-full">
                   {filteredMapClients.length === 0 ? (
                     <div className="px-3.5 py-8 text-center text-xs text-muted-foreground">
                       {lassoSelectedIds.length ?
