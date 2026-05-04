@@ -16,6 +16,7 @@ import { format } from 'date-fns';
 import { Loader2, Pencil, StickyNote, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { normalizeNotesHistory } from '@/utils/clientNotesHistory';
+import { cn } from '@/lib/utils';
 
 /**
  * View (and optionally append) client notes history.
@@ -28,6 +29,8 @@ export default function ClientNotesHistoryDialog({
   clientName = '',
   allowAdd = false,
   onClientUpdated,
+  /** When true, stack above elevated read-only parent dialogs (e.g. Service Request view). */
+  elevatedStack = false,
 }) {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState('');
@@ -119,7 +122,13 @@ export default function ClientNotesHistoryDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
+      <DialogContent
+        overlayClassName={elevatedStack ? 'z-[10038]' : undefined}
+        className={cn(
+          'max-w-lg max-h-[85vh] flex flex-col gap-0 overflow-hidden p-0',
+          elevatedStack && 'z-[10039]'
+        )}
+      >
         <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <StickyNote className="h-5 w-5 text-primary" />

@@ -209,7 +209,6 @@ export default function AdminDashboard() {
   const [mapFullScreen, setMapFullScreen] = useState(false);
   const [mapBaseLayer, setMapBaseLayer] = useState('streets');
   const [selectedMapJobId, setSelectedMapJobId] = useState(null);
-  const [lassoSelectedIds, setLassoSelectedIds] = useState([]);
   const [mapDetailOpen, setMapDetailOpen] = useState(false);
   const [flyToTarget, setFlyToTarget] = useState(null);
   /** Bumped on "Clients in view" row click so the map opens that marker's Leaflet popup. */
@@ -317,6 +316,7 @@ export default function AdminDashboard() {
             id: client.id,
             client_name: client.name,
             farm_name: client.farm_name,
+            fullAddress: concatClientAddress(client),
             location: {
               lat,
               lng,
@@ -333,9 +333,7 @@ export default function AdminDashboard() {
   );
 
   const filteredMapClients = useMemo(() => {
-    let list = !lassoSelectedIds.length
-      ? mapJobs
-      : mapJobs.filter((job) => new Set(lassoSelectedIds.map(String)).has(String(job.id)));
+    let list = mapJobs;
 
     if (clientListStatusFilter !== 'all') {
       list = list.filter((job) => {
@@ -354,11 +352,13 @@ export default function AdminDashboard() {
       list = list.filter((job) => {
         const name = (job.client_name || '').toLowerCase();
         const farm = (job.farm_name || '').toLowerCase();
-        return name.includes(q) || farm.includes(q);
+        const addressLine = (job.fullAddress || '').toLowerCase();
+        const hay = [name, farm, addressLine].filter(Boolean).join(' ');
+        return hay.includes(q);
       });
     }
     return list;
-  }, [mapJobs, lassoSelectedIds, clientListStatusFilter, clientListSearch]);
+  }, [mapJobs, clientListStatusFilter, clientListSearch]);
 
   const mapMetrics = useMemo(() => {
     const year = new Date().getFullYear();
@@ -522,7 +522,7 @@ export default function AdminDashboard() {
             <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-4">
               <div className="relative min-h-[320px] lg:col-span-3 lg:min-h-0">
                 <DashboardMap
-                  jobs={mapJobs}
+                  jobs={filteredMapClients}
                   variant="embedded"
                   className="absolute inset-0 h-full min-h-[320px]"
                   center={[39.5, -98.5]}
@@ -531,7 +531,6 @@ export default function AdminDashboard() {
                   baseLayer={mapBaseLayer === 'satellite' ? 'satellite' : 'streets'}
                   selectedJobId={selectedMapJobId}
                   onSelectJob={(job) => setSelectedMapJobId(job.id)}
-                  onLassoSelectionChange={setLassoSelectedIds}
                   onOpenClientDetail={(job) => {
                     setSelectedMapJobId(job.id);
                     setMapDetailOpen(true);
@@ -576,17 +575,6 @@ export default function AdminDashboard() {
                     <span className="text-[13px] font-medium text-gray-900">Clients in view</span>
                     <span className="shrink-0 text-[11px] text-[#888780]">{filteredMapClients.length} shown</span>
                   </div>
-                  <div className="relative">
-                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      type="search"
-                      placeholder="Search client or farm…"
-                      value={clientListSearch}
-                      onChange={(e) => setClientListSearch(e.target.value)}
-                      className="h-9 border-black/10 pl-8 text-xs"
-                      aria-label="Search clients in list"
-                    />
-                  </div>
                   <Select value={clientListStatusFilter} onValueChange={setClientListStatusFilter}>
                     <SelectTrigger className="h-9 border-black/10 text-xs" aria-label="Filter by job status">
                       <SelectValue placeholder="Status" />
@@ -599,13 +587,22 @@ export default function AdminDashboard() {
                       <SelectItem value="completed">Completed</SelectItem>
                     </SelectContent>
                   </Select>
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      type="search"
+                      placeholder="Search name, address, city, state, zip…"
+                      value={clientListSearch}
+                      onChange={(e) => setClientListSearch(e.target.value)}
+                      className="h-9 border-black/10 pl-8 text-xs"
+                      aria-label="Search clients by name or full address"
+                    />
+                  </div>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain max-h-[min(50dvh,22rem)] lg:max-h-full">
                   {filteredMapClients.length === 0 ? (
                     <div className="px-3.5 py-8 text-center text-xs text-muted-foreground">
-                      {lassoSelectedIds.length ?
-                      'No clients found in lasso selection.' :
-                      clientListSearch.trim() || clientListStatusFilter !== 'all' ?
+                      {clientListSearch.trim() || clientListStatusFilter !== 'all' ?
                       'No clients match your search or status filter.' :
                       'No clients with map coordinates available.'}
                     </div>
@@ -631,7 +628,9 @@ export default function AdminDashboard() {
                         />
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-xs font-medium text-gray-900">{job.client_name}</div>
-                          <div className="truncate text-[11px] text-[#888780]">{job.location?.address || '—'}</div>
+                          <div className="whitespace-normal break-words text-left text-[11px] leading-snug text-[#888780]">
+                            {job.fullAddress || '—'}
+                          </div>
                           <div className="mt-1">
                             <span
                               className={cn(
@@ -919,7 +918,7 @@ export default function AdminDashboard() {
             </div>
             <div className="min-h-0 flex-1 p-2">
               <DashboardMap
-                jobs={mapJobs}
+                jobs={filteredMapClients}
                 variant="embedded"
                 className="h-full min-h-[70vh] rounded-lg border border-border"
                 center={[39.5, -98.5]}
@@ -928,7 +927,6 @@ export default function AdminDashboard() {
                 baseLayer={mapBaseLayer === 'satellite' ? 'satellite' : 'streets'}
                 selectedJobId={selectedMapJobId}
                 onSelectJob={(job) => setSelectedMapJobId(job.id)}
-                onLassoSelectionChange={setLassoSelectedIds}
                 onOpenClientDetail={(job) => {
                   setSelectedMapJobId(job.id);
                   setMapFullScreen(false);

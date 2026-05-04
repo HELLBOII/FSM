@@ -31,6 +31,28 @@ export function getSeasonFromServiceRequest(request) {
   return getSeasonFromDateRef(ref);
 }
 
+const SEASON_LABEL_FROM_DB = {
+  spring: 'Spring',
+  summer: 'Summer',
+  fall: 'Fall',
+  winter: 'Winter',
+};
+
+/**
+ * Display `service_requests.season` from the database only (spring | summer | fall | winter).
+ * Do not substitute calendar season from dates — use {@link getSeasonFromServiceRequest} only where that is intended.
+ *
+ * @param {{ season?: string }|null|undefined} request
+ * @returns {string}
+ */
+export function formatSeasonFromDb(request) {
+  const raw = request?.season;
+  if (raw == null || String(raw).trim() === '') return '—';
+  const key = String(raw).trim().toLowerCase();
+  if (SEASON_LABEL_FROM_DB[key]) return SEASON_LABEL_FROM_DB[key];
+  return String(raw).replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 /**
  * Service type column: calendar season only (not issue_category).
  * @param {'spring'|'summer'|'fall'|'winter'} season

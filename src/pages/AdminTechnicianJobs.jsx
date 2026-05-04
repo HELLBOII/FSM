@@ -46,16 +46,17 @@ const JOB_TABLE_PAGE_SIZE_OPTIONS = [10, 20, 50];
 
 /** Same column geometry on every technician table (`table-fixed` + shared `colgroup`). */
 const JOBS_TABLE_CLASS =
-  'table-fixed w-full min-w-[900px] border-collapse text-xs sm:text-sm';
+  'table-fixed w-full min-w-[980px] border-collapse text-xs sm:text-sm';
 
 const JOBS_TABLE_COLGROUP = (
   <colgroup>
-    <col className="w-[14%]" />
-    <col className="w-[28%]" />
-    <col className="w-[14%]" />
-    <col className="w-[14%]" />
-    <col className="w-[14%]" />
-    <col className="w-[16%]" />
+    <col className="w-[13%]" />
+    <col className="w-[24%]" />
+    <col className="w-[12%]" />
+    <col className="w-[10%]" />
+    <col className="w-[13%]" />
+    <col className="w-[13%]" />
+    <col className="w-[15%]" />
   </colgroup>
 );
 
@@ -92,6 +93,7 @@ function matchesTechnicianJobSearch(job, clients, raw) {
     job?.assigned_technician_name,
     job?.status,
     formatIssueCategoryDisplay(job),
+    job?.season,
     addressLine,
   ]
     .filter((v) => v != null && String(v).trim() !== '' && String(v) !== '—')
@@ -460,26 +462,6 @@ export default function AdminTechnicianJobs() {
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-            <div className="flex items-center gap-2 text-sm text-[#888780]">
-              <span>Rows per technician table</span>
-              <Select
-                value={String(jobTablePageSize)}
-                onValueChange={(v) => setJobTablePageSize(Number(v))}
-              >
-                <SelectTrigger className="h-9 w-[130px] border-primary/30 text-sm">
-                  <SelectValue placeholder="Per page" />
-                </SelectTrigger>
-                <SelectContent>
-                  {JOB_TABLE_PAGE_SIZE_OPTIONS.map((n) => (
-                    <SelectItem key={n} value={String(n)}>
-                      {n} per page
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
           {groupedTechnicians.map((group) => {
             const techKey = String(group.id);
             const tablePage = jobTablePageByTech[techKey] ?? 1;
@@ -534,6 +516,7 @@ export default function AdminTechnicianJobs() {
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Client</th>
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Address</th>
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Service type</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Season</th>
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Date & Time</th>
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Status</th>
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Action</th>
@@ -559,6 +542,7 @@ export default function AdminTechnicianJobs() {
                           <td className="px-2 py-2.5 text-gray-800 sm:px-3.5">
                             {formatIssueCategoryDisplay(job)}
                           </td>
+                          <td className="px-2 py-2.5 text-gray-800 sm:px-3.5">{job?.season}</td>
                           <td className={`px-2 py-2.5 font-medium sm:px-3.5 ${dateTimeTone(job, overdue)}`}>
                             {formatDateTime(job)}
                           </td>
@@ -661,42 +645,62 @@ export default function AdminTechnicianJobs() {
                     </span>{' '}
                     of <span className="font-medium text-gray-900">{totalJobs.toLocaleString()}</span>
                   </p>
-                  <div className="flex items-center justify-end gap-1">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="h-9 w-9 border-primary/30"
-                      disabled={tablePage <= 1}
-                      onClick={() =>
-                        setJobTablePageByTech((prev) => ({
-                          ...prev,
-                          [techKey]: Math.max(1, (prev[techKey] ?? 1) - 1),
-                        }))
-                      }
-                      aria-label="Previous page"
+                  <div className="flex flex-wrap items-center justify-end gap-2 sm:shrink-0">
+                    <Select
+                      value={String(jobTablePageSize)}
+                      onValueChange={(v) => setJobTablePageSize(Number(v))}
                     >
-                      <ChevronLeft className="h-4 w-4" />
-                    </Button>
-                    <span className="min-w-[7rem] px-2 text-center text-sm text-gray-700 tabular-nums">
-                      Page {tablePage} / {tableTotalPages}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="h-9 w-9 border-primary/30"
-                      disabled={tablePage >= tableTotalPages}
-                      onClick={() =>
-                        setJobTablePageByTech((prev) => ({
-                          ...prev,
-                          [techKey]: Math.min(tableTotalPages, (prev[techKey] ?? 1) + 1),
-                        }))
-                      }
-                      aria-label="Next page"
-                    >
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
+                      <SelectTrigger
+                        className="h-9 w-[130px] border-primary/30 text-sm"
+                        aria-label="Rows per page"
+                      >
+                        <SelectValue placeholder="Per page" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {JOB_TABLE_PAGE_SIZE_OPTIONS.map((n) => (
+                          <SelectItem key={n} value={String(n)}>
+                            {n} per page
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-9 w-9 border-primary/30"
+                        disabled={tablePage <= 1}
+                        onClick={() =>
+                          setJobTablePageByTech((prev) => ({
+                            ...prev,
+                            [techKey]: Math.max(1, (prev[techKey] ?? 1) - 1),
+                          }))
+                        }
+                        aria-label="Previous page"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <span className="min-w-[7rem] px-2 text-center text-sm text-gray-700 tabular-nums">
+                        Page {tablePage} / {tableTotalPages}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-9 w-9 border-primary/30"
+                        disabled={tablePage >= tableTotalPages}
+                        onClick={() =>
+                          setJobTablePageByTech((prev) => ({
+                            ...prev,
+                            [techKey]: Math.min(tableTotalPages, (prev[techKey] ?? 1) + 1),
+                          }))
+                        }
+                        aria-label="Next page"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}

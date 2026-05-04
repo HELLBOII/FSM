@@ -61,6 +61,23 @@ const issueCategories = [
 
 const FORM_ISSUE_CATEGORY_VALUES = new Set(issueCategories.map((c) => c.value));
 
+/** Stored as lowercase on `service_requests.season`. */
+const SEASON_OPTIONS = [
+  { value: 'Spring', label: 'Spring' },
+  { value: 'Summer', label: 'Summer' },
+  { value: 'Fall', label: 'Fall' },
+  { value: 'Winter', label: 'Winter' },
+];
+
+function normalizeSeasonFromRequest(raw) {
+  if (raw == null || String(raw).trim() === '') return '';
+  const s = String(raw).trim().toLowerCase();
+  if (SEASON_OPTIONS.some((o) => o.value === s)) return s;
+  const t = String(raw).trim();
+  const match = SEASON_OPTIONS.find((o) => o.label.toLowerCase() === t.toLowerCase());
+  return match ? match.value : '';
+}
+
 /**
  * Map stored `issue_category` (CHECK constraint / legacy snake_case) to form Select values.
  * Used when hydrating the form from API rows (e.g. read-only view from completed/cancelled lists).
@@ -325,11 +342,17 @@ export default function ServiceRequestForm({
   readOnly = false,
 }) {
   const isReadOnly = readOnly === true;
-  /** Read-only / view mode: primary borders & text instead of default disabled grey. */
-  const roLabel = isReadOnly ? 'text-primary font-medium' : '';
-  const roSelectTrigger = isReadOnly
-    ? 'cursor-default !opacity-100 border-primary/60 bg-transparent text-primary shadow-none focus:border-primary focus:ring-1 focus:ring-primary data-[placeholder]:text-primary/70 [&>span]:text-primary [&_svg]:text-primary/80'
-    : '';
+  /** Thinner focus ring / border once a value is chosen; slightly stronger when empty. */
+  const SELECT_TRIGGER_READ_ONLY = 'cursor-default data-[disabled]:opacity-100';
+  function selectTriggerChrome({ filled, flex }) {
+    return cn(
+      'h-10 min-h-10 text-sm sm:text-base border bg-transparent',
+      flex && 'flex-1 min-w-0',
+      filled
+        ? 'border-primary/25 focus:border-primary focus:ring-1 focus:ring-primary/40'
+        : 'border-primary/30 focus:border-primary focus:ring-2 focus:ring-primary/35'
+    );
+  }
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const [formData, setFormData] = useState({
@@ -340,6 +363,7 @@ export default function ServiceRequestForm({
     location: { lat: null, lng: null, address: '' },
     irrigation_systems: [],
     issue_category: '',
+    season: '',
     priority: 'medium',
     description: '',
     acreage_affected: '1',
@@ -601,6 +625,7 @@ export default function ServiceRequestForm({
         from_time: fromDateTimeValue,
         to_time: toDateTimeValue,
         issue_category: LEGACY_ISSUE_TO_FORM(request.issue_category),
+        season: normalizeSeasonFromRequest(request.season),
         irrigation_systems: irrigationSystemsFromRequest,
         is_cancelled: normalizeIsCancelled(request.is_cancelled),
       });
@@ -708,6 +733,12 @@ export default function ServiceRequestForm({
     if (!formData.client_id) nextErrors.client_id = 'Client is required.';
     if (!formData.irrigation_systems?.length) nextErrors.irrigation_systems = 'Add at least one irrigation system.';
     if (!formData.issue_category) nextErrors.issue_category = 'Issue category is required.';
+    if (
+      !formData.season ||
+      !SEASON_OPTIONS.some((o) => o.value === formData.season)
+    ) {
+      nextErrors.season = 'Season is required.';
+    }
     if (!fromDateTime) nextErrors.from_time = 'Start time is required.';
     if (!toDateTime) nextErrors.to_time = 'End time is required.';
     if (fromDateTime && toDateTime && toDateTime <= fromDateTime) {
@@ -849,6 +880,10 @@ export default function ServiceRequestForm({
         assigned_technician_name: formData.assigned_technician_id ? formData.assigned_technician_name : null,
         assigned_technician_phone: formData.assigned_technician_id ? (formData.assigned_technician_phone || '') : '',
         is_cancelled: 'F',
+        season:
+          formData.season && SEASON_OPTIONS.some((o) => o.value === formData.season)
+            ? formData.season
+            : null,
       };
 
       const actorId = user?.id ?? null;
@@ -943,12 +978,12 @@ export default function ServiceRequestForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className={cn('space-y-6', isReadOnly && 'text-primary')}>
+    <form onSubmit={handleSubmit} className={cn('space-y-6', isReadOnly && 'text-gray-900')}>
       <div className="space-y-3">
-        {/* Row 1: Client | Issue category | Irrigation systems */}
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        {/* Row 1: Client | Issue category | Irrigation systems | Season (4 columns on large screens) */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="min-w-0">
-            <Label className={cn('text-sm mb-2 block', roLabel)}>Select Client <span className="text-red-600">*</span></Label>
+            <Label className="text-sm mb-2 block">Select Client <span className="text-red-600">*</span></Label>
             {isLoadingClients ? (
               <SelectSkeleton />
             ) : (
@@ -960,8 +995,8 @@ export default function ServiceRequestForm({
                 >
                   <SelectTrigger
                     className={cn(
-                      'h-10 min-h-10 flex-1 min-w-0 text-sm sm:text-base',
-                      isReadOnly ? roSelectTrigger : 'border-primary/30 focus:border-primary focus:ring-primary',
+                      selectTriggerChrome({ filled: !!formData.client_id, flex: true }),
+                      isReadOnly && SELECT_TRIGGER_READ_ONLY,
                       errors.client_id && 'border-red-500'
                     )}
                     aria-invalid={errors.client_id ? true : undefined}
@@ -1005,7 +1040,7 @@ export default function ServiceRequestForm({
           </div>
 
           <div className="min-w-0">
-            <Label className={cn('mb-2 block text-sm', roLabel)}>
+            <Label className="mb-2 block text-sm">
               Issue Category <span className="text-red-600">*</span>
             </Label>
             <Select
@@ -1018,8 +1053,8 @@ export default function ServiceRequestForm({
             >
               <SelectTrigger
                 className={cn(
-                  'h-10 min-h-10 text-sm sm:text-base',
-                  isReadOnly ? roSelectTrigger : '',
+                  selectTriggerChrome({ filled: !!formData.issue_category, flex: false }),
+                  isReadOnly && SELECT_TRIGGER_READ_ONLY,
                   errors.issue_category && 'border-red-500'
                 )}
                 aria-invalid={errors.issue_category ? true : undefined}
@@ -1038,106 +1073,131 @@ export default function ServiceRequestForm({
           </div>
 
           <div className="min-w-0">
-            <Label className={cn('mb-2 block text-sm', roLabel)}>
+            <Label className="mb-2 block text-sm">
               Irrigation Systems <span className="text-red-600">*</span>
             </Label>
-            {isReadOnly ? (
-              <div
-                className={cn(
-                  'flex min-h-10 flex-wrap items-center gap-1 rounded-md border border-primary/60 bg-transparent px-3 py-2 text-sm text-primary',
-                  errors.irrigation_systems && 'border-red-500'
-                )}
-                aria-invalid={errors.irrigation_systems ? true : undefined}
+            <>
+              <Select
+                value=""
+                modal={false}
+                disabled={isReadOnly}
+                onValueChange={(v) => {
+                  if (isReadOnly) return;
+                  if (v === '__add_new__') {
+                    setShowAddIrrigationDialog(true);
+                  } else if (v && !formData.irrigation_systems.includes(v)) {
+                    setFormData((prev) => ({
+                      ...prev,
+                      irrigation_systems: [...prev.irrigation_systems, v],
+                    }));
+                    setErrors((prev) => ({ ...prev, irrigation_systems: '' }));
+                  }
+                }}
               >
-                {formData.irrigation_systems.length > 0 ? (
-                  formData.irrigation_systems.map((sys, idx) => (
+                <SelectTrigger
+                  className={cn(
+                    selectTriggerChrome({
+                      filled: formData.irrigation_systems.length > 0,
+                      flex: false,
+                    }),
+                    isReadOnly && SELECT_TRIGGER_READ_ONLY,
+                    errors.irrigation_systems && 'border-red-500'
+                  )}
+                  aria-invalid={errors.irrigation_systems ? true : undefined}
+                >
+                  <SelectValue placeholder={isReadOnly ? 'Systems on this request' : 'Add system type...'} />
+                </SelectTrigger>
+                <SelectContent className="max-h-[300px]">
+                  {irrigationPickList.length > 0 ? (
+                    irrigationPickList.map((sys) => (
+                      <SelectItem key={sys} value={sys}>
+                        {sys}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <SelectItem value="__all_added__" disabled>
+                      All listed systems added — add custom below
+                    </SelectItem>
+                  )}
+                  <SelectSeparator />
+                  <SelectItem value="__add_new__" className="font-medium text-primary" disabled={isReadOnly}>
+                    <Plus className="mr-2 inline h-4 w-4" />
+                    Add new Irrigation System
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              {formData.irrigation_systems.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {formData.irrigation_systems.map((sys, idx) => (
                     <Badge
                       key={`${sys}-${idx}`}
-                      variant="outline"
-                      className="cursor-default border-primary/60 bg-transparent text-primary"
+                      variant={isReadOnly ? 'outline' : undefined}
+                      className={
+                        isReadOnly
+                          ? 'cursor-default border-gray-300 bg-transparent text-gray-900'
+                          : 'cursor-pointer bg-primary text-primary-foreground transition-colors hover:bg-primary/90'
+                      }
+                      onClick={
+                        isReadOnly
+                          ? undefined
+                          : () =>
+                              setFormData((prev) => ({
+                                ...prev,
+                                irrigation_systems: prev.irrigation_systems.filter((_, i) => i !== idx),
+                              }))
+                      }
                     >
                       {sys}
+                      {!isReadOnly ? ' ×' : ''}
                     </Badge>
-                  ))
-                ) : (
-                  <span className="text-primary/70">—</span>
-                )}
-              </div>
-            ) : (
-              <>
-                <Select
-                  value=""
-                  modal={false}
-                  onValueChange={(v) => {
-                    if (v === '__add_new__') {
-                      setShowAddIrrigationDialog(true);
-                    } else if (v && !formData.irrigation_systems.includes(v)) {
-                      setFormData((prev) => ({
-                        ...prev,
-                        irrigation_systems: [...prev.irrigation_systems, v],
-                      }));
-                      setErrors((prev) => ({ ...prev, irrigation_systems: '' }));
-                    }
-                  }}
-                >
-                  <SelectTrigger
-                    className={cn(
-                      'h-10 min-h-10 text-sm sm:text-base border-primary/30 focus:border-primary focus:ring-primary',
-                      errors.irrigation_systems && 'border-red-500'
-                    )}
-                    aria-invalid={errors.irrigation_systems ? true : undefined}
-                  >
-                    <SelectValue placeholder="Add system type..." />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-[300px]">
-                    {irrigationPickList.length > 0 ? (
-                      irrigationPickList.map((sys) => (
-                        <SelectItem key={sys} value={sys}>
-                          {sys}
-                        </SelectItem>
-                      ))
-                    ) : (
-                      <SelectItem value="__all_added__" disabled>
-                        All listed systems added — add custom below
-                      </SelectItem>
-                    )}
-                    <SelectSeparator />
-                    <SelectItem value="__add_new__" className="font-medium text-primary">
-                      <Plus className="mr-2 inline h-4 w-4" />
-                      Add new Irrigation System
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-                {formData.irrigation_systems.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {formData.irrigation_systems.map((sys, idx) => (
-                      <Badge
-                        key={`${sys}-${idx}`}
-                        className="cursor-pointer bg-primary text-primary-foreground transition-colors hover:bg-primary/90"
-                        onClick={() =>
-                          setFormData((prev) => ({
-                            ...prev,
-                            irrigation_systems: prev.irrigation_systems.filter((_, i) => i !== idx),
-                          }))
-                        }
-                      >
-                        {sys} ×
-                      </Badge>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
+                  ))}
+                </div>
+              )}
+            </>
             {errors.irrigation_systems && (
               <p className="mt-1 text-xs text-red-600">{errors.irrigation_systems}</p>
             )}
           </div>
+
+          <div className="min-w-0">
+            <Label className="mb-2 block text-sm">
+              Season <span className="text-red-600">*</span>
+            </Label>
+            <Select
+              value={formData.season || undefined}
+              onValueChange={(v) => {
+                setFormData((prev) => ({ ...prev, season: v }));
+                setErrors((prev) => ({ ...prev, season: '' }));
+              }}
+              disabled={isReadOnly}
+            >
+              <SelectTrigger
+                className={cn(
+                  selectTriggerChrome({ filled: !!formData.season, flex: false }),
+                  isReadOnly && SELECT_TRIGGER_READ_ONLY,
+                  errors.season && 'border-red-500'
+                )}
+                aria-invalid={errors.season ? true : undefined}
+                aria-label="Season"
+              >
+                <SelectValue placeholder="Select season..." />
+              </SelectTrigger>
+              <SelectContent>
+                {SEASON_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {errors.season && <p className="mt-1 text-xs text-red-600">{errors.season}</p>}
+          </div>
         </div>
 
-        {/* Row 2: From Time, To Time, Technician */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div>
-            <Label className={cn('text-sm mb-2 block', roLabel)}>Start date & time <span className="text-red-600">*</span></Label>
+        {/* Row 2: From Time, To Time, Technician (3 columns) */}
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="min-w-0">
+            <Label className="text-sm mb-2 block">Start date & time <span className="text-red-600">*</span></Label>
             <DateTimePicker
               date={fromDateTime}
               onDateChange={handleFromDateTimeChange}
@@ -1149,8 +1209,8 @@ export default function ServiceRequestForm({
             {errors.from_time && <p className="mt-1 text-xs text-red-600">{errors.from_time}</p>}
           </div>
 
-          <div>
-            <Label className={cn('text-sm mb-2 block', roLabel)}>End date & time <span className="text-red-600">*</span></Label>
+          <div className="min-w-0">
+            <Label className="text-sm mb-2 block">End date & time <span className="text-red-600">*</span></Label>
             <DateTimePicker
               date={toDateTime}
               onDateChange={handleToDateTimeChange}
@@ -1162,9 +1222,9 @@ export default function ServiceRequestForm({
             {errors.to_time && <p className="mt-1 text-xs text-red-600">{errors.to_time}</p>}
           </div>
 
-          <div className="flex gap-2">
-            <div className="flex-1">
-              <Label className={cn('text-sm mb-2 block', roLabel)}>Technician</Label>
+          <div className="flex min-w-0 gap-2">
+            <div className="min-w-0 flex-1">
+              <Label className="text-sm mb-2 block">Technician</Label>
               {isLoadingTechnicians ? (
                 <SelectSkeleton />
               ) : (
@@ -1182,7 +1242,10 @@ export default function ServiceRequestForm({
                   disabled={isReadOnly || technicians.length === 0}
                 >
                   <SelectTrigger
-                    className={cn('h-10 min-h-10 text-sm sm:text-base', isReadOnly ? roSelectTrigger : '')}
+                    className={cn(
+                      selectTriggerChrome({ filled: !!formData.assigned_technician_id, flex: false }),
+                      isReadOnly && SELECT_TRIGGER_READ_ONLY
+                    )}
                   >
                     <SelectValue placeholder="Select technician..." />
                   </SelectTrigger>
@@ -1208,11 +1271,7 @@ export default function ServiceRequestForm({
                 variant="outline"
                 size="icon"
                 onClick={() => setShowAssignmentDialog(true)}
-                className={cn(
-                  'h-10 w-10 border-primary text-primary hover:bg-primary hover:text-primary-foreground',
-                  isReadOnly &&
-                    'disabled:!opacity-100 disabled:border-primary/60 disabled:text-primary disabled:!bg-transparent'
-                )}
+                className="h-10 w-10 border-primary text-primary hover:bg-primary hover:text-primary-foreground"
                 disabled={!formData.client_id || !formData.assigned_technician_id}
                 title={
                   !formData.client_id || !formData.assigned_technician_id
@@ -1227,25 +1286,25 @@ export default function ServiceRequestForm({
         </div>
 
         {/* Map (Dashboard-style) */}
-        <div className={cn(isReadOnly && 'rounded-md ring-2 ring-primary/30 ring-offset-2 ring-offset-background')}>
-          <DashboardMap
-            jobs={mapJobs}
-            center={[39.5, -98.5]}
-            zoom={4}
-            autoCenterFromJobs={false}
-            selectedJobId={mapUiSelectedJobId}
-            flyToTarget={mapEffectiveFlyTo}
-            pinLeafletOverlays={false}
-            onSelectJob={isReadOnly ? undefined : (job) => handleClientSelect(job.id)}
-            onOpenClientDetail={(job) => openMapClientSheet(job)}
-            className="h-[300px]"
-          />
-        </div>
+        <DashboardMap
+          jobs={mapJobs}
+          center={[39.5, -98.5]}
+          zoom={4}
+          autoCenterFromJobs={false}
+          selectedJobId={mapUiSelectedJobId}
+          flyToTarget={mapEffectiveFlyTo}
+          onSelectJob={isReadOnly ? undefined : (job) => handleClientSelect(job.id)}
+          onOpenClientDetail={(job) => openMapClientSheet(job)}
+          className="h-[300px]"
+        />
       </div>
 
       {/* Assignment Details Dialog */}
       <Dialog open={showAssignmentDialog} onOpenChange={setShowAssignmentDialog}>
-        <DialogContent className="max-w-md">
+        <DialogContent
+          overlayClassName={isReadOnly ? 'z-[10024]' : undefined}
+          className={cn('max-w-md', isReadOnly && 'z-[10025]')}
+        >
           <DialogHeader>
             <DialogTitle>Assignment Details</DialogTitle>
             <DialogDescription>
@@ -1424,8 +1483,8 @@ export default function ServiceRequestForm({
       >
         <SheetContent
           side="right"
-          overlayClassName="bg-black/40"
-          className="w-full overflow-y-auto sm:max-w-md"
+          overlayClassName="z-[10090] bg-black/40"
+          className="z-[10091] w-full overflow-y-auto sm:max-w-md"
         >
           {sheetClientEntity && sheetMapJob ? (
             <>
@@ -1615,6 +1674,7 @@ export default function ServiceRequestForm({
         clientId={formData.client_id}
         clientName={formData.client_name ? `${formData.client_name}${formData.farm_name ? ` · ${formData.farm_name}` : ''}` : ''}
         allowAdd={!isReadOnly}
+        elevatedStack={isReadOnly}
       />
     </form>
   );

@@ -37,7 +37,7 @@ import { differenceInCalendarDays, format, isBefore, parseISO, startOfToday } fr
 import { useAuth } from '@/lib/AuthContext';
 import { mergeServiceRequestUpdateAudit, canCancelServiceRequestRow } from '@/utils/serviceRequestAudit';
 import { Tooltip } from '@/components/ui/tooltip';
-import { formatRequestStatusLabel } from '@/utils/serviceRequestSeason';
+import { formatRequestStatusLabel, formatSeasonFromDb } from '@/utils/serviceRequestSeason';
 
 const CLOSED_STATUSES = ['completed', 'approved', 'closed'];
 
@@ -340,11 +340,12 @@ export default function Scheduling() {
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[700px] border-collapse text-xs sm:min-w-[860px] sm:text-sm">
+          <table className="w-full min-w-[780px] border-collapse text-xs sm:min-w-[920px] sm:text-sm">
             <thead>
               <tr className="bg-[#FFF8F8]">
                 <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Client</th>
                 <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Service type</th>
+                <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Season</th>
                 <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Due date</th>
                 <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Days overdue</th>
                 <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Technician</th>
@@ -354,7 +355,7 @@ export default function Scheduling() {
             <tbody>
               {schedulingTotal === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3.5 py-8 text-center text-xs text-[#888780]">
+                  <td colSpan={7} className="px-3.5 py-8 text-center text-xs text-[#888780]">
                     No overdue or pending requests.
                   </td>
                 </tr>
@@ -368,6 +369,7 @@ export default function Scheduling() {
                     <tr key={request.id} className="border-b border-[#F7C1C1] last:border-b-0">
                       <td className="px-2 py-2 font-medium text-gray-900 sm:px-3.5">{request.client_name || '-'}</td>
                       <td className="px-2 py-2 text-black sm:px-3.5">{formatIssueCategoryDisplay(request)}</td>
+                      <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request?.season}</td>
                       <td className={`px-2 py-2 font-medium sm:px-3.5 ${getDateTimeTone(request)}`}>
                         {dueDate ? format(dueDate, 'MMM d, h:mm a') : 'Unscheduled'}
                       </td>

@@ -30,13 +30,14 @@ import { toast } from 'sonner';
 import { format, isBefore, startOfToday } from 'date-fns';
 import { useAuth } from '@/lib/AuthContext';
 import { mergeServiceRequestUpdateAudit, canCancelServiceRequestRow } from '@/utils/serviceRequestAudit';
+import { formatSeasonFromDb } from '@/utils/serviceRequestSeason';
 import { cn } from '@/lib/utils';
 import { Tooltip } from '@/components/ui/tooltip';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
 
 const TABLE_COLS_CLASS =
-  'table-fixed w-full min-w-[700px] border-collapse text-xs sm:min-w-[760px] sm:text-sm';
+  'table-fixed w-full min-w-[820px] border-collapse text-xs sm:min-w-[880px] sm:text-sm';
 
 /** Service type column: `issue_category` formatted for display. */
 function formatIssueCategoryDisplay(request) {
@@ -60,6 +61,7 @@ function matchesServiceRequestTableSearch(request, raw) {
     request?.scheduled_end_time,
     request?.scheduled_date,
     formatIssueCategoryDisplay(request),
+    formatSeasonFromDb(request),
   ]
     .filter((v) => v != null && String(v).trim() !== '')
     .join(' ')
@@ -80,11 +82,12 @@ function isRequestOverdue(request) {
 
 const REQUEST_TABLE_COLGROUP = (
   <colgroup>
+    <col className="w-[17%]" />
+    <col className="w-[15%]" />
+    <col className="w-[10%]" />
     <col className="w-[18%]" />
-    <col className="w-[18%]" />
-    <col className="w-[22%]" />
-    <col className="w-[18%]" />
-    <col className="w-[24%]" />
+    <col className="w-[15%]" />
+    <col className="w-[25%]" />
   </colgroup>
 );
 
@@ -802,6 +805,7 @@ export default function ServiceRequests() {
                         <tr className="bg-[#f8f8f7]">
                           <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Client</th>
                           <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Service type</th>
+                          <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Season</th>
                           <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Scheduled date</th>
                           <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Technician</th>
                           <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Actions</th>
@@ -810,7 +814,7 @@ export default function ServiceRequests() {
                       <tbody>
                         {historyTotal === 0 ? (
                           <tr>
-                            <td colSpan={5} className="px-3.5 py-6 text-center text-xs text-[#888780]">
+                            <td colSpan={6} className="px-3.5 py-6 text-center text-xs text-[#888780]">
                               {historyPanel === 'completed'
                                 ? 'No completed requests in the current list.'
                                 : 'No cancelled requests found.'}
@@ -821,6 +825,7 @@ export default function ServiceRequests() {
                             <tr key={request.id} className="border-b border-black/10 last:border-b-0">
                               <td className="px-2 py-2 font-medium text-gray-900 sm:px-3.5">{request.client_name || '-'}</td>
                               <td className="px-2 py-2 text-black sm:px-3.5">{formatIssueCategoryDisplay(request)}</td>
+                              <td className="px-2 py-2 text-gray-800 sm:px-3.5">{formatSeasonFromDb(request)}</td>
                               <td className={`px-2 py-2 font-medium sm:px-3.5 ${getDateTimeTone(request)}`}>
                                 {formatScheduledStartDateTime(getScheduledDateRef(request))}
                               </td>
@@ -936,6 +941,7 @@ export default function ServiceRequests() {
                     <tr className="bg-[#FFF8F8]">
                       <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Client</th>
                       <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Service type</th>
+                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Season</th>
                       <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Due date</th>
                       <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Technician</th>
                       <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Action</th>
@@ -944,12 +950,13 @@ export default function ServiceRequests() {
                   <tbody>
                     {overdueTotal === 0 ? (
                       <tr>
-                        <td colSpan={5} className="px-3.5 py-6 text-center text-xs text-[#888780]">No overdue or pending requests.</td>
+                        <td colSpan={6} className="px-3.5 py-6 text-center text-xs text-[#888780]">No overdue or pending requests.</td>
                       </tr>
                     ) : overdueRequests.map((request) => (
                       <tr key={request.id} className="border-b border-[#F7C1C1] last:border-b-0">
                         <td className="px-2 py-2 font-medium text-gray-900 sm:px-3.5">{request.client_name || '-'}</td>
                         <td className="px-2 py-2 text-black sm:px-3.5">{formatIssueCategoryDisplay(request)}</td>
+                        <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request?.season}</td>
                         <td className={`px-2 py-2 font-medium sm:px-3.5 ${getDateTimeTone(request)}`}>{formatDueDateTime(getDueDateRef(request))}</td>
                         <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request.assigned_technician_name || 'Unassigned'}</td>
                         <td className="px-2 py-2 text-left sm:px-3.5">
@@ -1049,6 +1056,7 @@ export default function ServiceRequests() {
                     <tr className="bg-[#f8f8f7]">
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Client</th>
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Service type</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Season</th>
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Scheduled date</th>
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Technician</th>
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Action</th>
@@ -1057,12 +1065,13 @@ export default function ServiceRequests() {
                   <tbody>
                     {openTotal === 0 ? (
                       <tr>
-                        <td colSpan={5} className="px-3.5 py-6 text-center text-xs text-[#888780]">No open requests.</td>
+                        <td colSpan={6} className="px-3.5 py-6 text-center text-xs text-[#888780]">No open requests.</td>
                       </tr>
                     ) : openRequests.map((request) => (
                       <tr key={request.id} className="border-b border-black/10 last:border-b-0">
                         <td className="px-2 py-2 font-medium text-gray-900 sm:px-3.5">{request.client_name || '-'}</td>
                         <td className="px-2 py-2 text-black sm:px-3.5">{formatIssueCategoryDisplay(request)}</td>
+                        <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request?.season}</td>
                         <td className={`px-2 py-2 font-medium sm:px-3.5 ${getDateTimeTone(request)}`}>
                           {formatScheduledStartDateTime(getScheduledDateRef(request))}
                         </td>
@@ -1149,7 +1158,7 @@ export default function ServiceRequests() {
         setShowForm(open);
         if (!open) setSelectedRequest(null);
       }}>
-        <DialogContent data-source-location="pages/ServiceRequests:458:8" data-dynamic-content="true" className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent data-source-location="pages/ServiceRequests:458:8" data-dynamic-content="true" className="max-w-6xl w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto">
           <DialogHeader data-source-location="pages/ServiceRequests:459:10" data-dynamic-content="true">
             <DialogTitle data-source-location="pages/ServiceRequests:460:12" data-dynamic-content="true">
               {selectedRequest ? 'Edit Service Request' : 'New Service Request'}
@@ -1158,13 +1167,17 @@ export default function ServiceRequests() {
               {selectedRequest ? 'Update the service request details below' : 'Fill in the details for the new service request'}
             </DialogDescription>
           </DialogHeader>
-          <ServiceRequestForm data-source-location="pages/ServiceRequests:467:10" data-dynamic-content="false"
-          request={selectedRequest}
-          onSubmit={handleSubmit}
-          onCancel={() => {
-            setShowForm(false);
-            setSelectedRequest(null);
-          }} />
+          <ServiceRequestForm
+            data-source-location="pages/ServiceRequests:467:10"
+            data-dynamic-content="false"
+            key={selectedRequest ? String(selectedRequest.id) : 'new'}
+            request={selectedRequest}
+            onSubmit={handleSubmit}
+            onCancel={() => {
+              setShowForm(false);
+              setSelectedRequest(null);
+            }}
+          />
 
         </DialogContent>
       </Dialog>
@@ -1175,12 +1188,15 @@ export default function ServiceRequests() {
           if (!open) setHistoryViewRequest(null);
         }}
       >
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent
+          overlayClassName="z-[10016]"
+          className="z-[10017] max-w-6xl w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto"
+        >
           <DialogHeader>
             <DialogTitle>Service request</DialogTitle>
             <DialogDescription>
               {historyViewRequest
-                ? `Request #${historyViewRequest.request_number || historyViewRequest.id} — read-only`
+                ? `Request #${historyViewRequest.request_number || historyViewRequest.id} — view details; use Close when finished.`
                 : ''}
             </DialogDescription>
           </DialogHeader>

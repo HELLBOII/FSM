@@ -1,7 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Tooltip, useMap, ZoomControl } from 'react-leaflet';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, useMap, ZoomControl } from 'react-leaflet';
 import { cn } from '@/lib/utils';
-import { Circle } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -27,20 +26,6 @@ const MAP_STATUS_BADGE_CLASS = {
   completed: 'bg-[#EAF3DE] text-[#3B6D11]',
   reactive: 'bg-[#E6F1FB] text-[#185FA5]',
 };
-
-function pointInPolygon(point, polygon) {
-  let inside = false;
-  const { x, y } = point;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const xi = polygon[i].x;
-    const yi = polygon[i].y;
-    const xj = polygon[j].x;
-    const yj = polygon[j].y;
-    const intersects = yi > y !== yj > y && x < (xj - xi) * (y - yi) / ((yj - yi) || 1e-9) + xi;
-    if (intersects) inside = !inside;
-  }
-  return inside;
-}
 
 const OSM_TILE = {
   url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -106,9 +91,9 @@ function FlyTo({ lat, lng, zoom = 14 }) {
  * @param {(job: object) => void} [onCreateServiceRequest]
  * @param {{lat:number,lng:number}|null} [flyToTarget] — pan map when list selection changes
  * @param {'default'|'embedded'} [variant] — embedded drops outer chrome for layout inside wireframe shell
- * @param {React.ReactNode} [toolbarEnd] — e.g. expand map; rendered after lasso / clear controls
+ * @param {React.ReactNode} [toolbarEnd] — e.g. expand map; rendered in the map toolbar
  * @param {number} [listSelectionPopupNonce] — increment when list row selects a client to open that marker's popup
- * @param {boolean} [pinLeafletOverlays=true] — when false, no Tooltip/Popup on pins (e.g. embedded Service Request form map)
+ * @param {boolean} [pinLeafletOverlays=true] — when false, no Popup / hover overlays on pins
  */
 export default function DashboardMap({
   jobs = [],
@@ -121,7 +106,6 @@ export default function DashboardMap({
   onSelectJob,
   onOpenClientDetail,
   onCreateServiceRequest,
-  onLassoSelectionChange,
   flyToTarget = null,
   variant = 'default',
   toolbarEnd = null,
@@ -130,12 +114,6 @@ export default function DashboardMap({
 }) {
   const mapRef = useRef(null);
   const markerLeafletRefs = useRef({});
-  const lassoPointsRef = useRef([]);
-  const isDrawingRef = useRef(false);
-  const [lassoMode, setLassoMode] = useState(false);
-  const [isDrawingLasso, setIsDrawingLasso] = useState(false);
-  const [lassoPoints, setLassoPoints] = useState([]);
-  const [lassoSelectedIds, setLassoSelectedIds] = useState([]);
   const usBounds = L.latLngBounds([24, -125], [49, -66]);
   const defaultCenter = [39.5, -98.5];
   const calculatedCenter = center || (!autoCenterFromJobs ? defaultCenter : (() => {
@@ -155,83 +133,6 @@ export default function DashboardMap({
     const color = job.pinColor || MAP_PIN_COLORS[job.mapStatus] || MAP_PIN_COLORS.unscheduled;
     const selected = selectedJobId != null && String(selectedJobId) === String(job.id);
     return createWireframePinIcon(color, selected);
-  };
-
-  const clearLasso = useCallback(() => {
-    lassoPointsRef.current = [];
-    isDrawingRef.current = false;
-    setLassoPoints([]);
-    setLassoSelectedIds([]);
-    onLassoSelectionChange?.([]);
-  }, [onLassoSelectionChange]);
-
-  const toggleLassoMode = () => {
-    setLassoMode((prev) => {
-      const next = !prev;
-      if (!next) {
-        setIsDrawingLasso(false);
-        clearLasso();
-      }
-      return next;
-    });
-  };
-
-  const onDrawStart = (e) => {
-    if (!lassoMode) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const initial = [{ x, y }];
-    lassoPointsRef.current = initial;
-    isDrawingRef.current = true;
-    setLassoPoints(initial);
-    setIsDrawingLasso(true);
-    if (mapRef.current) {
-      mapRef.current.dragging.disable();
-      mapRef.current.doubleClickZoom.disable();
-      mapRef.current.scrollWheelZoom.disable();
-    }
-    if (e.currentTarget.setPointerCapture && e.pointerId != null) {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    }
-    e.preventDefault();
-  };
-
-  const onDrawMove = (e) => {
-    if (!lassoMode || !isDrawingRef.current) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const prev = lassoPointsRef.current;
-    const last = prev[prev.length - 1];
-    if (last && Math.hypot(last.x - x, last.y - y) < 3) return;
-    const next = [...prev, { x, y }];
-    lassoPointsRef.current = next;
-    setLassoPoints(next);
-    e.preventDefault();
-  };
-
-  const onDrawEnd = () => {
-    if (!lassoMode || !isDrawingRef.current) return;
-    isDrawingRef.current = false;
-    setIsDrawingLasso(false);
-    if (mapRef.current) {
-      mapRef.current.dragging.enable();
-      mapRef.current.doubleClickZoom.enable();
-      mapRef.current.scrollWheelZoom.enable();
-    }
-    const finalPoints = lassoPointsRef.current;
-    if (finalPoints.length < 3 || !mapRef.current) {
-      clearLasso();
-      return;
-    }
-    const selected = jobs.filter((job) => {
-      if (job.location?.lat == null || job.location?.lng == null) return false;
-      const p = mapRef.current.latLngToContainerPoint([job.location.lat, job.location.lng]);
-      return pointInPolygon({ x: p.x, y: p.y }, finalPoints);
-    }).map((job) => String(job.id));
-    setLassoSelectedIds(selected);
-    onLassoSelectionChange?.(selected);
   };
 
   useEffect(() => {
@@ -360,25 +261,6 @@ export default function DashboardMap({
                   : {}),
               }}
             >
-              {pinLeafletOverlays &&
-              selectedJobId != null &&
-              String(selectedJobId) === String(job.id) ? (
-                <Tooltip
-                  permanent
-                  direction="top"
-                  offset={[0, -12]}
-                  opacity={1}
-                  className="map-pin-selected-tooltip !rounded-md !border !border-gray-200 !bg-white !px-2 !py-1.5 !text-left !text-[11px] !shadow-md"
-                >
-                  <div className="font-semibold text-gray-900">{job.client_name}</div>
-                  {job.farm_name ? (
-                    <div className="text-[10px] text-gray-600">{job.farm_name}</div>
-                  ) : null}
-                  <div className="mt-0.5 text-[10px] text-gray-500">
-                    {(job.mapStatusLabel ?? '—') + (job.nextApptText ? ` · ${job.nextApptText}` : '')}
-                  </div>
-                </Tooltip>
-              ) : null}
               {pinLeafletOverlays ? (
                 <Popup className="map-wireframe-popup" minWidth={220}>
                   <div className="p-1 -m-1 text-left">
@@ -421,63 +303,9 @@ export default function DashboardMap({
       {/* Wireframe-style overlay; map interactions remain on the tiles */}
       <div className="pointer-events-none absolute inset-0 z-20">
         <div className="pointer-events-auto absolute top-3 right-3 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={toggleLassoMode}
-            className={cn(
-              'flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] shadow-sm transition-colors',
-              lassoMode ?
-              'border-emerald-300 bg-emerald-50 text-emerald-800' :
-              'border-black/10 bg-white text-gray-600 hover:bg-gray-50'
-            )}
-          >
-            <Circle className="h-3 w-3 shrink-0" strokeWidth={2} />
-            {lassoMode ? 'Exit lasso' : 'Lasso filter'}
-          </button>
-          {lassoSelectedIds.length > 0 ? (
-            <button
-              type="button"
-              onClick={clearLasso}
-              className="rounded-md border border-black/10 bg-white px-2.5 py-1.5 text-[11px] text-gray-600 shadow-sm hover:bg-gray-50"
-            >
-              Clear ({lassoSelectedIds.length})
-            </button>
-          ) : null}
           {toolbarEnd}
         </div>
       </div>
-
-      {lassoMode &&
-      <div
-        className={cn('absolute inset-0 z-10 touch-none', isDrawingLasso ? 'cursor-crosshair' : 'cursor-crosshair')}
-        onPointerDown={onDrawStart}
-        onPointerMove={onDrawMove}
-        onPointerUp={onDrawEnd}
-        onPointerCancel={onDrawEnd}
-      >
-          <svg className="h-full w-full">
-            {lassoPoints.length > 1 &&
-          <>
-                <polyline
-              points={lassoPoints.map((p) => `${p.x},${p.y}`).join(' ')}
-              fill="none"
-              stroke="#0F6E56"
-              strokeWidth="2"
-              strokeDasharray="5 4"
-            />
-                {!isDrawingLasso &&
-            <polygon
-              points={lassoPoints.map((p) => `${p.x},${p.y}`).join(' ')}
-              fill="rgba(15,110,86,0.15)"
-              stroke="#0F6E56"
-              strokeWidth="2"
-            />
-            }
-              </>
-          }
-          </svg>
-        </div>
-      }
     </div>
   );
 }

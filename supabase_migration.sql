@@ -653,6 +653,9 @@ ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS modified_by TEXT;
 ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS modified_on TIMESTAMPTZ;
 ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS assignment_history JSONB DEFAULT '[]'::jsonb;
 
+-- Season for scheduling context (form: Spring / Summer / Fall / Winter)
+ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS season TEXT;
+
 -- Optional: run supabase_rls_jwt_security.sql for JWT-scoped RLS (TO authenticated) helpers.
 
 -- ============================================
