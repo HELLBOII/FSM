@@ -108,6 +108,7 @@ function FlyTo({ lat, lng, zoom = 14 }) {
  * @param {'default'|'embedded'} [variant] — embedded drops outer chrome for layout inside wireframe shell
  * @param {React.ReactNode} [toolbarEnd] — e.g. expand map; rendered after lasso / clear controls
  * @param {number} [listSelectionPopupNonce] — increment when list row selects a client to open that marker's popup
+ * @param {boolean} [pinLeafletOverlays=true] — when false, no Tooltip/Popup on pins (e.g. embedded Service Request form map)
  */
 export default function DashboardMap({
   jobs = [],
@@ -125,6 +126,7 @@ export default function DashboardMap({
   variant = 'default',
   toolbarEnd = null,
   listSelectionPopupNonce = 0,
+  pinLeafletOverlays = true,
 }) {
   const mapRef = useRef(null);
   const markerLeafletRefs = useRef({});
@@ -244,7 +246,7 @@ export default function DashboardMap({
 
   /** Open the same Leaflet popup as hover when a client is chosen from the sidebar list. */
   useEffect(() => {
-    if (!listSelectionPopupNonce || selectedJobId == null) return;
+    if (!pinLeafletOverlays || !listSelectionPopupNonce || selectedJobId == null) return;
     const id = String(selectedJobId);
     const tryOpen = () => {
       const m = markerLeafletRefs.current[id];
@@ -262,7 +264,7 @@ export default function DashboardMap({
       window.clearTimeout(t0);
       window.clearTimeout(t1);
     };
-  }, [listSelectionPopupNonce, selectedJobId]);
+  }, [pinLeafletOverlays, listSelectionPopupNonce, selectedJobId]);
 
   const locatableJobIdSet = useMemo(() => {
     const s = new Set();
@@ -274,7 +276,7 @@ export default function DashboardMap({
 
   /** Open popup for the selected client pin (Service Request form / read-only) once markers exist. */
   useEffect(() => {
-    if (selectedJobId == null) return;
+    if (!pinLeafletOverlays || selectedJobId == null) return;
     const id = String(selectedJobId);
     if (!locatableJobIdSet.has(id)) return;
     const tryOpen = () => {
@@ -295,7 +297,7 @@ export default function DashboardMap({
       window.clearTimeout(t1);
       window.clearTimeout(t2);
     };
-  }, [selectedJobId, locatableJobIdSet]);
+  }, [pinLeafletOverlays, selectedJobId, locatableJobIdSet]);
 
   return (
     <div
@@ -344,17 +346,23 @@ export default function DashboardMap({
                   onSelectJob?.(job);
                   onOpenClientDetail?.(job);
                 },
-                mouseover: (e) => {
-                  e.target.openPopup();
-                },
-                mouseout: (e) => {
-                  const isSelected =
-                    selectedJobId != null && String(selectedJobId) === String(job.id);
-                  if (!isSelected) e.target.closePopup();
-                },
+                ...(pinLeafletOverlays
+                  ? {
+                      mouseover: (e) => {
+                        e.target.openPopup();
+                      },
+                      mouseout: (e) => {
+                        const isSelected =
+                          selectedJobId != null && String(selectedJobId) === String(job.id);
+                        if (!isSelected) e.target.closePopup();
+                      },
+                    }
+                  : {}),
               }}
             >
-              {selectedJobId != null && String(selectedJobId) === String(job.id) ? (
+              {pinLeafletOverlays &&
+              selectedJobId != null &&
+              String(selectedJobId) === String(job.id) ? (
                 <Tooltip
                   permanent
                   direction="top"
@@ -371,38 +379,40 @@ export default function DashboardMap({
                   </div>
                 </Tooltip>
               ) : null}
-              <Popup className="map-wireframe-popup" minWidth={220}>
-                <div className="p-1 -m-1 text-left">
-                  <div className="font-medium text-[13px] text-gray-900 leading-tight">{job.client_name}</div>
-                  {job.location?.address ? (
-                    <div className="text-[11px] text-gray-600 mt-0.5 mb-2 line-clamp-2">{job.location.address}</div>
-                  ) : (
-                    <div className="h-1" />
-                  )}
-                  <div className="flex justify-between text-[11px] gap-2 text-gray-700">
-                    <span className="text-gray-400 shrink-0">Next appt</span>
-                    <span className="text-right truncate">{job.nextApptText ?? '—'}</span>
-                  </div>
-                  <div className="flex justify-between text-[11px] gap-2 mt-1 text-gray-700">
-                    <span className="text-gray-400 shrink-0">Status</span>
-                    <span
-                      className={cn(
-                        'inline-block rounded-[10px] px-2 py-0.5 text-[10px] font-medium',
-                        MAP_STATUS_BADGE_CLASS[job.mapStatus] || MAP_STATUS_BADGE_CLASS.unscheduled
-                      )}
+              {pinLeafletOverlays ? (
+                <Popup className="map-wireframe-popup" minWidth={220}>
+                  <div className="p-1 -m-1 text-left">
+                    <div className="font-medium text-[13px] text-gray-900 leading-tight">{job.client_name}</div>
+                    {job.location?.address ? (
+                      <div className="text-[11px] text-gray-600 mt-0.5 mb-2 line-clamp-2">{job.location.address}</div>
+                    ) : (
+                      <div className="h-1" />
+                    )}
+                    <div className="flex justify-between text-[11px] gap-2 text-gray-700">
+                      <span className="text-gray-400 shrink-0">Next appt</span>
+                      <span className="text-right truncate">{job.nextApptText ?? '—'}</span>
+                    </div>
+                    <div className="flex justify-between text-[11px] gap-2 mt-1 text-gray-700">
+                      <span className="text-gray-400 shrink-0">Status</span>
+                      <span
+                        className={cn(
+                          'inline-block rounded-[10px] px-2 py-0.5 text-[10px] font-medium',
+                          MAP_STATUS_BADGE_CLASS[job.mapStatus] || MAP_STATUS_BADGE_CLASS.unscheduled
+                        )}
+                      >
+                        {job.mapStatusLabel ?? '—'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="mt-2.5 w-full py-1.5 text-[11px] font-medium rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition-colors"
+                      onClick={() => onOpenClientDetail?.(job)}
                     >
-                      {job.mapStatusLabel ?? '—'}
-                    </span>
+                      Click to view client card
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    className="mt-2.5 w-full py-1.5 text-[11px] font-medium rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition-colors"
-                    onClick={() => onOpenClientDetail?.(job)}
-                  >
-                    Click to view client card
-                  </button>
-                </div>
-              </Popup>
+                </Popup>
+              ) : null}
             </Marker>
           ) : null
         )}

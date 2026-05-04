@@ -242,6 +242,8 @@ export default function ServiceRequests() {
   });
   const requests = requestsBundle?.requests ?? [];
   const cancelledCount = requestsBundle?.cancelledCount ?? 0;
+  /** Total completed in DB (not limited to the 500-row active snapshot used for main tables). */
+  const completedCountTotal = requestsBundle?.completedCount ?? 0;
 
   /** Narrow client fetch for metrics + notification emails only (full list loads in the form). */
   const {
@@ -628,7 +630,6 @@ export default function ServiceRequests() {
     return {
       open: openListFull.length,
       overduePending: overdueListFull.length,
-      completedCount: requests.filter((r) => r.status === 'completed').length,
       unscheduled,
     };
   }, [requests, clients, openListFull, overdueListFull]);
@@ -687,7 +688,7 @@ export default function ServiceRequests() {
                 <CheckCircle className="h-3.5 w-3.5 text-[#1D9E75]" />
               </div>
               <div className="flex items-center justify-between gap-2">
-                <div className="text-[22px] font-medium text-[#0F6E56]">{metrics.completedCount}</div>
+                <div className="text-[22px] font-medium text-[#0F6E56]">{completedCountTotal}</div>
                 <Button
                   type="button"
                   variant={historyPanel === 'completed' ? 'outline' : 'default'}
@@ -697,7 +698,7 @@ export default function ServiceRequests() {
                       ? 'h-7 shrink-0 border-primary/30 px-2 text-[11px] font-medium text-primary hover:bg-primary/10'
                       : 'h-7 shrink-0 bg-primary px-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90'
                   }
-                  disabled={metrics.completedCount === 0}
+                  disabled={completedCountTotal === 0}
                   onClick={() => {
                     setHistoryPanel((p) => (p === 'completed' ? null : 'completed'));
                     setHistoryPage(1);

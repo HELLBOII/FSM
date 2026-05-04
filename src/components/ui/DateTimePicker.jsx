@@ -99,7 +99,7 @@ export function DateTimePicker({
             !internalDate && !disabled && "text-muted-foreground",
             disabled &&
               disabledAsViewOnly &&
-              "cursor-default !border-primary/60 !bg-primary/[0.06] !text-primary !opacity-100 shadow-sm hover:!bg-primary/[0.08] hover:!text-primary [&_svg]:!text-primary/80",
+              "cursor-default !border-primary/60 !bg-transparent !text-primary !opacity-100 shadow-none hover:!bg-transparent hover:!text-primary [&_svg]:!text-primary/80",
             className
           )}
         >

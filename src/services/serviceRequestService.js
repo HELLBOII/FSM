@@ -35,14 +35,15 @@ export const serviceRequestService = {
    * One React Query entry; still two HTTP calls, but avoids an extra round-trip chain and
    * matches a single loading state for the requests page.
    * @param {number} limit
-   * @returns {Promise<{ requests: Array, cancelledCount: number }>}
+   * @returns {Promise<{ requests: Array, cancelledCount: number, completedCount: number }>}
    */
   async listActiveWithCancelledCount(limit = 500) {
-    const [requests, cancelledCount] = await Promise.all([
+    const [requests, cancelledCount, completedCount] = await Promise.all([
       this.list('created_at', 'desc', limit),
       this.countCancelled(),
+      this.countCompleted(),
     ]);
-    return { requests, cancelledCount };
+    return { requests, cancelledCount, completedCount };
   },
 
   /**
@@ -224,6 +225,19 @@ export const serviceRequestService = {
       .from('service_requests')
       .select('*', { count: 'exact', head: true })
       .eq('is_cancelled', 'T');
+
+    if (error) throw error;
+    return count ?? 0;
+  },
+
+  /**
+   * Count non-cancelled requests with status completed (matches {@link #listCompleted} scope).
+   * @returns {Promise<number>}
+   */
+  async countCompleted() {
+    const { count, error } = await activeRequestsOnly(
+      supabase.from('service_requests').select('*', { count: 'exact', head: true })
+    ).eq('status', 'completed');
 
     if (error) throw error;
     return count ?? 0;
