@@ -84,3 +84,20 @@ export function mergeServiceRequestUpdateAudit(beforeRow, patch, userId, opts = 
   }
   return out;
 }
+
+const DEFAULT_CLOSED_FOR_CANCEL = ['completed', 'approved', 'closed'];
+
+/** Row marked cancelled in DB (T / true / etc.). */
+export function isServiceRequestCancelledRow(r) {
+  if (!r) return false;
+  const v = r.is_cancelled;
+  return v === true || v === 'T' || v === 't' || String(v).toLowerCase() === 'true';
+}
+
+/** Whether list/table actions may offer cancel (not closed, not already cancelled). */
+export function canCancelServiceRequestRow(r, closedStatuses = DEFAULT_CLOSED_FOR_CANCEL) {
+  if (!r) return false;
+  if (isServiceRequestCancelledRow(r)) return false;
+  if (closedStatuses.includes(r.status)) return false;
+  return true;
+}

@@ -31,6 +31,21 @@ export const serviceRequestService = {
   },
 
   /**
+   * Active list (same as {@link #list}) plus cancelled count in one parallel batch.
+   * One React Query entry; still two HTTP calls, but avoids an extra round-trip chain and
+   * matches a single loading state for the requests page.
+   * @param {number} limit
+   * @returns {Promise<{ requests: Array, cancelledCount: number }>}
+   */
+  async listActiveWithCancelledCount(limit = 500) {
+    const [requests, cancelledCount] = await Promise.all([
+      this.list('created_at', 'desc', limit),
+      this.countCancelled(),
+    ]);
+    return { requests, cancelledCount };
+  },
+
+  /**
    * Counts for tab badges (All / Active / Pending / Closed) — not affected by search/filters.
    */
   async getTabCounts() {
@@ -139,6 +154,68 @@ export const serviceRequestService = {
   },
 
   /**
+   * Scheduling queue (server-side): active, not completed/approved/closed, and either pending
+   * or overdue by the same due-ref precedence as the Scheduling UI (end → date → start).
+   * @param {Object} opts
+   * @param {number} [opts.page=1]
+   * @param {number} [opts.pageSize=10]
+   * @param {string} [opts.search=''] — optional ilike across client / farm / request # / description
+   * @returns {Promise<{ data: Array, total: number }>}
+   */
+  async listOverduePendingPaged({ page = 1, pageSize = 10, search = '' } = {}) {
+    const safePage = Math.max(1, Number(page) || 1);
+    const safeSize = Math.min(100, Math.max(1, Number(pageSize) || 10));
+    const fromIdx = (safePage - 1) * safeSize;
+    const toIdx = fromIdx + safeSize - 1;
+
+    const day = new Date();
+    day.setHours(0, 0, 0, 0);
+    const todayStartIso = day.toISOString();
+    const overdueOr = [
+      'status.eq.pending',
+      `and(scheduled_end_time.not.is.null,scheduled_end_time.lt.${todayStartIso})`,
+      `and(scheduled_end_time.is.null,scheduled_date.not.is.null,scheduled_date.lt.${todayStartIso})`,
+      `and(scheduled_end_time.is.null,scheduled_date.is.null,scheduled_start_time.not.is.null,scheduled_start_time.lt.${todayStartIso})`,
+    ].join(',');
+
+    let query = activeRequestsOnly(
+      supabase.from('service_requests').select('*', { count: 'exact' })
+    )
+      .not('status', 'in', '(completed,approved,closed)')
+      .or(overdueOr);
+
+    const q = search?.trim();
+    if (q) {
+      const esc = q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+      query = query.or(
+        `client_name.ilike.%${esc}%,farm_name.ilike.%${esc}%,request_number.ilike.%${esc}%,description.ilike.%${esc}%,assigned_technician_name.ilike.%${esc}%,issue_category.ilike.%${esc}%`
+      );
+    }
+
+    query = query
+      .order('scheduled_end_time', { ascending: true, nullsFirst: false })
+      .order('scheduled_date', { ascending: true, nullsFirst: false })
+      .order('scheduled_start_time', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true })
+      .range(fromIdx, toIdx);
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      if (error.message?.includes('schema cache') || error.message?.includes('relation') || error.message?.includes('does not exist')) {
+        const enhancedError = new Error(
+          'Database table not found. Please run the migration script (supabase_migration.sql) in your Supabase SQL Editor to create the required tables.'
+        );
+        enhancedError.originalError = error;
+        throw enhancedError;
+      }
+      throw error;
+    }
+
+    return { data: data || [], total: count ?? 0 };
+  },
+
+  /**
    * Count requests marked cancelled (is_cancelled = 'T'). Not filtered by active list rules.
    * @returns {Promise<number>}
    */
@@ -150,6 +227,39 @@ export const serviceRequestService = {
 
     if (error) throw error;
     return count ?? 0;
+  },
+
+  /**
+   * Cancelled rows (is_cancelled = 'T') for admin lists / metrics drill-down.
+   * @param {number} [limit=500]
+   * @returns {Promise<Array>}
+   */
+  async listCancelled(limit = 500) {
+    let query = supabase
+      .from('service_requests')
+      .select('*')
+      .eq('is_cancelled', 'T')
+      .order('created_at', { ascending: false });
+    if (limit) query = query.limit(limit);
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  },
+
+  /**
+   * Completed rows (active, not cancelled) for metrics drill-down.
+   * @param {number} [limit=500]
+   * @returns {Promise<Array>}
+   */
+  async listCompleted(limit = 500) {
+    let query = activeRequestsOnly(supabase.from('service_requests').select('*'))
+      .eq('status', 'completed')
+      .order('created_at', { ascending: false });
+    if (limit) query = query.limit(limit);
+    const { data, error } = await query;
+    if (error) throw error;
+    const rows = data || [];
+    return rows.filter((r) => String(r.status || '').toLowerCase() === 'completed');
   },
 
   /**

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { Link } from 'react-router-dom';
+import { createPageUrl } from '@/utils';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +16,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
+import {
   AlertDialog,
   AlertDialogCancel,
   AlertDialogContent,
@@ -28,8 +37,9 @@ import { buildAssignmentHistoryEntry, parseAssignmentHistory } from '@/utils/ser
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Loader2, MapPin, Upload, X, Calendar, Eye, History, Plus } from 'lucide-react';
 import ClientNotesHistoryDialog from '@/components/clients/ClientNotesHistoryDialog';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { addDays, format } from 'date-fns';
+import { addDays, format, isBefore, startOfToday } from 'date-fns';
 import DashboardMap, { MAP_PIN_COLORS } from '@/components/map/DashboardMap';
 
 /** Default irrigation system option labels (merged with DB + client lists). */
@@ -198,6 +208,86 @@ function deriveClientMapContext(sortedRequestsForClient) {
   };
 }
 
+/** Aligns with AdminDashboard client card “service history” pills. */
+function parseTimeMs(v) {
+  if (v == null || v === '') return null;
+  const t = new Date(v).getTime();
+  return Number.isNaN(t) ? null : t;
+}
+
+function getRequestServiceSortTimeMs(r) {
+  const st = (r.status || '').toLowerCase();
+  const candidates = [];
+  if (['completed', 'approved', 'closed'].includes(st) && r.actual_end_time) {
+    candidates.push(parseTimeMs(r.actual_end_time));
+  }
+  candidates.push(
+    parseTimeMs(r.scheduled_end_time),
+    parseTimeMs(r.scheduled_start_time),
+    parseTimeMs(r.scheduled_date)
+  );
+  const fromDates = candidates.filter((x) => x != null && x > 0);
+  if (fromDates.length) return Math.max(...fromDates);
+  return parseTimeMs(r.updated_at) ?? parseTimeMs(r.created_at) ?? 0;
+}
+
+function sortRequestsLatestServiceFirst(arr) {
+  return [...arr].sort((a, b) => getRequestServiceSortTimeMs(b) - getRequestServiceSortTimeMs(a));
+}
+
+function getClientCardHistoryBucket(r) {
+  const st = (r.status || '').toLowerCase();
+  if (['completed', 'approved', 'closed'].includes(st)) {
+    return { bucket: 'completed', label: 'Completed' };
+  }
+  if (st === 'pending') {
+    return { bucket: 'overdue', label: 'Overdue' };
+  }
+  if (st === 'new' && !r.scheduled_date) {
+    return { bucket: 'unscheduled', label: 'Unscheduled' };
+  }
+  if (['scheduled', 'in_progress', 'assigned'].includes(st)) {
+    const endRef = r.scheduled_end_time || r.scheduled_date;
+    if (endRef && isBefore(new Date(endRef), startOfToday())) {
+      return { bucket: 'overdue', label: 'Overdue' };
+    }
+    return { bucket: 'scheduled', label: 'Scheduled' };
+  }
+  if (st === 'new' && r.scheduled_date) {
+    if (isBefore(new Date(r.scheduled_date), startOfToday())) {
+      return { bucket: 'overdue', label: 'Overdue' };
+    }
+    return { bucket: 'scheduled', label: 'Scheduled' };
+  }
+  return { bucket: 'unscheduled', label: 'Unscheduled' };
+}
+
+const CLIENT_CARD_BUCKET_PILL_CLASS = {
+  unscheduled: 'bg-[#FAEEDA] text-[#BA7517]',
+  scheduled: 'bg-[#EEEDFE] text-[#534AB7]',
+  overdue: 'bg-[#FCEBEB] text-[#A32D2D]',
+  completed: 'bg-[#EAF3DE] text-[#3B6D11]',
+};
+
+const MAP_CLIENT_CARD_STATUS_PILL = {
+  scheduled: 'bg-[#EEEDFE] text-[#534AB7]',
+  unscheduled: 'bg-[#FAEEDA] text-[#BA7517]',
+  overdue: 'bg-[#FCEBEB] text-[#A32D2D]',
+  completed: 'bg-[#EAF3DE] text-[#3B6D11]',
+  reactive: 'bg-[#E6F1FB] text-[#185FA5]',
+};
+
+function concatClientAddress(client) {
+  if (!client) return '—';
+  const parts = [
+    String(client.address ?? '').trim(),
+    String(client.city ?? '').trim(),
+    String(client.state ?? '').trim(),
+    client.zipcode != null && String(client.zipcode).trim() !== '' ? String(client.zipcode).trim() : '',
+  ].filter(Boolean);
+  return parts.length ? parts.join(', ') : '—';
+}
+
 export default function ServiceRequestForm({
   request,
   onSubmit,
@@ -208,6 +298,11 @@ export default function ServiceRequestForm({
   readOnly = false,
 }) {
   const isReadOnly = readOnly === true;
+  /** Read-only / view mode: primary borders & text instead of default disabled grey. */
+  const roLabel = isReadOnly ? 'text-primary font-medium' : '';
+  const roSelectTrigger = isReadOnly
+    ? 'cursor-default !opacity-100 border-primary/60 bg-primary/[0.06] text-primary shadow-sm focus:border-primary focus:ring-1 focus:ring-primary data-[placeholder]:text-primary/70 [&>span]:text-primary [&_svg]:text-primary/80'
+    : '';
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const [formData, setFormData] = useState({
@@ -246,6 +341,11 @@ export default function ServiceRequestForm({
   /** Bumps when client is chosen so embedded map opens that marker's popup (Leaflet). */
   const [formMapPopupNonce, setFormMapPopupNonce] = useState(0);
   const lastInitialClientMapBumpRef = useRef(null);
+  /** Avoid duplicate popup opens unless request / client / mode actually changed. */
+  const mapPopupOpenKeyRef = useRef('');
+  const [mapClientSheetOpen, setMapClientSheetOpen] = useState(false);
+  const [mapSheetClientId, setMapSheetClientId] = useState(null);
+  const [mapSheetFlyTo, setMapSheetFlyTo] = useState(null);
 
   const { data: clients = [], isLoading: isLoadingClients } = useQuery({
     queryKey: ['clients'],
@@ -376,6 +476,64 @@ export default function ServiceRequestForm({
     return { lat, lng };
   }, [clients, formData.client_id]);
 
+  const mapUiSelectedJobId = useMemo(() => {
+    if (mapClientSheetOpen && mapSheetClientId) return mapSheetClientId;
+    return formData.client_id ? String(formData.client_id) : null;
+  }, [mapClientSheetOpen, mapSheetClientId, formData.client_id]);
+
+  const mapEffectiveFlyTo = useMemo(
+    () => mapSheetFlyTo ?? formMapFlyTo,
+    [mapSheetFlyTo, formMapFlyTo]
+  );
+
+  const sheetMapJob = useMemo(() => {
+    if (!mapSheetClientId) return null;
+    return mapJobs.find((j) => String(j.id) === String(mapSheetClientId)) ?? null;
+  }, [mapJobs, mapSheetClientId]);
+
+  const sheetClientEntity = useMemo(
+    () => clients.find((c) => String(c.id) === String(mapSheetClientId)),
+    [clients, mapSheetClientId]
+  );
+
+  const sheetClientRequests = useMemo(() => {
+    if (!mapSheetClientId) return [];
+    for (const [k, arr] of requestsByClientId.entries()) {
+      if (String(k) === String(mapSheetClientId)) return sortRequestsLatestServiceFirst([...arr]);
+    }
+    return [];
+  }, [mapSheetClientId, requestsByClientId]);
+
+  const sheetClientNotesHistory = useMemo(() => {
+    const raw = sheetClientEntity?.notes_history;
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [raw];
+      } catch {
+        return [raw];
+      }
+    }
+    return [raw];
+  }, [sheetClientEntity]);
+
+  const openMapClientSheet = useCallback((job) => {
+    if (!job?.id) return;
+    setMapSheetClientId(String(job.id));
+    setMapClientSheetOpen(true);
+    if (job.location?.lat != null && job.location?.lng != null) {
+      const la = Number(job.location.lat);
+      const ln = Number(job.location.lng);
+      if (Number.isFinite(la) && Number.isFinite(ln)) {
+        setMapSheetFlyTo({ lat: la, lng: ln });
+        window.setTimeout(() => setMapSheetFlyTo(null), 2000);
+      }
+    }
+    setFormMapPopupNonce((n) => n + 1);
+  }, []);
+
   const bumpFormMapPopupIfLocated = useCallback((client) => {
     if (!client) return;
     const lat = Number(client.location?.lat ?? client.latitude);
@@ -383,6 +541,25 @@ export default function ServiceRequestForm({
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
     setFormMapPopupNonce((n) => n + 1);
   }, []);
+
+  /** When edit / read-only opens with a client on the map, open pin popup + tooltip after Dialog + map layout. */
+  useEffect(() => {
+    if (!formData.client_id || clients.length === 0) return;
+    const client = clients.find((c) => String(c.id) === String(formData.client_id));
+    if (!client) return;
+    const lat = Number(client.location?.lat ?? client.latitude);
+    const lng = Number(client.location?.lng ?? client.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    const key = `${request?.id ?? 'new'}|${String(formData.client_id)}|${readOnly ? 'ro' : 'ed'}`;
+    if (mapPopupOpenKeyRef.current === key) return;
+    mapPopupOpenKeyRef.current = key;
+    const t1 = window.setTimeout(() => bumpFormMapPopupIfLocated(client), 150);
+    const t2 = window.setTimeout(() => bumpFormMapPopupIfLocated(client), 550);
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, [formData.client_id, request?.id, readOnly, clients, bumpFormMapPopupIfLocated]);
 
   // Reusable skeleton component for Select fields
   const SelectSkeleton = () => (
@@ -776,12 +953,12 @@ export default function ServiceRequestForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} className={cn('space-y-6', isReadOnly && 'text-primary')}>
       <div className="space-y-3">
         {/* Row 1: Client | Issue category | Irrigation systems */}
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div className="min-w-0">
-            <Label className="text-sm mb-2 block">Select Client <span className="text-red-600">*</span></Label>
+            <Label className={cn('text-sm mb-2 block', roLabel)}>Select Client <span className="text-red-600">*</span></Label>
             {isLoadingClients ? (
               <SelectSkeleton />
             ) : (
@@ -792,7 +969,11 @@ export default function ServiceRequestForm({
                   disabled={isReadOnly || clients.length === 0}
                 >
                   <SelectTrigger
-                    className={`h-10 min-h-10 flex-1 min-w-0 border-primary/30 text-sm focus:border-primary focus:ring-primary sm:text-base ${errors.client_id ? 'border-red-500' : ''}`}
+                    className={cn(
+                      'h-10 min-h-10 flex-1 min-w-0 text-sm sm:text-base',
+                      isReadOnly ? roSelectTrigger : 'border-primary/30 focus:border-primary focus:ring-primary',
+                      errors.client_id && 'border-red-500'
+                    )}
                     aria-invalid={errors.client_id ? true : undefined}
                   >
                     <SelectValue placeholder="Choose a client..." />
@@ -830,7 +1011,7 @@ export default function ServiceRequestForm({
           </div>
 
           <div className="min-w-0">
-            <Label className="mb-2 block text-sm">
+            <Label className={cn('mb-2 block text-sm', roLabel)}>
               Issue Category <span className="text-red-600">*</span>
             </Label>
             <Select
@@ -842,7 +1023,11 @@ export default function ServiceRequestForm({
               disabled={isReadOnly}
             >
               <SelectTrigger
-                className={`h-10 min-h-10 text-sm sm:text-base ${errors.issue_category ? 'border-red-500' : ''}`}
+                className={cn(
+                  'h-10 min-h-10 text-sm sm:text-base',
+                  isReadOnly ? roSelectTrigger : '',
+                  errors.issue_category && 'border-red-500'
+                )}
                 aria-invalid={errors.issue_category ? true : undefined}
               >
                 <SelectValue placeholder="Select issue category..." />
@@ -859,7 +1044,7 @@ export default function ServiceRequestForm({
           </div>
 
           <div className="min-w-0">
-            <Label className="mb-2 block text-sm">
+            <Label className={cn('mb-2 block text-sm', roLabel)}>
               Irrigation Systems <span className="text-red-600">*</span>
             </Label>
             <Select
@@ -879,7 +1064,11 @@ export default function ServiceRequestForm({
               }}
             >
               <SelectTrigger
-                className={`h-10 min-h-10 border-primary/30 text-sm focus:border-primary focus:ring-primary sm:text-base ${errors.irrigation_systems ? 'border-red-500' : ''}`}
+                className={cn(
+                  'h-10 min-h-10 text-sm sm:text-base',
+                  isReadOnly ? roSelectTrigger : 'border-primary/30 focus:border-primary focus:ring-primary',
+                  errors.irrigation_systems && 'border-red-500'
+                )}
                 aria-invalid={errors.irrigation_systems ? true : undefined}
               >
                 <SelectValue placeholder="Add system type..." />
@@ -938,32 +1127,34 @@ export default function ServiceRequestForm({
         {/* Row 2: From Time, To Time, Technician */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div>
-            <Label className="text-sm mb-2 block">Start date & time <span className="text-red-600">*</span></Label>
+            <Label className={cn('text-sm mb-2 block', roLabel)}>Start date & time <span className="text-red-600">*</span></Label>
             <DateTimePicker
               date={fromDateTime}
               onDateChange={handleFromDateTimeChange}
               placeholder="Select start date & time"
-              className="border-primary/30 focus-visible:ring-primary"
+              className={cn('border-primary/30 focus-visible:ring-primary')}
               disabled={isReadOnly}
+              disabledAsViewOnly={isReadOnly}
             />
             {errors.from_time && <p className="mt-1 text-xs text-red-600">{errors.from_time}</p>}
           </div>
 
           <div>
-            <Label className="text-sm mb-2 block">End date & time <span className="text-red-600">*</span></Label>
+            <Label className={cn('text-sm mb-2 block', roLabel)}>End date & time <span className="text-red-600">*</span></Label>
             <DateTimePicker
               date={toDateTime}
               onDateChange={handleToDateTimeChange}
               placeholder="Select end date & time"
-              className="border-primary/30 focus-visible:ring-primary"
+              className={cn('border-primary/30 focus-visible:ring-primary')}
               disabled={isReadOnly}
+              disabledAsViewOnly={isReadOnly}
             />
             {errors.to_time && <p className="mt-1 text-xs text-red-600">{errors.to_time}</p>}
           </div>
 
           <div className="flex gap-2">
             <div className="flex-1">
-              <Label className="text-sm mb-2 block">Technician</Label>
+              <Label className={cn('text-sm mb-2 block', roLabel)}>Technician</Label>
               {isLoadingTechnicians ? (
                 <SelectSkeleton />
               ) : (
@@ -980,7 +1171,9 @@ export default function ServiceRequestForm({
                   }}
                   disabled={isReadOnly || technicians.length === 0}
                 >
-                  <SelectTrigger className="h-10 min-h-10 text-sm sm:text-base">
+                  <SelectTrigger
+                    className={cn('h-10 min-h-10 text-sm sm:text-base', isReadOnly ? roSelectTrigger : '')}
+                  >
                     <SelectValue placeholder="Select technician..." />
                   </SelectTrigger>
                   <SelectContent>
@@ -1005,7 +1198,11 @@ export default function ServiceRequestForm({
                 variant="outline"
                 size="icon"
                 onClick={() => setShowAssignmentDialog(true)}
-                className="h-10 w-10 border-primary text-primary hover:bg-primary hover:text-primary-foreground"
+                className={cn(
+                  'h-10 w-10 border-primary text-primary hover:bg-primary hover:text-primary-foreground',
+                  isReadOnly &&
+                    'disabled:!opacity-100 disabled:border-primary/50 disabled:text-primary/70 disabled:bg-primary/[0.04]'
+                )}
                 disabled={!formData.client_id || !formData.assigned_technician_id}
                 title={
                   !formData.client_id || !formData.assigned_technician_id
@@ -1020,17 +1217,17 @@ export default function ServiceRequestForm({
         </div>
 
         {/* Map (Dashboard-style) */}
-        <div>
+        <div className={cn(isReadOnly && 'rounded-md ring-2 ring-primary/30 ring-offset-2 ring-offset-background')}>
           <DashboardMap
             jobs={mapJobs}
             center={[39.5, -98.5]}
             zoom={4}
             autoCenterFromJobs={false}
-            selectedJobId={formData.client_id ? String(formData.client_id) : null}
-            flyToTarget={formMapFlyTo}
+            selectedJobId={mapUiSelectedJobId}
+            flyToTarget={mapEffectiveFlyTo}
             listSelectionPopupNonce={formMapPopupNonce}
             onSelectJob={isReadOnly ? undefined : (job) => handleClientSelect(job.id)}
-            onOpenClientDetail={isReadOnly ? undefined : (job) => handleClientSelect(job.id)}
+            onOpenClientDetail={(job) => openMapClientSheet(job)}
             className="h-[300px]"
           />
         </div>
@@ -1207,6 +1404,200 @@ export default function ServiceRequestForm({
           </div>
         </DialogContent>
       </Dialog>
+
+      <Sheet
+        open={mapClientSheetOpen}
+        onOpenChange={(open) => {
+          setMapClientSheetOpen(open);
+          if (!open) setMapSheetClientId(null);
+        }}
+      >
+        <SheetContent
+          side="right"
+          overlayClassName="bg-black/40"
+          className="w-full overflow-y-auto sm:max-w-md"
+        >
+          {sheetClientEntity && sheetMapJob ? (
+            <>
+              <SheetHeader>
+                <SheetTitle className="pr-8 text-left">Client card</SheetTitle>
+                <SheetDescription className="text-left break-words text-muted-foreground">
+                  {concatClientAddress(sheetClientEntity)}
+                </SheetDescription>
+              </SheetHeader>
+              <div className="mt-6 space-y-5">
+                <div className="flex gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-sm font-medium text-emerald-800">
+                    {(sheetClientEntity.name || '?')
+                      .split(/\s+/)
+                      .filter(Boolean)
+                      .map((n) => n[0])
+                      .join('')
+                      .slice(0, 2)
+                      .toUpperCase()}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900">{sheetClientEntity.name}</p>
+                    {sheetClientEntity.farm_name ? (
+                      <p className="text-xs text-muted-foreground">{sheetClientEntity.farm_name}</p>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Contact details
+                  </p>
+                  <div className="space-y-1.5 text-xs">
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Phone</span>
+                      <span>{sheetClientEntity.phone || '—'}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="shrink-0 text-muted-foreground">Address</span>
+                      <span className="max-w-[70%] text-right break-words">
+                        {concatClientAddress(sheetClientEntity)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Email</span>
+                      <span className="truncate text-right text-[11px] text-blue-700">
+                        {sheetClientEntity.email || '—'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-3 border-t border-black/10" />
+                </div>
+
+                <div>
+                  <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Current season
+                  </p>
+                  <div className="space-y-1.5 text-xs">
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Last service request</span>
+                      <span
+                        className={cn(
+                          'rounded-[10px] px-2 py-0.5 text-[10px] font-medium',
+                          MAP_CLIENT_CARD_STATUS_PILL[sheetMapJob.mapStatus] ||
+                            MAP_CLIENT_CARD_STATUS_PILL.unscheduled
+                        )}
+                      >
+                        {sheetMapJob.mapStatusLabel}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Next appt</span>
+                      <span>{sheetMapJob.nextApptText || '—'}</span>
+                    </div>
+                  </div>
+                  <div className="mt-3 border-t border-black/10" />
+                </div>
+
+                <div>
+                  <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Service history
+                  </p>
+                  <div className="space-y-2">
+                    {sheetClientRequests.slice(0, 5).map((r) => {
+                      const hist = getClientCardHistoryBucket(r);
+                      return (
+                        <div
+                          key={r.id}
+                          className="rounded-md border border-border bg-muted/40 px-2 py-2 text-[11px]"
+                        >
+                          <Link
+                            to={`${createPageUrl('ServiceRequests')}?id=${encodeURIComponent(String(r.id))}`}
+                            className="block text-left transition-colors hover:opacity-90"
+                            onClick={() => setMapClientSheetOpen(false)}
+                          >
+                            <div className="flex flex-wrap items-center gap-1.5 font-medium text-foreground">
+                              <span>#{r.request_number || r.id}</span>
+                              <span
+                                className={cn(
+                                  'inline-block rounded-[10px] px-2 py-0.5 text-[10px] font-medium',
+                                  CLIENT_CARD_BUCKET_PILL_CLASS[hist.bucket] ||
+                                    CLIENT_CARD_BUCKET_PILL_CLASS.unscheduled
+                                )}
+                              >
+                                {hist.label}
+                              </span>
+                            </div>
+                            <div className="mt-0.5 text-[10px] text-muted-foreground">
+                              {r.issue_category?.replace(/_/g, ' ') || 'Request'}
+                              {r.created_at && ` · ${format(new Date(r.created_at), 'MMM d, yyyy')}`}
+                            </div>
+                          </Link>
+                        </div>
+                      );
+                    })}
+                    {sheetClientRequests.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No service requests for this client yet.</p>
+                    ) : null}
+                  </div>
+                  <div className="mt-3 border-t border-black/10" />
+                </div>
+
+                <div>
+                  <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Notes history
+                  </p>
+                  <div className="space-y-2">
+                    {sheetClientNotesHistory.slice(0, 5).map((entry, idx) => {
+                      const text =
+                        typeof entry === 'string'
+                          ? entry
+                          : entry?.note || entry?.text || entry?.message || JSON.stringify(entry);
+                      const whenRaw = entry?.created_at || entry?.date || entry?.timestamp;
+                      const when = whenRaw ? format(new Date(whenRaw), 'MMM d, yyyy') : null;
+                      return (
+                        <div
+                          key={`note-${idx}`}
+                          className="rounded-md border border-border bg-muted/30 px-2 py-2 text-[11px]"
+                        >
+                          {when ? <div className="mb-1 text-[10px] text-muted-foreground">{when}</div> : null}
+                          <div className="line-clamp-3 text-foreground/90">{text}</div>
+                        </div>
+                      );
+                    })}
+                    {sheetClientNotesHistory.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No notes history available.</p>
+                    ) : null}
+                  </div>
+                </div>
+
+                {!isReadOnly && !request ? (
+                  <div className="pt-1">
+                    <Button
+                      className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
+                      type="button"
+                      onClick={() => {
+                        setMapClientSheetOpen(false);
+                        handleClientSelect(sheetClientEntity.id);
+                      }}
+                    >
+                      Use this client for this request
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            </>
+          ) : sheetClientEntity && !sheetMapJob ? (
+            <SheetHeader>
+              <SheetTitle className="pr-8 text-left">Client card</SheetTitle>
+              <SheetDescription>{concatClientAddress(sheetClientEntity)}</SheetDescription>
+              <p className="mt-4 text-sm text-muted-foreground">
+                This client has no map pin context. Contact details: {sheetClientEntity.phone || '—'}
+              </p>
+            </SheetHeader>
+          ) : (
+            <SheetHeader>
+              <SheetTitle>Client</SheetTitle>
+              <SheetDescription>No client selected.</SheetDescription>
+            </SheetHeader>
+          )}
+        </SheetContent>
+      </Sheet>
 
       <ClientNotesHistoryDialog
         open={clientNotesHistoryOpen}

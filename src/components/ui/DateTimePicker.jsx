@@ -22,6 +22,8 @@ export function DateTimePicker({
   /** date-fns format string for the trigger label */
   displayFormat = "MM/dd/yyyy hh:mm aa",
   disabled = false,
+  /** When disabled, use primary border/text (e.g. service request view-only) instead of grey. */
+  disabledAsViewOnly = false,
 }) {
   const [isOpen, setIsOpen] = React.useState(false)
   const [internalDate, setInternalDate] = React.useState(date)
@@ -94,7 +96,10 @@ export function DateTimePicker({
           disabled={disabled}
           className={cn(
             "w-full justify-start text-left font-normal h-10 min-h-10 text-sm sm:text-base",
-            !internalDate && "text-muted-foreground",
+            !internalDate && !disabled && "text-muted-foreground",
+            disabled &&
+              disabledAsViewOnly &&
+              "cursor-default !border-primary/60 !bg-primary/[0.06] !text-primary !opacity-100 shadow-sm hover:!bg-primary/[0.08] hover:!text-primary [&_svg]:!text-primary/80",
             className
           )}
         >

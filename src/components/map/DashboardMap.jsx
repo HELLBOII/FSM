@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap, ZoomControl } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Tooltip, useMap, ZoomControl } from 'react-leaflet';
 import { cn } from '@/lib/utils';
 import { Circle } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
@@ -264,6 +264,39 @@ export default function DashboardMap({
     };
   }, [listSelectionPopupNonce, selectedJobId]);
 
+  const locatableJobIdSet = useMemo(() => {
+    const s = new Set();
+    for (const j of jobs) {
+      if (j.location?.lat != null && j.location?.lng != null) s.add(String(j.id));
+    }
+    return s;
+  }, [jobs]);
+
+  /** Open popup for the selected client pin (Service Request form / read-only) once markers exist. */
+  useEffect(() => {
+    if (selectedJobId == null) return;
+    const id = String(selectedJobId);
+    if (!locatableJobIdSet.has(id)) return;
+    const tryOpen = () => {
+      const m = markerLeafletRefs.current[id];
+      if (m && typeof m.openPopup === 'function') {
+        try {
+          m.openPopup();
+        } catch {
+          // ignore
+        }
+      }
+    };
+    const t0 = window.setTimeout(tryOpen, 0);
+    const t1 = window.setTimeout(tryOpen, 350);
+    const t2 = window.setTimeout(tryOpen, 900);
+    return () => {
+      window.clearTimeout(t0);
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, [selectedJobId, locatableJobIdSet]);
+
   return (
     <div
       className={cn(
@@ -315,10 +348,29 @@ export default function DashboardMap({
                   e.target.openPopup();
                 },
                 mouseout: (e) => {
-                  e.target.closePopup();
+                  const isSelected =
+                    selectedJobId != null && String(selectedJobId) === String(job.id);
+                  if (!isSelected) e.target.closePopup();
                 },
               }}
             >
+              {selectedJobId != null && String(selectedJobId) === String(job.id) ? (
+                <Tooltip
+                  permanent
+                  direction="top"
+                  offset={[0, -12]}
+                  opacity={1}
+                  className="map-pin-selected-tooltip !rounded-md !border !border-gray-200 !bg-white !px-2 !py-1.5 !text-left !text-[11px] !shadow-md"
+                >
+                  <div className="font-semibold text-gray-900">{job.client_name}</div>
+                  {job.farm_name ? (
+                    <div className="text-[10px] text-gray-600">{job.farm_name}</div>
+                  ) : null}
+                  <div className="mt-0.5 text-[10px] text-gray-500">
+                    {(job.mapStatusLabel ?? '—') + (job.nextApptText ? ` · ${job.nextApptText}` : '')}
+                  </div>
+                </Tooltip>
+              ) : null}
               <Popup className="map-wireframe-popup" minWidth={220}>
                 <div className="p-1 -m-1 text-left">
                   <div className="font-medium text-[13px] text-gray-900 leading-tight">{job.client_name}</div>
