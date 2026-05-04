@@ -420,10 +420,6 @@ export default function Calendar() {
           <span className="h-2.5 w-2.5 rounded-full bg-[#E24B4A]" />
           <span className="text-[11px] text-[#6f6f68]">Overdue</span>
         </div>
-        <div className="flex items-center gap-2 rounded-md border border-black/10 bg-white px-2.5 py-1">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#378ADD]" />
-          <span className="text-[11px] text-[#6f6f68]">Reactive</span>
-        </div>
       </div>
     </div>);
 

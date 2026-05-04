@@ -3,8 +3,10 @@ import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { serviceRequestService, clientService } from '@/services';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Expand, CheckCircle, Calendar, Clock3, AlertTriangle } from 'lucide-react';
+import { Expand, CheckCircle, Calendar, Clock3, AlertTriangle, Search, Pencil, X } from 'lucide-react';
 import { Button } from "@/components/ui/button";
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import DashboardMap, { MAP_PIN_COLORS } from '@/components/map/DashboardMap';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
 import ServiceRequestForm from '@/components/forms/ServiceRequestForm';
@@ -16,6 +18,15 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -23,30 +34,108 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { toast } from 'sonner';
-import { format } from 'date-fns';
+import { format, isBefore, startOfToday } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { Tooltip } from '@/components/ui/tooltip';
+import { useAuth } from '@/lib/AuthContext';
+import { mergeServiceRequestUpdateAudit } from '@/utils/serviceRequestAudit';
 
 const CLOSED_STATUSES = ['completed', 'approved', 'closed'];
 
-function isReactiveRequest(r) {
-  return (
-    r.priority === 'urgent' ||
-    ['leak_repair', 'pump_issue', 'pipe_repair', 'valve_replacement'].includes(r.issue_category)
-  );
+function canEditOrCancelHistoryRequest(r) {
+  const st = (r.status || '').toLowerCase();
+  if (CLOSED_STATUSES.includes(st)) return false;
+  if (String(r.is_cancelled || '').toUpperCase() === 'T') return false;
+  return true;
 }
 
 function isRequestOverdue(r) {
-  if (CLOSED_STATUSES.includes(r.status)) return false;
+  const st = (r.status || '').toLowerCase();
+  if (CLOSED_STATUSES.includes(st)) return false;
   if (r.is_sla_breached) return true;
-  if (r.scheduled_date) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (['scheduled', 'assigned', 'in_progress'].includes(st)) {
+    const endRef = r.scheduled_end_time || r.scheduled_date;
+    if (!endRef) return false;
+    const endDate = new Date(endRef);
+    if (Number.isNaN(endDate.getTime())) return false;
+    endDate.setHours(0, 0, 0, 0);
+    return endDate < today;
+  }
+  if (r.scheduled_date && st === 'new') {
     const d = new Date(r.scheduled_date);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
     d.setHours(0, 0, 0, 0);
-    if (d < today && ['scheduled', 'assigned', 'new'].includes(r.status)) return true;
+    return d < today;
   }
   return false;
 }
+
+function parseTimeMs(v) {
+  if (v == null || v === '') return null;
+  const t = new Date(v).getTime();
+  return Number.isNaN(t) ? null : t;
+}
+
+/**
+ * Latest **service** row first (e.g. May 2 job before May 1), not "any active overdue first".
+ * Uses actual end / scheduled end / start / date, then updated/created.
+ */
+function getRequestServiceSortTimeMs(r) {
+  const st = (r.status || '').toLowerCase();
+  const candidates = [];
+  if (['completed', 'approved', 'closed'].includes(st) && r.actual_end_time) {
+    candidates.push(parseTimeMs(r.actual_end_time));
+  }
+  candidates.push(
+    parseTimeMs(r.scheduled_end_time),
+    parseTimeMs(r.scheduled_start_time),
+    parseTimeMs(r.scheduled_date)
+  );
+  const fromDates = candidates.filter((x) => x != null && x > 0);
+  if (fromDates.length) return Math.max(...fromDates);
+  return parseTimeMs(r.updated_at) ?? parseTimeMs(r.created_at) ?? 0;
+}
+
+function sortRequestsLatestServiceFirst(arr) {
+  return [...arr].sort((a, b) => getRequestServiceSortTimeMs(b) - getRequestServiceSortTimeMs(a));
+}
+
+/** Map + list + history pills: Unscheduled, Scheduled, Overdue, or Completed. */
+function getClientCardHistoryBucket(r) {
+  const st = (r.status || '').toLowerCase();
+  if (['completed', 'approved', 'closed'].includes(st)) {
+    return { bucket: 'completed', label: 'Completed' };
+  }
+  if (st === 'pending') {
+    return { bucket: 'overdue', label: 'Overdue' };
+  }
+  if (st === 'new' && !r.scheduled_date) {
+    return { bucket: 'unscheduled', label: 'Unscheduled' };
+  }
+  if (['scheduled', 'in_progress', 'assigned'].includes(st)) {
+    const endRef = r.scheduled_end_time || r.scheduled_date;
+    if (endRef && isBefore(new Date(endRef), startOfToday())) {
+      return { bucket: 'overdue', label: 'Overdue' };
+    }
+    return { bucket: 'scheduled', label: 'Scheduled' };
+  }
+  if (st === 'new' && r.scheduled_date) {
+    if (isBefore(new Date(r.scheduled_date), startOfToday())) {
+      return { bucket: 'overdue', label: 'Overdue' };
+    }
+    return { bucket: 'scheduled', label: 'Scheduled' };
+  }
+  return { bucket: 'unscheduled', label: 'Unscheduled' };
+}
+
+const CLIENT_CARD_BUCKET_PILL_CLASS = {
+  unscheduled: 'bg-[#FAEEDA] text-[#BA7517]',
+  scheduled: 'bg-[#EEEDFE] text-[#534AB7]',
+  overdue: 'bg-[#FCEBEB] text-[#A32D2D]',
+  completed: 'bg-[#EAF3DE] text-[#3B6D11]',
+};
 
 function formatRequestAppt(r) {
   if (r?.scheduled_start_time) {
@@ -65,9 +154,24 @@ function formatRequestAppt(r) {
   }
 }
 
-/** Wireframe-style map pin bucket from Supabase service_requests for a client. */
-function deriveClientMapContext(sortedRequestsForClient) {
-  const list = sortedRequestsForClient;
+/** Single line: `address, city, state, zipcode` (empty parts omitted). */
+function concatClientAddress(client) {
+  if (!client) return '—';
+  const parts = [
+    String(client.address ?? '').trim(),
+    String(client.city ?? '').trim(),
+    String(client.state ?? '').trim(),
+    client.zipcode != null && String(client.zipcode).trim() !== '' ? String(client.zipcode).trim() : '',
+  ].filter(Boolean);
+  return parts.length ? parts.join(', ') : '—';
+}
+
+/**
+ * Map / clients list / client card: status from the **latest service** request (by service dates),
+ * or **Unscheduled** when the client has no requests / latest row is unscheduled work.
+ */
+function deriveClientMapContext(requestsForClient) {
+  const list = sortRequestsLatestServiceFirst(requestsForClient);
   if (!list.length) {
     return {
       mapStatus: 'unscheduled',
@@ -77,63 +181,29 @@ function deriveClientMapContext(sortedRequestsForClient) {
       primaryRequest: null,
     };
   }
-  const active = list.filter((r) => !CLOSED_STATUSES.includes(r.status));
-  const pickPrimary = (pred) => active.find(pred) || list[0];
-
-  if (active.some((r) => isRequestOverdue(r))) {
-    const r = pickPrimary((x) => isRequestOverdue(x));
-    return {
-      mapStatus: 'overdue',
-      mapStatusLabel: 'Overdue',
-      pinColor: MAP_PIN_COLORS.overdue,
-      nextApptText: formatRequestAppt(r),
-      primaryRequest: r,
-    };
+  const r = list[0];
+  const { bucket, label } = getClientCardHistoryBucket(r);
+  let nextApptText = bucket === 'unscheduled' ? '—' : formatRequestAppt(r);
+  if (bucket === 'completed' && r?.actual_end_time) {
+    try {
+      nextApptText = format(new Date(r.actual_end_time), 'MMM d');
+    } catch {
+      // keep formatRequestAppt
+    }
   }
-  if (active.some((r) => r.status === 'new' && !r.scheduled_date)) {
-    const r = pickPrimary((x) => x.status === 'new' && !x.scheduled_date);
-    return {
-      mapStatus: 'unscheduled',
-      mapStatusLabel: 'Unscheduled',
-      pinColor: MAP_PIN_COLORS.unscheduled,
-      nextApptText: '—',
-      primaryRequest: r,
-    };
-  }
-  if (active.some((r) => r.status === 'in_progress' && isReactiveRequest(r))) {
-    const r = pickPrimary((x) => x.status === 'in_progress' && isReactiveRequest(x));
-    return {
-      mapStatus: 'reactive',
-      mapStatusLabel: 'Reactive / Repair',
-      pinColor: MAP_PIN_COLORS.reactive,
-      nextApptText: formatRequestAppt(r),
-      primaryRequest: r,
-    };
-  }
-  if (active.some((r) => ['scheduled', 'assigned', 'in_progress'].includes(r.status))) {
-    const r = pickPrimary((x) => ['scheduled', 'assigned', 'in_progress'].includes(x.status));
-    return {
-      mapStatus: 'scheduled',
-      mapStatusLabel: 'Scheduled',
-      pinColor: MAP_PIN_COLORS.scheduled,
-      nextApptText: formatRequestAppt(r),
-      primaryRequest: r,
-    };
-  }
-  const lastDone = list.find((r) => r.status === 'completed') || list[0];
+  const pinColor = MAP_PIN_COLORS[bucket] || MAP_PIN_COLORS.unscheduled;
   return {
-    mapStatus: 'completed',
-    mapStatusLabel: 'Completed',
-    pinColor: MAP_PIN_COLORS.completed,
-    nextApptText: lastDone?.actual_end_time
-      ? format(new Date(lastDone.actual_end_time), 'MMM d')
-      : formatRequestAppt(lastDone),
-    primaryRequest: lastDone,
+    mapStatus: bucket,
+    mapStatusLabel: label,
+    pinColor,
+    nextApptText,
+    primaryRequest: r,
   };
 }
 
 export default function AdminDashboard() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [showServiceRequestDialog, setShowServiceRequestDialog] = useState(false);
   const [clientForServiceRequest, setClientForServiceRequest] = useState(null);
   const [mapFullScreen, setMapFullScreen] = useState(false);
@@ -142,6 +212,13 @@ export default function AdminDashboard() {
   const [lassoSelectedIds, setLassoSelectedIds] = useState([]);
   const [mapDetailOpen, setMapDetailOpen] = useState(false);
   const [flyToTarget, setFlyToTarget] = useState(null);
+  /** Bumped on "Clients in view" row click so the map opens that marker's Leaflet popup. */
+  const [listSelectionPopupNonce, setListSelectionPopupNonce] = useState(0);
+  const [clientListSearch, setClientListSearch] = useState('');
+  /** `all` | `unscheduled` | `scheduled` | `overdue` | `completed` — matches map pin buckets */
+  const [clientListStatusFilter, setClientListStatusFilter] = useState('all');
+  const [historyEditRequest, setHistoryEditRequest] = useState(null);
+  const [historyCancelRequest, setHistoryCancelRequest] = useState(null);
 
   const { data: requests = [], isLoading: requestsLoading } = useQuery({
     queryKey: ['serviceRequests'],
@@ -166,6 +243,40 @@ export default function AdminDashboard() {
     },
   });
 
+  const updateRequestMutation = useMutation({
+    mutationFn: ({ id, data }) => serviceRequestService.update(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['serviceRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['technicianJobs'] });
+      toast.success('Request updated successfully');
+      setHistoryEditRequest(null);
+    },
+    onError: (err) => {
+      toast.error(err?.message || 'Failed to update request');
+    },
+  });
+
+  const cancelHistoryMutation = useMutation({
+    mutationFn: async ({ request }) => {
+      let data = { is_cancelled: 'T' };
+      data = mergeServiceRequestUpdateAudit(request, data, user?.id ?? null, {
+        alwaysSetModified: true,
+      });
+      return serviceRequestService.update(request.id, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['serviceRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['technicianJobs'] });
+      toast.success('Request cancelled');
+      setHistoryCancelRequest(null);
+    },
+    onError: (err) => {
+      toast.error(err?.message || 'Failed to cancel request');
+    },
+  });
+
+  const historyActionsBusy = updateRequestMutation.isPending || cancelHistoryMutation.isPending;
+
   const handleCreateServiceRequestFromMap = (job) => {
     const client = clients.find((c) => c.id === job.id);
     if (client) {
@@ -182,11 +293,9 @@ export default function AdminDashboard() {
       m.get(r.client_id).push(r);
     }
     for (const arr of m.values()) {
-      arr.sort((a, b) => {
-        const tb = new Date(b.updated_at || b.created_at).getTime();
-        const ta = new Date(a.updated_at || a.created_at).getTime();
-        return tb - ta;
-      });
+      const sorted = sortRequestsLatestServiceFirst(arr);
+      arr.length = 0;
+      arr.push(...sorted);
     }
     return m;
   }, [requests]);
@@ -224,10 +333,32 @@ export default function AdminDashboard() {
   );
 
   const filteredMapClients = useMemo(() => {
-    if (!lassoSelectedIds.length) return mapJobs;
-    const selectedSet = new Set(lassoSelectedIds.map(String));
-    return mapJobs.filter((job) => selectedSet.has(String(job.id)));
-  }, [mapJobs, lassoSelectedIds]);
+    let list = !lassoSelectedIds.length
+      ? mapJobs
+      : mapJobs.filter((job) => new Set(lassoSelectedIds.map(String)).has(String(job.id)));
+
+    if (clientListStatusFilter !== 'all') {
+      list = list.filter((job) => {
+        if (clientListStatusFilter === 'completed') return job.mapStatus === 'completed';
+        if (clientListStatusFilter === 'overdue') return job.mapStatus === 'overdue';
+        if (clientListStatusFilter === 'unscheduled') return job.mapStatus === 'unscheduled';
+        if (clientListStatusFilter === 'scheduled') {
+          return job.mapStatus === 'scheduled';
+        }
+        return true;
+      });
+    }
+
+    const q = clientListSearch.trim().toLowerCase();
+    if (q) {
+      list = list.filter((job) => {
+        const name = (job.client_name || '').toLowerCase();
+        const farm = (job.farm_name || '').toLowerCase();
+        return name.includes(q) || farm.includes(q);
+      });
+    }
+    return list;
+  }, [mapJobs, lassoSelectedIds, clientListStatusFilter, clientListSearch]);
 
   const mapMetrics = useMemo(() => {
     const year = new Date().getFullYear();
@@ -250,12 +381,8 @@ export default function AdminDashboard() {
       .filter((c) => !clientIdsWithScheduledOrCompleted.has(String(c.id))).length;
 
     const overdue = requests.filter((r) => {
-      if (r.status !== 'scheduled') return false;
-      if (!r.scheduled_end_time) return false;
-      const endDate = new Date(r.scheduled_end_time);
-      if (Number.isNaN(endDate.getTime())) return false;
-      endDate.setHours(0, 0, 0, 0);
-      return endDate < today;
+      if (!['scheduled', 'assigned', 'in_progress'].includes(r.status)) return false;
+      return isRequestOverdue(r);
     }).length;
     return { completed, scheduled, unscheduled, overdue, year };
   }, [requests, clients]);
@@ -271,7 +398,7 @@ export default function AdminDashboard() {
   const selectedClientRequests = useMemo(() => {
     if (!selectedMapJobId) return [];
     const list = requestsByClientId.get(selectedMapJobId) || [];
-    return [...list].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    return sortRequestsLatestServiceFirst(list);
   }, [selectedMapJobId, requestsByClientId]);
   const selectedClientNotesHistory = useMemo(() => {
     const raw = selectedClientEntity?.notes_history;
@@ -351,18 +478,9 @@ export default function AdminDashboard() {
                     Satellite
                   </button>
                 </div>
-                <div className="rounded-md bg-[#f5f5f3] px-2.5 py-1 text-[11px] text-[#888780]">
+                {/* <div className="rounded-md bg-[#f5f5f3] px-2.5 py-1 text-[11px] text-[#888780]">
                   Spring Startup — Season Active
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
-                  onClick={() => setMapFullScreen(true)}
-                  aria-label="Expand map"
-                >
-                  <Expand className="h-4 w-4" />
-                </Button>
+                </div> */}
               </div>
             </div>
 
@@ -420,6 +538,19 @@ export default function AdminDashboard() {
                   }}
                   onCreateServiceRequest={handleCreateServiceRequestFromMap}
                   flyToTarget={flyToTarget}
+                  listSelectionPopupNonce={listSelectionPopupNonce}
+                  toolbarEnd={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0 border border-black/10 bg-white text-muted-foreground shadow-sm hover:bg-gray-50 hover:text-foreground"
+                      onClick={() => setMapFullScreen(true)}
+                      aria-label="Expand map"
+                    >
+                      <Expand className="h-4 w-4" />
+                    </Button>
+                  }
                 />
                 <div className="pointer-events-none absolute bottom-3 left-3 z-20 max-w-[200px] select-none rounded-md border border-black/10 bg-white p-2.5 shadow-sm">
                   <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-[#888780]">
@@ -430,7 +561,6 @@ export default function AdminDashboard() {
                     { key: 'scheduled', label: 'Scheduled', dot: 'bg-[#534AB7]' },
                     { key: 'overdue', label: 'Overdue', dot: 'bg-[#E24B4A]' },
                     { key: 'completed', label: 'Completed', dot: 'bg-[#1D9E75]' },
-                    { key: 'reactive', label: 'Reactive / As-needed', dot: 'bg-[#378ADD]' },
                   ].map((row) => (
                     <div key={row.key} className="mb-1 flex items-center gap-2 text-[11px] text-gray-600 last:mb-0">
                       <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', row.dot)} />
@@ -441,15 +571,42 @@ export default function AdminDashboard() {
               </div>
 
               <div className="flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden border-t border-black/10 bg-white lg:col-span-1 lg:border-l lg:border-t-0">
-                <div className="flex shrink-0 items-center justify-between border-b border-black/10 px-3.5 py-3">
-                  <span className="text-[13px] font-medium text-gray-900">Clients in view</span>
-                  <span className="text-[11px] text-[#888780]">{filteredMapClients.length} shown</span>
+                <div className="shrink-0 space-y-2 border-b border-black/10 px-3.5 py-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[13px] font-medium text-gray-900">Clients in view</span>
+                    <span className="shrink-0 text-[11px] text-[#888780]">{filteredMapClients.length} shown</span>
+                  </div>
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      type="search"
+                      placeholder="Search client or farm…"
+                      value={clientListSearch}
+                      onChange={(e) => setClientListSearch(e.target.value)}
+                      className="h-9 border-black/10 pl-8 text-xs"
+                      aria-label="Search clients in list"
+                    />
+                  </div>
+                  <Select value={clientListStatusFilter} onValueChange={setClientListStatusFilter}>
+                    <SelectTrigger className="h-9 border-black/10 text-xs" aria-label="Filter by job status">
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All statuses</SelectItem>
+                      <SelectItem value="unscheduled">Unscheduled</SelectItem>
+                      <SelectItem value="scheduled">Scheduled</SelectItem>
+                      <SelectItem value="overdue">Overdue</SelectItem>
+                      <SelectItem value="completed">Completed</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain max-h-[min(50dvh,22rem)] lg:max-h-full">
                   {filteredMapClients.length === 0 ? (
                     <div className="px-3.5 py-8 text-center text-xs text-muted-foreground">
                       {lassoSelectedIds.length ?
                       'No clients found in lasso selection.' :
+                      clientListSearch.trim() || clientListStatusFilter !== 'all' ?
+                      'No clients match your search or status filter.' :
                       'No clients with map coordinates available.'}
                     </div>
                   ) : (
@@ -461,6 +618,7 @@ export default function AdminDashboard() {
                           setSelectedMapJobId(job.id);
                           setFlyToTarget({ lat: job.location.lat, lng: job.location.lng });
                           window.setTimeout(() => setFlyToTarget(null), 2000);
+                          setListSelectionPopupNonce((n) => n + 1);
                         }}
                         className={cn(
                           'flex w-full cursor-pointer gap-2.5 border-b border-black/10 px-3.5 py-2.5 text-left transition-colors hover:bg-[#f5f5f3]',
@@ -481,7 +639,9 @@ export default function AdminDashboard() {
                                 statusPillClass[job.mapStatus] || statusPillClass.unscheduled
                               )}
                             >
-                              {job.mapStatus === 'scheduled' && job.nextApptText && job.nextApptText !== '—'
+                              {['scheduled', 'overdue'].includes(job.mapStatus) &&
+                              job.nextApptText &&
+                              job.nextApptText !== '—'
                                 ? `${job.mapStatusLabel} — ${job.nextApptText}`
                                 : job.mapStatusLabel}
                             </span>
@@ -507,8 +667,8 @@ export default function AdminDashboard() {
             <>
               <SheetHeader>
                 <SheetTitle className="pr-8 text-left">Client card</SheetTitle>
-                <SheetDescription className="text-left">
-                  {selectedMapJob.location?.address || 'Address on file'}
+                <SheetDescription className="text-left break-words text-muted-foreground">
+                  {concatClientAddress(selectedClientEntity)}
                 </SheetDescription>
               </SheetHeader>
               <div className="mt-6 space-y-5">
@@ -540,9 +700,9 @@ export default function AdminDashboard() {
                       <span>{selectedClientEntity.phone || '—'}</span>
                     </div>
                     <div className="flex justify-between gap-2">
-                      <span className="text-muted-foreground">Address</span>
-                      <span className="max-w-[70%] text-right">
-                        {selectedMapJob.location?.address || selectedClientEntity.address || '—'}
+                      <span className="shrink-0 text-muted-foreground">Address</span>
+                      <span className="max-w-[70%] text-right break-words">
+                        {concatClientAddress(selectedClientEntity)}
                       </span>
                     </div>
                     <div className="flex justify-between gap-2">
@@ -561,7 +721,7 @@ export default function AdminDashboard() {
                   </p>
                   <div className="space-y-1.5 text-xs">
                     <div className="flex justify-between gap-2">
-                      <span className="text-muted-foreground">Map status</span>
+                      <span className="text-muted-foreground">Last service request</span>
                       <span
                         className={cn(
                           'rounded-[10px] px-2 py-0.5 text-[10px] font-medium',
@@ -584,29 +744,87 @@ export default function AdminDashboard() {
                     Service history
                   </p>
                   <div className="space-y-2">
-                    {selectedClientRequests.slice(0, 5).map((r) => (
-                      <Link
-                        key={r.id}
-                        to={createPageUrl('ServiceRequests') + `?id=${r.id}`}
-                        className="block rounded-md border border-border bg-muted/40 px-2 py-2 text-[11px] transition-colors hover:bg-muted/60"
-                      >
-                        <div className="flex items-center gap-1.5 font-medium text-foreground">
-                          <span>#{r.request_number}</span>
-                          <span
-                            className={cn(
-                              'inline-block rounded-[10px] px-2 py-0.5 text-[10px] font-medium',
-                              requestStatusPillClass[r.status] || requestStatusPillClass.new
-                            )}
-                          >
-                            {(r.status || 'new').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
-                          </span>
+                    {selectedClientRequests.slice(0, 5).map((r) => {
+                      const hist = getClientCardHistoryBucket(r);
+                      const showActions = canEditOrCancelHistoryRequest(r);
+                      return (
+                        <div
+                          key={r.id}
+                          className="rounded-md border border-border bg-muted/40 px-2 py-2 text-[11px]"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <Link
+                              to={createPageUrl('ServiceRequests') + `?id=${r.id}`}
+                              className="min-w-0 flex-1 text-left transition-colors hover:opacity-90"
+                            >
+                              <div className="flex flex-wrap items-center gap-1.5 font-medium text-foreground">
+                                <span>#{r.request_number || r.id}</span>
+                                <span
+                                  className={cn(
+                                    'inline-block rounded-[10px] px-2 py-0.5 text-[10px] font-medium',
+                                    CLIENT_CARD_BUCKET_PILL_CLASS[hist.bucket] ||
+                                    CLIENT_CARD_BUCKET_PILL_CLASS.unscheduled
+                                  )}
+                                >
+                                  {hist.label}
+                                </span>
+                              </div>
+                              <div className="mt-0.5 text-[10px] text-muted-foreground">
+                                {r.issue_category?.replace(/_/g, ' ') || 'Request'}
+                                {r.created_at &&
+                                  ` · ${format(new Date(r.created_at), 'MMM d, yyyy')}`}
+                              </div>
+                            </Link>
+                            {showActions ? (
+                              <div className="flex shrink-0 items-center gap-1">
+                                <Tooltip.Root>
+                                  <Tooltip.Trigger asChild>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="icon"
+                                      className="h-7 w-7 border-primary/30 text-primary hover:bg-primary/10 hover:text-primary"
+                                      disabled={historyActionsBusy}
+                                      aria-label="Edit request"
+                                      onClick={() => setHistoryEditRequest(r)}
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </Tooltip.Trigger>
+                                  <Tooltip.Portal>
+                                    <Tooltip.Content side="top" sideOffset={4}>
+                                      Edit request
+                                      <Tooltip.Arrow className="fill-popover" />
+                                    </Tooltip.Content>
+                                  </Tooltip.Portal>
+                                </Tooltip.Root>
+                                <Tooltip.Root>
+                                  <Tooltip.Trigger asChild>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="icon"
+                                      className="h-7 w-7 border-muted-foreground/30 text-muted-foreground hover:border-red-500/50 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-500"
+                                      disabled={historyActionsBusy}
+                                      aria-label="Cancel request"
+                                      onClick={() => setHistoryCancelRequest(r)}
+                                    >
+                                      <X className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </Tooltip.Trigger>
+                                  <Tooltip.Portal>
+                                    <Tooltip.Content side="top" sideOffset={4}>
+                                      Cancel request
+                                      <Tooltip.Arrow className="fill-popover" />
+                                    </Tooltip.Content>
+                                  </Tooltip.Portal>
+                                </Tooltip.Root>
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
-                        <div className="mt-0.5 text-[10px] text-muted-foreground">
-                          {r.issue_category?.replace(/_/g, ' ') || 'Request'}
-                          {r.created_at && ` · ${format(new Date(r.created_at), 'MMM d, yyyy')}`}
-                        </div>
-                      </Link>
-                    ))}
+                      );
+                    })}
                     {selectedClientRequests.length === 0 && (
                       <p className="text-xs text-muted-foreground">No service requests for this client yet.</p>
                     )}
@@ -720,6 +938,7 @@ export default function AdminDashboard() {
                   setMapFullScreen(false);
                   handleCreateServiceRequestFromMap(job);
                 }}
+                listSelectionPopupNonce={listSelectionPopupNonce}
               />
             </div>
           </div>
@@ -751,6 +970,67 @@ export default function AdminDashboard() {
           />
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={!!historyEditRequest}
+        onOpenChange={(open) => {
+          if (!open) setHistoryEditRequest(null);
+        }}
+      >
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Service Request</DialogTitle>
+            <DialogDescription>
+              {historyEditRequest
+                ? `Update request #${historyEditRequest.request_number || historyEditRequest.id}`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          {historyEditRequest ? (
+            <ServiceRequestForm
+              request={historyEditRequest}
+              initialClientId={historyEditRequest.client_id}
+              onSubmit={async (data) => {
+                await updateRequestMutation.mutateAsync({ id: historyEditRequest.id, data });
+              }}
+              onCancel={() => setHistoryEditRequest(null)}
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        open={!!historyCancelRequest}
+        onOpenChange={(open) => {
+          if (!open) setHistoryCancelRequest(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel this request?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {historyCancelRequest
+                ? `Request #${historyCancelRequest.request_number || historyCancelRequest.id} will be marked cancelled.`
+                : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={cancelHistoryMutation.isPending}>Keep request</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={cancelHistoryMutation.isPending}
+              onClick={() => {
+                if (historyCancelRequest) {
+                  cancelHistoryMutation.mutate({ request: historyCancelRequest });
+                }
+              }}
+            >
+              {cancelHistoryMutation.isPending ? 'Cancelling…' : 'Cancel request'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>);
 
 }

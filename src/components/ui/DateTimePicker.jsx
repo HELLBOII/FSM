@@ -14,11 +14,14 @@ import {
 } from "@/components/ui/popover"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 
-export function DateTimePicker({ 
-  date, 
+export function DateTimePicker({
+  date,
   onDateChange,
   className,
-  placeholder = "MM/DD/YYYY hh:mm aa"
+  placeholder = "MM/DD/YYYY hh:mm aa",
+  /** date-fns format string for the trigger label */
+  displayFormat = "MM/dd/yyyy hh:mm aa",
+  disabled = false,
 }) {
   const [isOpen, setIsOpen] = React.useState(false)
   const [internalDate, setInternalDate] = React.useState(date)
@@ -26,6 +29,10 @@ export function DateTimePicker({
   React.useEffect(() => {
     setInternalDate(date)
   }, [date])
+
+  React.useEffect(() => {
+    if (disabled) setIsOpen(false)
+  }, [disabled])
 
   const hours = Array.from({ length: 12 }, (_, i) => i + 1)
 
@@ -72,20 +79,28 @@ export function DateTimePicker({
   }
 
   return (
-    <Popover open={isOpen} onOpenChange={setIsOpen} modal={false}>
+    <Popover
+      open={disabled ? false : isOpen}
+      onOpenChange={(open) => {
+        if (disabled) return
+        setIsOpen(open)
+      }}
+      modal={false}
+    >
       <PopoverTrigger asChild>
         <Button
           type="button"
           variant="outline"
+          disabled={disabled}
           className={cn(
-            "w-full justify-start text-left font-normal h-9 text-sm",
+            "w-full justify-start text-left font-normal h-10 min-h-10 text-sm sm:text-base",
             !internalDate && "text-muted-foreground",
             className
           )}
         >
-          <CalendarIcon className="mr-2 h-4 w-4" />
+          <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
           {internalDate ? (
-            format(internalDate, "dd/MM/yyyy hh:mm aa")
+            format(internalDate, displayFormat)
           ) : (
             <span>{placeholder}</span>
           )}

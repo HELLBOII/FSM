@@ -37,6 +37,31 @@ export const clientService = {
   },
 
   /**
+   * Minimal client rows for Service Requests dashboard: unscheduled metric (coords) and
+   * assign/reschedule email notifications. Avoids loading full `select('*')` (~100kB+).
+   * @returns {Promise<Array<{ id: string, email: string | null, location: object | null }>>}
+   */
+  async listMinimalForServiceRequestsPage() {
+    const { data, error } = await supabase
+      .from('clients')
+      .select('id, email, location')
+      .order('name', { ascending: true })
+      .order('farm_name', { ascending: true });
+
+    if (error) {
+      if (error.message?.includes('schema cache') || error.message?.includes('relation') || error.message?.includes('does not exist')) {
+        const enhancedError = new Error(
+          'Database table not found. Please run the migration script (supabase_migration.sql) in your Supabase SQL Editor to create the required tables.'
+        );
+        enhancedError.originalError = error;
+        throw enhancedError;
+      }
+      throw error;
+    }
+    return data || [];
+  },
+
+  /**
    * Paginated list with optional search and status filter (server-side).
    * @param {Object} opts
    * @param {number} [opts.page=1] — 1-based page index
@@ -201,6 +226,31 @@ export const clientService = {
     const client = await this.getById(clientId);
     const current = normalizeNotesHistory(client.notes_history);
     const next = [newNoteEntry(t), ...current];
+    return this.update(clientId, { notes_history: next });
+  },
+
+  /**
+   * Update the newest notes_history entry only (index 0 after normalize; newest first).
+   */
+  async updateNewestNotesHistoryEntry(clientId, text) {
+    const t = String(text ?? '').trim();
+    if (!t) throw new Error('Note text is required');
+    const client = await this.getById(clientId);
+    const current = normalizeNotesHistory(client.notes_history);
+    if (current.length === 0) throw new Error('No notes in history');
+    const head = { ...current[0], text: t };
+    const next = [head, ...current.slice(1)];
+    return this.update(clientId, { notes_history: next });
+  },
+
+  /**
+   * Remove the newest notes_history entry only.
+   */
+  async deleteNewestNotesHistoryEntry(clientId) {
+    const client = await this.getById(clientId);
+    const current = normalizeNotesHistory(client.notes_history);
+    if (current.length === 0) throw new Error('No notes to delete');
+    const next = current.slice(1);
     return this.update(clientId, { notes_history: next });
   }
 };

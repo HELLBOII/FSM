@@ -106,6 +106,8 @@ function FlyTo({ lat, lng, zoom = 14 }) {
  * @param {(job: object) => void} [onCreateServiceRequest]
  * @param {{lat:number,lng:number}|null} [flyToTarget] — pan map when list selection changes
  * @param {'default'|'embedded'} [variant] — embedded drops outer chrome for layout inside wireframe shell
+ * @param {React.ReactNode} [toolbarEnd] — e.g. expand map; rendered after lasso / clear controls
+ * @param {number} [listSelectionPopupNonce] — increment when list row selects a client to open that marker's popup
  */
 export default function DashboardMap({
   jobs = [],
@@ -121,8 +123,11 @@ export default function DashboardMap({
   onLassoSelectionChange,
   flyToTarget = null,
   variant = 'default',
+  toolbarEnd = null,
+  listSelectionPopupNonce = 0,
 }) {
   const mapRef = useRef(null);
+  const markerLeafletRefs = useRef({});
   const lassoPointsRef = useRef([]);
   const isDrawingRef = useRef(false);
   const [lassoMode, setLassoMode] = useState(false);
@@ -237,6 +242,28 @@ export default function DashboardMap({
     };
   }, []);
 
+  /** Open the same Leaflet popup as hover when a client is chosen from the sidebar list. */
+  useEffect(() => {
+    if (!listSelectionPopupNonce || selectedJobId == null) return;
+    const id = String(selectedJobId);
+    const tryOpen = () => {
+      const m = markerLeafletRefs.current[id];
+      if (m && typeof m.openPopup === 'function') {
+        try {
+          m.openPopup();
+        } catch {
+          // ignore
+        }
+      }
+    };
+    const t0 = window.setTimeout(tryOpen, 0);
+    const t1 = window.setTimeout(tryOpen, 700);
+    return () => {
+      window.clearTimeout(t0);
+      window.clearTimeout(t1);
+    };
+  }, [listSelectionPopupNonce, selectedJobId]);
+
   return (
     <div
       className={cn(
@@ -269,6 +296,14 @@ export default function DashboardMap({
           job.location?.lat != null && job.location?.lng != null ? (
             <Marker
               key={`${job.id}-${String(selectedJobId) === String(job.id) ? 's' : 'n'}`}
+              ref={(instance) => {
+                const key = String(job.id);
+                if (instance == null) {
+                  delete markerLeafletRefs.current[key];
+                } else {
+                  markerLeafletRefs.current[key] = instance;
+                }
+              }}
               position={[job.location.lat, job.location.lng]}
               icon={pinFor(job)}
               eventHandlers={{
@@ -323,28 +358,31 @@ export default function DashboardMap({
 
       {/* Wireframe-style overlay; map interactions remain on the tiles */}
       <div className="pointer-events-none absolute inset-0 z-20">
-        <button
-          type="button"
-          onClick={toggleLassoMode}
-          className={cn(
-            'pointer-events-auto absolute top-3 right-3 flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] shadow-sm transition-colors',
-            lassoMode ?
-            'border-emerald-300 bg-emerald-50 text-emerald-800' :
-            'border-black/10 bg-white text-gray-600 hover:bg-gray-50'
-          )}
-        >
-          <Circle className="h-3 w-3 shrink-0" strokeWidth={2} />
-          {lassoMode ? 'Exit lasso' : 'Lasso filter'}
-        </button>
-        {lassoSelectedIds.length > 0 &&
-        <button
-          type="button"
-          onClick={clearLasso}
-          className="pointer-events-auto absolute top-3 right-28 rounded-md border border-black/10 bg-white px-2.5 py-1.5 text-[11px] text-gray-600 shadow-sm hover:bg-gray-50"
-        >
-            Clear ({lassoSelectedIds.length})
+        <div className="pointer-events-auto absolute top-3 right-3 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleLassoMode}
+            className={cn(
+              'flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] shadow-sm transition-colors',
+              lassoMode ?
+              'border-emerald-300 bg-emerald-50 text-emerald-800' :
+              'border-black/10 bg-white text-gray-600 hover:bg-gray-50'
+            )}
+          >
+            <Circle className="h-3 w-3 shrink-0" strokeWidth={2} />
+            {lassoMode ? 'Exit lasso' : 'Lasso filter'}
           </button>
-        }
+          {lassoSelectedIds.length > 0 ? (
+            <button
+              type="button"
+              onClick={clearLasso}
+              className="rounded-md border border-black/10 bg-white px-2.5 py-1.5 text-[11px] text-gray-600 shadow-sm hover:bg-gray-50"
+            >
+              Clear ({lassoSelectedIds.length})
+            </button>
+          ) : null}
+          {toolbarEnd}
+        </div>
       </div>
 
       {lassoMode &&

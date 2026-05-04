@@ -12,10 +12,7 @@ import {
   Leaf,
   ChevronRight,
   ChevronLeft,
-  Edit,
-  MoreVertical,
   Droplets,
-  History,
   StickyNote } from
 'lucide-react';
 import { Button } from "@/components/ui/button";
@@ -38,12 +35,6 @@ import {
   DialogHeader,
   DialogTitle } from
 "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger } from
-"@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { DateTimePicker } from "@/components/ui/DateTimePicker";
@@ -83,7 +74,7 @@ function ClientCardSkeleton() {
   return (
     <Card className="h-full min-h-0 border bg-card shadow-sm">
       <CardContent className="p-5 flex flex-col gap-4">
-        <div className="flex items-start justify-between gap-2">
+        <div className="flex items-start gap-2">
           <div className="flex items-center gap-3 flex-1 min-w-0">
             <div className="h-12 w-12 rounded-full bg-muted animate-pulse shrink-0" />
             <div className="flex-1 space-y-2 min-w-0">
@@ -91,7 +82,6 @@ function ClientCardSkeleton() {
               <div className="h-3 w-1/2 max-w-[8rem] rounded bg-muted animate-pulse" />
             </div>
           </div>
-          <div className="h-8 w-8 rounded-md bg-muted animate-pulse shrink-0" />
         </div>
         <div className="space-y-2">
           <div className="h-3 w-full rounded bg-muted animate-pulse" />
@@ -292,6 +282,8 @@ export default function Clients() {
     } else {
       setInactiveDateTime(null);
     }
+    const notesHistory = normalizeNotesHistory(client.notes_history);
+    const latestNoteText = notesHistory[0]?.text?.trim() || '';
     setFormData({
       name: client.name || '',
       phone: client.phone || '',
@@ -306,7 +298,7 @@ export default function Clients() {
       country: client.country || '',
       total_acreage: client.total_acreage?.toString() || '',
       irrigation_systems: client.irrigation_systems || [],
-      notes: client.notes || '',
+      notes: latestNoteText || client.notes || '',
       status: client.status || 'active'
     });
     setShowForm(true);
@@ -427,9 +419,22 @@ export default function Clients() {
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.95 }}>
 
-                <Card data-source-location="pages/Clients:224:16" data-dynamic-content="true" className="hover:shadow-lg transition-all cursor-pointer group h-full flex flex-col min-h-0">
+                <Card
+                  data-source-location="pages/Clients:224:16"
+                  data-dynamic-content="true"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleEdit(client)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleEdit(client);
+                    }
+                  }}
+                  className="h-full flex flex-col min-h-0 cursor-pointer transition-all hover:shadow-lg hover:shadow-[0_12px_40px_-12px_hsl(var(--primary)_/_0.35)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                >
                   <CardContent data-source-location="pages/Clients:225:18" data-dynamic-content="true" className="p-5 flex flex-col flex-1 h-full min-h-0">
-                    <div data-source-location="pages/Clients:226:20" data-dynamic-content="true" className="flex items-start justify-between mb-4 shrink-0">
+                    <div data-source-location="pages/Clients:226:20" data-dynamic-content="true" className="flex items-start mb-4 shrink-0">
                       <div data-source-location="pages/Clients:227:22" data-dynamic-content="true" className="flex items-center gap-3">
                         <Avatar data-source-location="pages/Clients:228:24" data-dynamic-content="true" className="h-12 w-12">
                           <AvatarFallback data-source-location="pages/Clients:229:26" data-dynamic-content="true" className="bg-gradient-to-br from-green-100 to-emerald-100 text-green-700 text-lg">
@@ -450,36 +455,6 @@ export default function Clients() {
                           </div>
                         </div>
                       </div>
-                      <DropdownMenu data-source-location="pages/Clients:241:22" data-dynamic-content="true">
-                        <DropdownMenuTrigger data-source-location="pages/Clients:242:24" data-dynamic-content="false" asChild>
-                          <Button data-source-location="pages/Clients:243:26" data-dynamic-content="false" variant="ghost" size="icon" className="opacity-0 group-hover:opacity-100">
-                            <MoreVertical data-source-location="pages/Clients:244:28" data-dynamic-content="false" className="w-4 h-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent data-source-location="pages/Clients:247:24" data-dynamic-content="true" align="end">
-                          <DropdownMenuItem data-source-location="pages/Clients:248:26" data-dynamic-content="false" onClick={() => handleEdit(client)}>
-                            <Edit data-source-location="pages/Clients:249:28" data-dynamic-content="false" className="w-4 h-4 mr-2" />
-                            Edit
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="flex items-center justify-between gap-2"
-                            onClick={() => {
-                              setNotesHistoryTarget({ id: client.id, name: client.name });
-                              setNotesHistoryOpen(true);
-                            }}
-                          >
-                            <span className="flex items-center">
-                              <History className="w-4 h-4 mr-2 shrink-0" />
-                              Notes history
-                            </span>
-                            {normalizeNotesHistory(client.notes_history).length > 0 && (
-                              <span className="text-xs text-muted-foreground tabular-nums">
-                                {normalizeNotesHistory(client.notes_history).length}
-                              </span>
-                            )}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
                     </div>
 
                     <div data-source-location="pages/Clients:256:20" data-dynamic-content="true" className="space-y-2 mb-4 flex-1 min-h-0 flex flex-col justify-start">
@@ -492,7 +467,7 @@ export default function Clients() {
                       {/* {client.address && */}
                   <div data-source-location="pages/Clients:264:24" data-dynamic-content="true" className="flex items-center gap-2 text-sm text-gray-600">
                           <MapPin data-source-location="pages/Clients:265:26" data-dynamic-content="false" className="w-4 h-4 text-gray-400" />
-                          <span data-source-location="pages/Clients:266:26" data-dynamic-content="true" className="truncate">{client.address ? client.address : 'N/A'}</span>
+                          <span data-source-location="pages/Clients:266:26" data-dynamic-content="true" className="truncate">{client.address ? client.address + ',' + client.city + ',' + client.state + ',' + client.zipcode : 'N/A'}</span>
                         </div>
                   {/* } */}
                     </div>
@@ -843,7 +818,7 @@ export default function Clients() {
                 <div data-source-location="pages/Clients:422:12" data-dynamic-content="true">
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <Label data-source-location="pages/Clients:423:14" data-dynamic-content="false" className="mb-0">
-                      Notes
+                      Recent Notes
                     </Label>
                     {selectedClient && (
                       <Button
@@ -857,7 +832,7 @@ export default function Clients() {
                         }}
                       >
                         <StickyNote className="w-3.5 h-3.5 mr-1.5" />
-                        History
+                        Add
                         {normalizeNotesHistory(selectedClient.notes_history).length > 0 && (
                           <Badge variant="secondary" className="ml-1.5 px-1.5 py-0 text-[10px]">
                             {normalizeNotesHistory(selectedClient.notes_history).length}
@@ -869,12 +844,9 @@ export default function Clients() {
                   <Textarea data-source-location="pages/Clients:424:14" data-dynamic-content="false"
                   value={formData.notes}
                   onChange={(e) => setFormData((prev) => ({ ...prev, notes: e.target.value }))}
-                  placeholder="General notes (separate from dated history below)..."
+                  placeholder="Most recent note for this client..."
                   rows={5}
                   className="min-h-[120px] resize-y" />
-                  <p className="text-xs text-muted-foreground mt-1.5">
-                    Use <span className="font-medium">History</span> to add timestamped entries that stay in the client log.
-                  </p>
                 </div>
               </div>
             </div>
@@ -905,7 +877,14 @@ export default function Clients() {
         clientName={notesHistoryTarget?.name}
         allowAdd
         onClientUpdated={(updated) => {
-          if (selectedClient?.id === updated?.id) setSelectedClient(updated);
+          if (selectedClient?.id !== updated?.id) return;
+          setSelectedClient(updated);
+          const hist = normalizeNotesHistory(updated.notes_history);
+          const latest = hist[0]?.text?.trim() || '';
+          setFormData((prev) => ({
+            ...prev,
+            notes: latest || (updated.notes ?? prev.notes) || ''
+          }));
         }}
       />
 

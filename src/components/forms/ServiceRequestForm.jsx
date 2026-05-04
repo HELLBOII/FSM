@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -44,31 +44,41 @@ const HARDCODED_IRRIGATION_SYSTEMS = [
 
 /** Stored in DB; UI labels per product (Repair & Service maps to `leak_repair` for CHECK constraint). */
 const issueCategories = [
-  { value: 'maintenance', label: 'Scheduled Maintenance' },
-  { value: 'leak_repair', label: 'Repair & Service' },
-  { value: 'other', label: 'Other' },
+  { value: 'Scheduled Maintenance', label: 'Scheduled Maintenance' },
+  { value: 'Repair & Service', label: 'Repair & Service' },
+  { value: 'Other', label: 'Other' },
 ];
 
-const LEGACY_ISSUE_TO_FORM = (ic) => {
-  if (!ic) return 'other';
-  if (ic === 'maintenance') return 'maintenance';
-  if (ic === 'other') return 'other';
+const FORM_ISSUE_CATEGORY_VALUES = new Set(issueCategories.map((c) => c.value));
+
+/**
+ * Map stored `issue_category` (CHECK constraint / legacy snake_case) to form Select values.
+ * Used when hydrating the form from API rows (e.g. read-only view from completed/cancelled lists).
+ */
+function LEGACY_ISSUE_TO_FORM(raw) {
+  if (raw == null || String(raw).trim() === '') return '';
+  const s = String(raw).trim();
+  if (FORM_ISSUE_CATEGORY_VALUES.has(s)) return s;
+
+  const lower = s.toLowerCase().replace(/\s+/g, ' ');
   if (
-    [
-      'leak_repair',
-      'pump_issue',
-      'pipe_repair',
-      'valve_replacement',
-      'filter_cleaning',
-      'controller_issue',
-      'water_pressure',
-      'system_installation',
-    ].includes(ic)
+    ['leak_repair', 'pump_issue', 'pipe_repair', 'valve_replacement'].includes(lower) ||
+    lower === 'repair & service' ||
+    lower === 'repair and service'
   ) {
-    return 'leak_repair';
+    return 'Repair & Service';
   }
-  return 'other';
-};
+  if (lower === 'scheduled_maintenance' || lower === 'scheduled maintenance') {
+    return 'Scheduled Maintenance';
+  }
+  if (lower === 'other') return 'Other';
+
+  const asWords = lower.replace(/_/g, ' ');
+  const match = issueCategories.find(
+    (c) => c.label.toLowerCase() === asWords || c.value.toLowerCase() === asWords
+  );
+  return match ? match.value : '';
+}
 
 /** API may return 'T'/'F', boolean, or missing */
 function normalizeIsCancelled(value) {
@@ -188,7 +198,16 @@ function deriveClientMapContext(sortedRequestsForClient) {
   };
 }
 
-export default function ServiceRequestForm({ request, onSubmit, onCancel, initialClientId, initialStartTime, initialEndTime }) {
+export default function ServiceRequestForm({
+  request,
+  onSubmit,
+  onCancel,
+  initialClientId,
+  initialStartTime,
+  initialEndTime,
+  readOnly = false,
+}) {
+  const isReadOnly = readOnly === true;
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const [formData, setFormData] = useState({
@@ -224,6 +243,9 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
   const [errors, setErrors] = useState({});
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [isCancelSaving, setIsCancelSaving] = useState(false);
+  /** Bumps when client is chosen so embedded map opens that marker's popup (Leaflet). */
+  const [formMapPopupNonce, setFormMapPopupNonce] = useState(0);
+  const lastInitialClientMapBumpRef = useRef(null);
 
   const { data: clients = [], isLoading: isLoadingClients } = useQuery({
     queryKey: ['clients'],
@@ -234,10 +256,11 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
     queryKey: ['technicians', 'active'],
     queryFn: () => technicianService.filter({ status: 'active' })
   });
-  const { data: requests = [] } = useQuery({
-    queryKey: ['serviceRequests'],
-    queryFn: () => serviceRequestService.list('created_at', 'desc', 100)
+  const { data: requestsBundle } = useQuery({
+    queryKey: ['serviceRequests', 'listForRequestsPage', 500],
+    queryFn: () => serviceRequestService.listActiveWithCancelledCount(500),
   });
+  const requests = requestsBundle?.requests ?? [];
   const { data: dbIrrigationSystems = [] } = useQuery({
     queryKey: ['irrigationSystems'],
     queryFn: () => irrigationSystemsService.list()
@@ -343,6 +366,24 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
     [clients, requestsByClientId]
   );
 
+  const formMapFlyTo = useMemo(() => {
+    if (!formData.client_id) return null;
+    const client = clients.find((c) => String(c.id) === String(formData.client_id));
+    if (!client) return null;
+    const lat = Number(client.location?.lat ?? client.latitude);
+    const lng = Number(client.location?.lng ?? client.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { lat, lng };
+  }, [clients, formData.client_id]);
+
+  const bumpFormMapPopupIfLocated = useCallback((client) => {
+    if (!client) return;
+    const lat = Number(client.location?.lat ?? client.latitude);
+    const lng = Number(client.location?.lng ?? client.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    setFormMapPopupNonce((n) => n + 1);
+  }, []);
+
   // Reusable skeleton component for Select fields
   const SelectSkeleton = () => (
     <div className="flex h-10 min-h-10 w-full items-center rounded-md border border-input bg-muted px-3 animate-pulse">
@@ -362,7 +403,7 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
       if (request.scheduled_end_time) {
         toDateTimeValue = new Date(request.scheduled_end_time);
       } else if (fromDateTimeValue) {
-        toDateTimeValue = addDays(fromDateTimeValue, 7);
+        toDateTimeValue = addDays(fromDateTimeValue, 1);
       }
 
       setFromDateTime(fromDateTimeValue);
@@ -423,7 +464,7 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
           initialEndTime != null
             ? new Date(initialEndTime)
             : startVal
-              ? addDays(startVal, 7)
+              ? addDays(startVal, 1)
               : null;
         setFromDateTime(startVal);
         setToDateTime(endVal);
@@ -438,6 +479,9 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
 
   // Prefill client when opening form from map (e.g. "Create service request" on client marker)
   useEffect(() => {
+    if (!initialClientId) {
+      lastInitialClientMapBumpRef.current = null;
+    }
     if (!request && initialClientId && clients.length > 0) {
       const client = clients.find((c) => c.id === initialClientId);
       if (client) {
@@ -456,11 +500,17 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
           },
           irrigation_systems: client.irrigation_systems?.length ? [...client.irrigation_systems] : prev.irrigation_systems,
         }));
+        const bumpKey = String(initialClientId);
+        if (lastInitialClientMapBumpRef.current !== bumpKey) {
+          lastInitialClientMapBumpRef.current = bumpKey;
+          bumpFormMapPopupIfLocated(client);
+        }
       }
     }
-  }, [request, initialClientId, clients]);
+  }, [request, initialClientId, clients, bumpFormMapPopupIfLocated]);
 
   const handleClientSelect = (clientId) => {
+    if (isReadOnly) return;
     const client = clients.find((c) => String(c.id) === String(clientId));
     if (client) {
       // Extract location data from client
@@ -482,6 +532,7 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
         irrigation_systems: client.irrigation_systems?.length ? [...client.irrigation_systems] : [],
       }));
       setErrors((prev) => ({ ...prev, client_id: '' }));
+      bumpFormMapPopupIfLocated(client);
     }
   };
 
@@ -584,6 +635,7 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isReadOnly) return;
     if (normalizeIsCancelled(formData.is_cancelled) === 'T') {
       toast.error('This request is cancelled and cannot be saved.');
       return;
@@ -694,7 +746,7 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
     }
   };
 
-  // Handle from date/time changes — default end to start + 7 days (user can edit end afterward)
+  // Handle from date/time changes — default end to start + 1 day (user can edit end afterward)
   const handleFromDateTimeChange = (dateTime) => {
     setFromDateTime(dateTime);
     if (!dateTime) {
@@ -703,7 +755,7 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
       setErrors((prev) => ({ ...prev, from_time: '', to_time: '' }));
       return;
     }
-    const nextEndDefault = addDays(dateTime, 7);
+    const nextEndDefault = addDays(dateTime, 1);
     setToDateTime((prevTo) => {
       if (!prevTo || prevTo <= dateTime) return nextEndDefault;
       return prevTo;
@@ -737,7 +789,7 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
                 <Select
                   value={formData.client_id ? String(formData.client_id) : undefined}
                   onValueChange={handleClientSelect}
-                  disabled={clients.length === 0}
+                  disabled={isReadOnly || clients.length === 0}
                 >
                   <SelectTrigger
                     className={`h-10 min-h-10 flex-1 min-w-0 border-primary/30 text-sm focus:border-primary focus:ring-primary sm:text-base ${errors.client_id ? 'border-red-500' : ''}`}
@@ -759,7 +811,7 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
                     )}
                   </SelectContent>
                 </Select>
-                {formData.client_id ? (
+                {formData.client_id && !isReadOnly ? (
                   <Button
                     type="button"
                     variant="outline"
@@ -787,6 +839,7 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
                 setFormData((prev) => ({ ...prev, issue_category: v }));
                 setErrors((prev) => ({ ...prev, issue_category: '' }));
               }}
+              disabled={isReadOnly}
             >
               <SelectTrigger
                 className={`h-10 min-h-10 text-sm sm:text-base ${errors.issue_category ? 'border-red-500' : ''}`}
@@ -812,6 +865,7 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
             <Select
               value=""
               modal={false}
+              disabled={isReadOnly}
               onValueChange={(v) => {
                 if (v === '__add_new__') {
                   setShowAddIrrigationDialog(true);
@@ -854,15 +908,23 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
                 {formData.irrigation_systems.map((sys, idx) => (
                   <Badge
                     key={`${sys}-${idx}`}
-                    className="cursor-pointer bg-primary text-primary-foreground transition-colors hover:bg-primary/90"
-                    onClick={() =>
-                      setFormData((prev) => ({
-                        ...prev,
-                        irrigation_systems: prev.irrigation_systems.filter((_, i) => i !== idx),
-                      }))
+                    className={
+                      isReadOnly
+                        ? 'cursor-default bg-primary text-primary-foreground'
+                        : 'cursor-pointer bg-primary text-primary-foreground transition-colors hover:bg-primary/90'
+                    }
+                    onClick={
+                      isReadOnly
+                        ? undefined
+                        : () =>
+                            setFormData((prev) => ({
+                              ...prev,
+                              irrigation_systems: prev.irrigation_systems.filter((_, i) => i !== idx),
+                            }))
                     }
                   >
-                    {sys} ×
+                    {sys}
+                    {!isReadOnly ? ' ×' : ''}
                   </Badge>
                 ))}
               </div>
@@ -876,21 +938,25 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
         {/* Row 2: From Time, To Time, Technician */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div>
-            <Label className="text-sm mb-2 block">Start Time <span className="text-red-600">*</span></Label>
+            <Label className="text-sm mb-2 block">Start date & time <span className="text-red-600">*</span></Label>
             <DateTimePicker
               date={fromDateTime}
               onDateChange={handleFromDateTimeChange}
               placeholder="Select start date & time"
+              className="border-primary/30 focus-visible:ring-primary"
+              disabled={isReadOnly}
             />
             {errors.from_time && <p className="mt-1 text-xs text-red-600">{errors.from_time}</p>}
           </div>
 
           <div>
-            <Label className="text-sm mb-2 block">End Time <span className="text-red-600">*</span></Label>
+            <Label className="text-sm mb-2 block">End date & time <span className="text-red-600">*</span></Label>
             <DateTimePicker
               date={toDateTime}
               onDateChange={handleToDateTimeChange}
               placeholder="Select end date & time"
+              className="border-primary/30 focus-visible:ring-primary"
+              disabled={isReadOnly}
             />
             {errors.to_time && <p className="mt-1 text-xs text-red-600">{errors.to_time}</p>}
           </div>
@@ -912,7 +978,7 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
                       assigned_technician_phone: technician ? technician.phone : '',
                     }));
                   }}
-                  disabled={technicians.length === 0}
+                  disabled={isReadOnly || technicians.length === 0}
                 >
                   <SelectTrigger className="h-10 min-h-10 text-sm sm:text-base">
                     <SelectValue placeholder="Select technician..." />
@@ -960,8 +1026,11 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
             center={[39.5, -98.5]}
             zoom={4}
             autoCenterFromJobs={false}
-            onSelectJob={(job) => handleClientSelect(job.id)}
-            onOpenClientDetail={(job) => handleClientSelect(job.id)}
+            selectedJobId={formData.client_id ? String(formData.client_id) : null}
+            flyToTarget={formMapFlyTo}
+            listSelectionPopupNonce={formMapPopupNonce}
+            onSelectJob={isReadOnly ? undefined : (job) => handleClientSelect(job.id)}
+            onOpenClientDetail={isReadOnly ? undefined : (job) => handleClientSelect(job.id)}
             className="h-[300px]"
           />
         </div>
@@ -1042,7 +1111,7 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
         <Button type="button" variant="outline" onClick={onCancel} className="border-primary text-primary hover:bg-primary hover:text-primary-foreground">
           Close
         </Button>
-        {request && normalizeIsCancelled(formData.is_cancelled) !== 'T' ? (
+        {!isReadOnly && request && normalizeIsCancelled(formData.is_cancelled) !== 'T' ? (
           <Button
             type="button"
             variant="outline"
@@ -1053,17 +1122,19 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
             Cancel Request
           </Button>
         ) : null}
-        <Button
-          type="submit"
-          className="bg-primary hover:bg-primary/90 text-primary-foreground"
-          disabled={isLoading || isCancelSaving || normalizeIsCancelled(formData.is_cancelled) === 'T'}
-        >
-          {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin text-primary-foreground" />}
-          {request ? 'Edit Request' : 'Save Request'}
-        </Button>
+        {!isReadOnly ? (
+          <Button
+            type="submit"
+            className="bg-primary hover:bg-primary/90 text-primary-foreground"
+            disabled={isLoading || isCancelSaving || normalizeIsCancelled(formData.is_cancelled) === 'T'}
+          >
+            {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin text-primary-foreground" />}
+            {request ? 'Edit Request' : 'Save Request'}
+          </Button>
+        ) : null}
       </div>
 
-      <AlertDialog open={cancelConfirmOpen} onOpenChange={setCancelConfirmOpen}>
+      <AlertDialog open={!isReadOnly && cancelConfirmOpen} onOpenChange={setCancelConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Cancel request?</AlertDialogTitle>
@@ -1092,7 +1163,12 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
         </AlertDialogContent>
       </AlertDialog>
 
-      <Dialog open={showAddIrrigationDialog} onOpenChange={setShowAddIrrigationDialog}>
+      <Dialog
+        open={!isReadOnly && showAddIrrigationDialog}
+        onOpenChange={(open) => {
+          if (!isReadOnly) setShowAddIrrigationDialog(open);
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Add New Irrigation System</DialogTitle>
@@ -1137,7 +1213,7 @@ export default function ServiceRequestForm({ request, onSubmit, onCancel, initia
         onOpenChange={setClientNotesHistoryOpen}
         clientId={formData.client_id}
         clientName={formData.client_name ? `${formData.client_name}${formData.farm_name ? ` · ${formData.farm_name}` : ''}` : ''}
-        allowAdd
+        allowAdd={!isReadOnly}
       />
     </form>
   );

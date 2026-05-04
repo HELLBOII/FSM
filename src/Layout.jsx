@@ -72,7 +72,7 @@ const webNavSections = [
 {
   label: 'Reports',
   items: [
-  { name: 'Reports', icon: FileText, page: 'Reports' },
+  // { name: 'Reports', icon: FileText, page: 'Reports' },
   { name: 'Work Reports', icon: ClipboardCheck, page: 'WorkReports' }]
 }];
 
