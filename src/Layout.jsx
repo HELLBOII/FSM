@@ -268,7 +268,7 @@ export default function Layout({ children, currentPageName }) {
         </nav>
 
         <AlertDialog open={showLogoutDialog} onOpenChange={setShowLogoutDialog}>
-          <AlertDialogContent className="z-[9999]">
+          <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Confirm Logout</AlertDialogTitle>
               <AlertDialogDescription>
@@ -498,7 +498,7 @@ export default function Layout({ children, currentPageName }) {
 
       {/* Logout Confirmation Dialog */}
       <AlertDialog open={showLogoutDialog} onOpenChange={setShowLogoutDialog}>
-        <AlertDialogContent className="z-[9999]">
+        <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Confirm Logout</AlertDialogTitle>
             <AlertDialogDescription>

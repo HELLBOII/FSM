@@ -292,7 +292,7 @@ export default function JobExecution() {
   const completedTasks = formData.tasks.filter((t) => t.completed).length;
 
   return (
-    <div data-source-location="pages/JobExecution:266:4" data-dynamic-content="true" className="pb-32">
+    <div data-source-location="pages/JobExecution:266:4" data-dynamic-content="true" className="pb-40">
       {/* Header */}
       <div data-source-location="pages/JobExecution:268:6" data-dynamic-content="true" className="bg-white border-b px-4 py-3 sticky top-0 z-30">
         <div data-source-location="pages/JobExecution:269:8" data-dynamic-content="true" className="flex items-center gap-3">
@@ -388,11 +388,11 @@ export default function JobExecution() {
               </Card>
           )}
             {/* Fixed bottom Add task - only when on Tasks tab */}
-            <div className="fixed bottom-28 left-0 right-0 p-4 bg-white border-t z-10 flex justify-center">
+            <div className="pt-2">
               <Button
                 type="button"
                 variant="outline"
-                className="gap-2"
+                className="w-full h-12 gap-2 bg-white"
                 onClick={() => setShowAddTaskDialog(true)}
               >
                 <Plus className="w-4 h-4" />
@@ -640,7 +640,7 @@ export default function JobExecution() {
       </Dialog>
 
       {/* Fixed Bottom Action */}
-      <div data-source-location="pages/JobExecution:571:6" data-dynamic-content="true" className="fixed bottom-20 left-0 right-0 p-4 bg-white border-t">
+      <div data-source-location="pages/JobExecution:571:6" data-dynamic-content="true" className="fixed bottom-20 left-0 right-0 p-4 bg-white border-t z-20">
         <Button data-source-location="pages/JobExecution:572:8" data-dynamic-content="true"
         onClick={handleSubmit}
         disabled={isSubmitting}
