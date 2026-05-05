@@ -30,7 +30,14 @@ import { toast } from 'sonner';
 import { format, isBefore, startOfToday } from 'date-fns';
 import { useAuth } from '@/lib/AuthContext';
 import { mergeServiceRequestUpdateAudit, canCancelServiceRequestRow } from '@/utils/serviceRequestAudit';
-import { formatSeasonFromDb } from '@/utils/serviceRequestSeason';
+import {
+  SEASON_FILTER_OPTIONS,
+  SERVICE_TYPE_FILTER_OPTIONS,
+  isRequestAssignedTechnician,
+  requestMatchesSeasonFilter,
+  requestMatchesServiceTypeFilter,
+  sortRequestsByDateAsc,
+} from '@/utils/serviceRequestListFilters';
 import { cn } from '@/lib/utils';
 import { Tooltip } from '@/components/ui/tooltip';
 
@@ -223,6 +230,12 @@ export default function ServiceRequests() {
   const [historyTableSearch, setHistoryTableSearch] = useState('');
   const [overdueTableSearch, setOverdueTableSearch] = useState('');
   const [openTableSearch, setOpenTableSearch] = useState('');
+  const [overdueFilterServiceType, setOverdueFilterServiceType] = useState('all');
+  const [overdueFilterSeason, setOverdueFilterSeason] = useState('all');
+  const [openFilterServiceType, setOpenFilterServiceType] = useState('all');
+  const [openFilterSeason, setOpenFilterSeason] = useState('all');
+  const [historyFilterServiceType, setHistoryFilterServiceType] = useState('all');
+  const [historyFilterSeason, setHistoryFilterSeason] = useState('all');
 
   // Check URL params for actions
   useEffect(() => {
@@ -268,20 +281,38 @@ export default function ServiceRequests() {
     enabled: !!assignRequest,
   });
 
-  const overdueListFull = useMemo(
+  const overdueListBase = useMemo(
     () =>
       [...requests]
         .filter((r) => isRequestOverdue(r) || r.status === 'pending')
-        .sort((a, b) => new Date(a.scheduled_date || 0) - new Date(b.scheduled_date || 0)),
+        .filter((r) => isRequestAssignedTechnician(r))
+        .sort(sortRequestsByDateAsc),
+    [requests]
+  );
+
+  const overdueListFull = useMemo(
+    () =>
+      overdueListBase
+        .filter((r) => requestMatchesServiceTypeFilter(r, overdueFilterServiceType))
+        .filter((r) => requestMatchesSeasonFilter(r, overdueFilterSeason)),
+    [overdueListBase, overdueFilterServiceType, overdueFilterSeason]
+  );
+
+  const openListBase = useMemo(
+    () =>
+      [...requests]
+        .filter((r) => !CLOSED_STATUSES.includes(r.status) && !isRequestOverdue(r))
+        .filter((r) => isRequestAssignedTechnician(r))
+        .sort(sortRequestsByDateAsc),
     [requests]
   );
 
   const openListFull = useMemo(
     () =>
-      requests.filter(
-        (r) => !CLOSED_STATUSES.includes(r.status) && !isRequestOverdue(r)
-      ),
-    [requests]
+      openListBase
+        .filter((r) => requestMatchesServiceTypeFilter(r, openFilterServiceType))
+        .filter((r) => requestMatchesSeasonFilter(r, openFilterSeason)),
+    [openListBase, openFilterServiceType, openFilterSeason]
   );
 
   const {
@@ -309,10 +340,15 @@ export default function ServiceRequests() {
   }, [historyPanel, completedRowsFull, cancelledRowsFull]);
 
   const historyFilteredList = useMemo(() => {
+    let list = historySourceList
+      .filter((r) => isRequestAssignedTechnician(r))
+      .filter((r) => requestMatchesServiceTypeFilter(r, historyFilterServiceType))
+      .filter((r) => requestMatchesSeasonFilter(r, historyFilterSeason))
+      .sort(sortRequestsByDateAsc);
     const q = historyTableSearch.trim();
-    if (!q) return historySourceList;
-    return historySourceList.filter((r) => matchesServiceRequestTableSearch(r, q));
-  }, [historySourceList, historyTableSearch]);
+    if (!q) return list;
+    return list.filter((r) => matchesServiceRequestTableSearch(r, q));
+  }, [historySourceList, historyTableSearch, historyFilterServiceType, historyFilterSeason]);
 
   const historyTotal = historyFilteredList.length;
   const historyTotalPages = Math.max(1, Math.ceil(historyTotal / historyPageSize) || 1);
@@ -327,7 +363,12 @@ export default function ServiceRequests() {
 
   useEffect(() => {
     setHistoryPage(1);
-  }, [historyPanel, historyPageSize, historyTableSearch]);
+  }, [historyPanel, historyPageSize, historyTableSearch, historyFilterServiceType, historyFilterSeason]);
+
+  useEffect(() => {
+    setHistoryFilterServiceType('all');
+    setHistoryFilterSeason('all');
+  }, [historyPanel]);
 
   useEffect(() => {
     setHistoryTableSearch('');
@@ -388,6 +429,14 @@ export default function ServiceRequests() {
   useEffect(() => {
     setOpenPage(1);
   }, [openPageSize]);
+
+  useEffect(() => {
+    setOverduePage(1);
+  }, [overdueFilterServiceType, overdueFilterSeason]);
+
+  useEffect(() => {
+    setOpenPage(1);
+  }, [openFilterServiceType, openFilterSeason]);
 
   const overdueRangeStart = overdueTotal === 0 ? 0 : (overduePage - 1) * overduePageSize + 1;
   const overdueRangeEnd = Math.min(overduePage * overduePageSize, overdueTotal);
@@ -631,18 +680,20 @@ export default function ServiceRequests() {
       .filter((c) => !clientIdsWithScheduledOrCompleted.has(String(c.id))).length;
 
     return {
-      open: openListFull.length,
-      overduePending: overdueListFull.length,
+      open: openListBase.length,
+      overduePending: overdueListBase.length,
       unscheduled,
     };
-  }, [requests, clients, openListFull, overdueListFull]);
+  }, [requests, clients, openListBase, overdueListBase]);
 
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Service Requests</h1>
-          <p className="mt-1 text-gray-500">Review, reschedule, and manage active service requests</p>
+          <p className="mt-1 text-gray-500">
+            Review, reschedule, and manage active service requests. Main tables list assigned requests only, earliest date first; use each section&apos;s filters independently.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -755,9 +806,6 @@ export default function ServiceRequests() {
                   <div className="text-[12px] font-medium uppercase tracking-[0.06em] text-[#888780]">
                     {historyPanel === 'completed' ? 'Completed requests' : 'Cancelled requests'}
                   </div>
-                  {/* <p className="text-xs text-muted-foreground">
-                    Client, service type, schedule, technician — use View to open a read-only copy of the request.
-                  </p> */}
                   {historyPanel === 'cancelled' && cancelledCount !== cancelledRowsFull.length ? (
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       Showing {cancelledRowsFull.length.toLocaleString()} loaded row
@@ -765,8 +813,38 @@ export default function ServiceRequests() {
                     </p>
                   ) : null}
                 </div>
-                <div className="flex w-full flex-col gap-2 sm:w-auto sm:max-w-md sm:flex-row sm:items-center sm:justify-end">
-                  <div className="relative w-full min-w-0 sm:max-w-xs">
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+                  <Select value={historyFilterServiceType} onValueChange={setHistoryFilterServiceType}>
+                    <SelectTrigger
+                      className="h-9 w-full shrink-0 border-primary/30 text-sm sm:w-[200px]"
+                      aria-label="Filter history by service type"
+                    >
+                      <SelectValue placeholder="Service type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SERVICE_TYPE_FILTER_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={historyFilterSeason} onValueChange={setHistoryFilterSeason}>
+                    <SelectTrigger
+                      className="h-9 w-full shrink-0 border-primary/30 text-sm sm:w-[160px]"
+                      aria-label="Filter history by season"
+                    >
+                      <SelectValue placeholder="Season" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SEASON_FILTER_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="relative min-h-9 w-full min-w-0 sm:w-56 sm:max-w-xs">
                     <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                     <Input
                       type="search"
@@ -781,7 +859,7 @@ export default function ServiceRequests() {
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className="h-9 shrink-0 self-end text-muted-foreground hover:text-foreground sm:self-auto"
+                    className="h-9 shrink-0 text-muted-foreground hover:text-foreground"
                     onClick={() => setHistoryPanel(null)}
                   >
                     Close
@@ -825,7 +903,7 @@ export default function ServiceRequests() {
                             <tr key={request.id} className="border-b border-black/10 last:border-b-0">
                               <td className="px-2 py-2 font-medium text-gray-900 sm:px-3.5">{request.client_name || '-'}</td>
                               <td className="px-2 py-2 text-black sm:px-3.5">{formatIssueCategoryDisplay(request)}</td>
-                              <td className="px-2 py-2 text-gray-800 sm:px-3.5">{formatSeasonFromDb(request)}</td>
+                              <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request.season}</td>
                               <td className={`px-2 py-2 font-medium sm:px-3.5 ${getDateTimeTone(request)}`}>
                                 {formatScheduledStartDateTime(getScheduledDateRef(request))}
                               </td>
@@ -921,16 +999,48 @@ export default function ServiceRequests() {
           <div>
             <div className="mb-2.5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-[12px] font-medium uppercase tracking-[0.06em] text-[#888780]">All overdue requests</div>
-              <div className="relative w-full sm:max-w-xs">
-                <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  type="search"
-                  value={overdueTableSearch}
-                  onChange={(e) => setOverdueTableSearch(e.target.value)}
-                  placeholder="Search"
-                  className="h-9 border-primary/30 pl-8"
-                  aria-label="Filter overdue requests"
-                />
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+                <Select value={overdueFilterServiceType} onValueChange={setOverdueFilterServiceType}>
+                  <SelectTrigger
+                    className="h-9 w-full shrink-0 border-primary/30 text-sm sm:w-[200px]"
+                    aria-label="Overdue table: filter by service type"
+                  >
+                    <SelectValue placeholder="Service type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SERVICE_TYPE_FILTER_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>
+                        {o.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={overdueFilterSeason} onValueChange={setOverdueFilterSeason}>
+                  <SelectTrigger
+                    className="h-9 w-full shrink-0 border-primary/30 text-sm sm:w-[160px]"
+                    aria-label="Overdue table: filter by season"
+                  >
+                    <SelectValue placeholder="Season" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SEASON_FILTER_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>
+                        {o.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="relative min-h-9 w-full min-w-0 sm:w-56 sm:max-w-xs">
+                  <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    type="search"
+                    value={overdueTableSearch}
+                    onChange={(e) => setOverdueTableSearch(e.target.value)}
+                    placeholder="Search"
+                    className="h-9 border-primary/30 pl-8"
+                    aria-label="Filter overdue requests"
+                  />
+                </div>
               </div>
             </div>
             <div className="overflow-hidden rounded-lg border border-[#F7C1C1] bg-white">
@@ -956,7 +1066,7 @@ export default function ServiceRequests() {
                       <tr key={request.id} className="border-b border-[#F7C1C1] last:border-b-0">
                         <td className="px-2 py-2 font-medium text-gray-900 sm:px-3.5">{request.client_name || '-'}</td>
                         <td className="px-2 py-2 text-black sm:px-3.5">{formatIssueCategoryDisplay(request)}</td>
-                        <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request?.season}</td>
+                          <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request.season}</td>
                         <td className={`px-2 py-2 font-medium sm:px-3.5 ${getDateTimeTone(request)}`}>{formatDueDateTime(getDueDateRef(request))}</td>
                         <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request.assigned_technician_name || 'Unassigned'}</td>
                         <td className="px-2 py-2 text-left sm:px-3.5">
@@ -1036,16 +1146,48 @@ export default function ServiceRequests() {
           <div>
             <div className="mb-2.5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-[12px] font-medium uppercase tracking-[0.06em] text-[#888780]">All open requests</div>
-              <div className="relative w-full sm:max-w-xs">
-                <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  type="search"
-                  value={openTableSearch}
-                  onChange={(e) => setOpenTableSearch(e.target.value)}
-                  placeholder="Search"
-                  className="h-9 border-primary/30 pl-8"
-                  aria-label="Filter open requests"
-                />
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+                <Select value={openFilterServiceType} onValueChange={setOpenFilterServiceType}>
+                  <SelectTrigger
+                    className="h-9 w-full shrink-0 border-primary/30 text-sm sm:w-[200px]"
+                    aria-label="Open requests table: filter by service type"
+                  >
+                    <SelectValue placeholder="Service type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SERVICE_TYPE_FILTER_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>
+                        {o.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={openFilterSeason} onValueChange={setOpenFilterSeason}>
+                  <SelectTrigger
+                    className="h-9 w-full shrink-0 border-primary/30 text-sm sm:w-[160px]"
+                    aria-label="Open requests table: filter by season"
+                  >
+                    <SelectValue placeholder="Season" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SEASON_FILTER_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>
+                        {o.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="relative min-h-9 w-full min-w-0 sm:w-56 sm:max-w-xs">
+                  <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    type="search"
+                    value={openTableSearch}
+                    onChange={(e) => setOpenTableSearch(e.target.value)}
+                    placeholder="Search"
+                    className="h-9 border-primary/30 pl-8"
+                    aria-label="Filter open requests"
+                  />
+                </div>
               </div>
             </div>
             <div className="overflow-hidden rounded-lg border border-black/10 bg-white">
@@ -1071,7 +1213,7 @@ export default function ServiceRequests() {
                       <tr key={request.id} className="border-b border-black/10 last:border-b-0">
                         <td className="px-2 py-2 font-medium text-gray-900 sm:px-3.5">{request.client_name || '-'}</td>
                         <td className="px-2 py-2 text-black sm:px-3.5">{formatIssueCategoryDisplay(request)}</td>
-                        <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request?.season}</td>
+                        <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request.season}</td>
                         <td className={`px-2 py-2 font-medium sm:px-3.5 ${getDateTimeTone(request)}`}>
                           {formatScheduledStartDateTime(getScheduledDateRef(request))}
                         </td>

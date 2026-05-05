@@ -44,6 +44,7 @@ const pageAccess = {
     'Clients',
     'EquipmentInventory',
     'Scheduling',
+    'Unassigned',
     'Settings',
     'Messages',
     'JobDetails', // Admins can view job details
@@ -70,6 +71,7 @@ const pageAccess = {
     'Clients',
     'EquipmentInventory',
     'Scheduling',
+    'Unassigned',
     'Settings',
     'Messages',
     'JobDetails',

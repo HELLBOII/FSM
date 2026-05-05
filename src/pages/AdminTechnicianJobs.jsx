@@ -38,11 +38,22 @@ import { mergeServiceRequestUpdateAudit, canCancelServiceRequestRow } from '@/ut
 import { Tooltip } from '@/components/ui/tooltip';
 import { formatRequestStatusLabel } from '@/utils/serviceRequestSeason';
 import { cn } from '@/lib/utils';
+import {
+  SEASON_FILTER_OPTIONS,
+  SERVICE_TYPE_FILTER_OPTIONS,
+  isRequestAssignedTechnician,
+  requestMatchesSeasonFilter,
+  requestMatchesServiceTypeFilter,
+} from '@/utils/serviceRequestListFilters';
 
 const CLOSED_STATUSES = ['completed', 'approved', 'closed'];
 const ACTIVE_STATUSES = ['scheduled', 'assigned', 'in_progress'];
 
 const JOB_TABLE_PAGE_SIZE_OPTIONS = [10, 20, 50];
+
+/** Match Scheduling.jsx table action icon buttons. */
+const ICON_ACTION_PRIMARY_CLASS =
+  'h-8 w-8 shrink-0 rounded-md bg-primary p-0 text-primary-foreground shadow-sm hover:bg-primary/90 hover:text-primary-foreground';
 
 /** Same column geometry on every technician table (`table-fixed` + shared `colgroup`). */
 const JOBS_TABLE_CLASS =
@@ -116,6 +127,9 @@ export default function AdminTechnicianJobs() {
   /** Per-technician section: filter rows in that table */
   const [jobTableSearchByTech, setJobTableSearchByTech] = useState({});
   const [cancelConfirmJob, setCancelConfirmJob] = useState(null);
+  /** Per-technician table: service type filter (key = String(technician id)). */
+  const [jobTableServiceTypeByTech, setJobTableServiceTypeByTech] = useState({});
+  const [jobTableSeasonByTech, setJobTableSeasonByTech] = useState({});
 
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -253,6 +267,11 @@ export default function AdminTechnicianJobs() {
 
   const getClientAddress = (job) => technicianJobAddressLine(job, clients);
 
+  const jobsInView = useMemo(
+    () => myJobs.filter((j) => isRequestAssignedTechnician(j)),
+    [myJobs]
+  );
+
   const metrics = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -263,8 +282,8 @@ export default function AdminTechnicianJobs() {
         .map((j) => String(j.client_id))
     );
 
-    const completed = myJobs.filter((j) => CLOSED_STATUSES.includes(j.status)).length;
-    const scheduled = myJobs.filter((j) => {
+    const completed = jobsInView.filter((j) => CLOSED_STATUSES.includes(j.status)).length;
+    const scheduled = jobsInView.filter((j) => {
       if (j.status !== 'scheduled') return false;
       if (!j.scheduled_end_time) return true;
       const endDate = new Date(j.scheduled_end_time);
@@ -280,7 +299,7 @@ export default function AdminTechnicianJobs() {
       })
       .filter((c) => !clientIdsWithScheduledOrCompleted.has(String(c.id))).length;
 
-    const overdue = myJobs.filter((j) => {
+    const overdue = jobsInView.filter((j) => {
       if (j.status !== 'scheduled') return false;
       if (!j.scheduled_end_time) return false;
       const endDate = new Date(j.scheduled_end_time);
@@ -289,11 +308,11 @@ export default function AdminTechnicianJobs() {
       return endDate < today;
     }).length;
     return { completed, scheduled, unscheduled, overdue };
-  }, [myJobs, clients]);
+  }, [jobsInView, myJobs, clients]);
 
   const groupedTechnicians = useMemo(() => {
     const groups = new Map();
-    myJobs.forEach((job) => {
+    jobsInView.forEach((job) => {
       const id = job.assigned_technician_id || 'unassigned';
       const name = job.assigned_technician_name || 'Unassigned Jobs';
       if (!groups.has(id)) {
@@ -323,11 +342,8 @@ export default function AdminTechnicianJobs() {
       return { ...group, jobs: sortedJobs, activeCount, todayCount, overdueCount };
     });
 
-    // Only show groups with an assigned technician (hide unassigned bucket)
-    return withMeta
-      .filter((g) => g.id !== 'unassigned')
-      .sort((a, b) => b.activeCount - a.activeCount);
-  }, [myJobs]);
+    return withMeta.sort((a, b) => b.activeCount - a.activeCount);
+  }, [jobsInView]);
 
   useEffect(() => {
     setJobTablePageByTech({});
@@ -340,10 +356,13 @@ export default function AdminTechnicianJobs() {
       let changed = false;
       groupedTechnicians.forEach((g) => {
         const id = String(g.id);
+        const st = jobTableServiceTypeByTech[id] ?? 'all';
+        const sn = jobTableSeasonByTech[id] ?? 'all';
         const q = (jobTableSearchByTech[id] ?? '').trim();
-        const list = !q
-          ? g.jobs
-          : g.jobs.filter((job) => matchesTechnicianJobSearch(job, clients, q));
+        let list = g.jobs
+          .filter((job) => requestMatchesServiceTypeFilter(job, st))
+          .filter((job) => requestMatchesSeasonFilter(job, sn));
+        if (q) list = list.filter((job) => matchesTechnicianJobSearch(job, clients, q));
         const totalPages = Math.max(1, Math.ceil(list.length / jobTablePageSize) || 1);
         const p = prev[id] ?? 1;
         if (p > totalPages) {
@@ -353,7 +372,14 @@ export default function AdminTechnicianJobs() {
       });
       return changed ? next : prev;
     });
-  }, [groupedTechnicians, jobTablePageSize, jobTableSearchByTech, clients]);
+  }, [
+    groupedTechnicians,
+    jobTablePageSize,
+    jobTableSearchByTech,
+    jobTableServiceTypeByTech,
+    jobTableSeasonByTech,
+    clients,
+  ]);
 
   const getInitials = (name) =>
     name
@@ -413,7 +439,7 @@ export default function AdminTechnicianJobs() {
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Technician Jobs</h1>
           <p className="mt-1 text-gray-500">Monitor technician assignments and upcoming jobs</p>
         </div>
-        <div className="text-xs text-[#888780]">Ordered by upcoming first</div>
+        <div className="text-xs text-[#888780]">Schedule date · earliest first · filters are per technician</div>
       </div>
 
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
@@ -453,7 +479,7 @@ export default function AdminTechnicianJobs() {
             <>
               <p>No jobs with an assigned technician.</p>
               <p className="mt-2 text-xs text-[#888780]">
-                Unassigned jobs are not shown here — assign a technician from Service Requests or Scheduling.
+                Unassigned work appears on the Unassigned page; assign technicians from Service Requests or Scheduling.
               </p>
             </>
           ) : (
@@ -467,9 +493,14 @@ export default function AdminTechnicianJobs() {
             const tablePage = jobTablePageByTech[techKey] ?? 1;
             const rowSearch = jobTableSearchByTech[techKey] ?? '';
             const qFilter = rowSearch.trim();
-            const filteredJobs = !qFilter
-              ? group.jobs
-              : group.jobs.filter((job) => matchesTechnicianJobSearch(job, clients, qFilter));
+            const secType = jobTableServiceTypeByTech[techKey] ?? 'all';
+            const secSeason = jobTableSeasonByTech[techKey] ?? 'all';
+            let filteredJobs = group.jobs
+              .filter((job) => requestMatchesServiceTypeFilter(job, secType))
+              .filter((job) => requestMatchesSeasonFilter(job, secSeason));
+            if (qFilter) {
+              filteredJobs = filteredJobs.filter((job) => matchesTechnicianJobSearch(job, clients, qFilter));
+            }
             const totalJobs = filteredJobs.length;
             const tableTotalPages = Math.max(1, Math.ceil(totalJobs / jobTablePageSize) || 1);
             const fromIdx = (tablePage - 1) * jobTablePageSize;
@@ -492,20 +523,64 @@ export default function AdminTechnicianJobs() {
                     <div className="text-xs text-[#888780]">{technicianSubLabel(group)}</div>
                   </div>
                 </div>
-                <div className="relative w-full shrink-0 sm:max-w-xs">
-                  <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    type="search"
-                    value={rowSearch}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setJobTableSearchByTech((prev) => ({ ...prev, [techKey]: v }));
+                <div className="flex w-full flex-col gap-2 sm:max-w-none sm:flex-1 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+                  <Select
+                    value={secType}
+                    onValueChange={(v) => {
+                      setJobTableServiceTypeByTech((prev) => ({ ...prev, [techKey]: v }));
                       setJobTablePageByTech((prev) => ({ ...prev, [techKey]: 1 }));
                     }}
-                    placeholder="Search"
-                    className="h-9 border-primary/30 pl-8"
-                    aria-label={`Filter jobs for ${group.name}`}
-                  />
+                  >
+                    <SelectTrigger
+                      className="h-9 w-full border-primary/30 text-sm sm:w-[180px]"
+                      aria-label={`${group.name}: filter by service type`}
+                    >
+                      <SelectValue placeholder="Service type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SERVICE_TYPE_FILTER_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={secSeason}
+                    onValueChange={(v) => {
+                      setJobTableSeasonByTech((prev) => ({ ...prev, [techKey]: v }));
+                      setJobTablePageByTech((prev) => ({ ...prev, [techKey]: 1 }));
+                    }}
+                  >
+                    <SelectTrigger
+                      className="h-9 w-full border-primary/30 text-sm sm:w-[150px]"
+                      aria-label={`${group.name}: filter by season`}
+                    >
+                      <SelectValue placeholder="Season" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SEASON_FILTER_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="relative w-full shrink-0 sm:max-w-xs">
+                    <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      type="search"
+                      value={rowSearch}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setJobTableSearchByTech((prev) => ({ ...prev, [techKey]: v }));
+                        setJobTablePageByTech((prev) => ({ ...prev, [techKey]: 1 }));
+                      }}
+                      placeholder="Search"
+                      className="h-9 border-primary/30 pl-8"
+                      aria-label={`Filter jobs for ${group.name}`}
+                    />
+                  </div>
                 </div>
               </div>
               <div className="overflow-x-auto w-full">
@@ -523,6 +598,13 @@ export default function AdminTechnicianJobs() {
                     </tr>
                   </thead>
                   <tbody>
+                    {totalJobs === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="px-3.5 py-8 text-center text-xs text-muted-foreground">
+                          No jobs match this table&apos;s filters. Clear service type, season, or search.
+                        </td>
+                      </tr>
+                    ) : null}
                     {pageJobs.map((job) => {
                       const overdue = isOverdueJob(job);
                       const canReassign = ACTIVE_STATUSES.includes(job.status);
@@ -565,7 +647,7 @@ export default function AdminTechnicianJobs() {
                                       type="button"
                                       size="icon"
                                       variant="default"
-                                      className="h-8 w-8 shrink-0 rounded-[4px] bg-primary p-0 text-white hover:bg-primary/90 hover:text-white"
+                                      className={ICON_ACTION_PRIMARY_CLASS}
                                       aria-label="Edit request"
                                       onClick={() => openEditForm(job)}
                                     >
@@ -587,7 +669,7 @@ export default function AdminTechnicianJobs() {
                                       type="button"
                                       size="icon"
                                       variant="default"
-                                      className="h-8 w-8 shrink-0 rounded-[4px] bg-primary p-0 text-white hover:bg-primary/90 hover:text-white"
+                                      className={ICON_ACTION_PRIMARY_CLASS}
                                       aria-label="Reassign technician"
                                       onClick={() => setReassignJob(job)}
                                     >
@@ -609,7 +691,7 @@ export default function AdminTechnicianJobs() {
                                       type="button"
                                       size="icon"
                                       variant="default"
-                                      className="h-8 w-8 shrink-0 rounded-[4px] bg-primary p-0 text-white hover:bg-primary/90 hover:text-white"
+                                      className={ICON_ACTION_PRIMARY_CLASS}
                                       aria-label="Cancel request"
                                       disabled={cancelJobMutation.isPending}
                                       onClick={() => setCancelConfirmJob(job)}

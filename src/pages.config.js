@@ -15,6 +15,7 @@ import Messages from './pages/Messages';
 import Reports from './pages/Reports';
 import RoleSelection from './pages/RoleSelection';
 import Scheduling from './pages/Scheduling';
+import Unassigned from './pages/Unassigned';
 import ServiceRequests from './pages/ServiceRequests';
 import Settings from './pages/Settings';
 import TechnicianDashboard from './pages/TechnicianDashboard';
@@ -45,6 +46,7 @@ export const pagesConfig = {
     Reports,
     RoleSelection,
     Scheduling,
+    Unassigned,
     ServiceRequests,
     Settings,
     TechnicianDashboard,

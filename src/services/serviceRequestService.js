@@ -5,6 +5,29 @@ function activeRequestsOnly(query) {
   return query.eq('is_cancelled', 'F');
 }
 
+/** Shared server filters for paginated service request lists (search, service type, season). */
+function applyServiceRequestListFilters(query, { search = '', issueCategory = 'all', season = 'all' } = {}) {
+  const ic = issueCategory?.trim();
+  if (ic && ic !== 'all') {
+    query = query.eq('issue_category', ic);
+  }
+
+  const seasonKey = season?.trim().toLowerCase();
+  if (seasonKey && seasonKey !== 'all') {
+    query = query.eq('season', seasonKey);
+  }
+
+  const q = search?.trim();
+  if (q) {
+    const esc = q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+    query = query.or(
+      `client_name.ilike.%${esc}%,farm_name.ilike.%${esc}%,request_number.ilike.%${esc}%,description.ilike.%${esc}%,assigned_technician_name.ilike.%${esc}%,issue_category.ilike.%${esc}%`
+    );
+  }
+
+  return query;
+}
+
 /**
  * Service Request Service - CRUD operations for Service Requests
  */
@@ -161,9 +184,19 @@ export const serviceRequestService = {
    * @param {number} [opts.page=1]
    * @param {number} [opts.pageSize=10]
    * @param {string} [opts.search=''] — optional ilike across client / farm / request # / description
+   * @param {string} [opts.issueCategory='all'] — service type (issue_category), see serviceRequestListFilters
+   * @param {string} [opts.season='all'] — spring | summer | fall | winter
+   * @param {'all'|'assigned'|'unassigned'} [opts.technicianAssignment='all']
    * @returns {Promise<{ data: Array, total: number }>}
    */
-  async listOverduePendingPaged({ page = 1, pageSize = 10, search = '' } = {}) {
+  async listOverduePendingPaged({
+    page = 1,
+    pageSize = 10,
+    search = '',
+    issueCategory = 'all',
+    season = 'all',
+    technicianAssignment = 'all',
+  } = {}) {
     const safePage = Math.max(1, Number(page) || 1);
     const safeSize = Math.min(100, Math.max(1, Number(pageSize) || 10));
     const fromIdx = (safePage - 1) * safeSize;
@@ -185,13 +218,68 @@ export const serviceRequestService = {
       .not('status', 'in', '(completed,approved,closed)')
       .or(overdueOr);
 
-    const q = search?.trim();
-    if (q) {
-      const esc = q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
-      query = query.or(
-        `client_name.ilike.%${esc}%,farm_name.ilike.%${esc}%,request_number.ilike.%${esc}%,description.ilike.%${esc}%,assigned_technician_name.ilike.%${esc}%,issue_category.ilike.%${esc}%`
-      );
+    if (technicianAssignment === 'assigned') {
+      query = query.not('assigned_technician_id', 'is', null);
+    } else if (technicianAssignment === 'unassigned') {
+      // SQL NULL only — matches Unassigned page (see isAssignedTechnicianIdNull).
+      query = query.is('assigned_technician_id', null);
     }
+
+    query = applyServiceRequestListFilters(query, { search, issueCategory, season });
+
+    query = query
+      .order('scheduled_end_time', { ascending: true, nullsFirst: false })
+      .order('scheduled_date', { ascending: true, nullsFirst: false })
+      .order('scheduled_start_time', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true })
+      .range(fromIdx, toIdx);
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      if (error.message?.includes('schema cache') || error.message?.includes('relation') || error.message?.includes('does not exist')) {
+        const enhancedError = new Error(
+          'Database table not found. Please run the migration script (supabase_migration.sql) in your Supabase SQL Editor to create the required tables.'
+        );
+        enhancedError.originalError = error;
+        throw enhancedError;
+      }
+      throw error;
+    }
+
+    return { data: data || [], total: count ?? 0 };
+  },
+
+  /**
+   * Unassigned queue: `service_requests` where `assigned_technician_id` IS NULL and `is_cancelled` = 'F'
+   * only. Paginated with the same search / service type / season filters as {@link #listOverduePendingPaged}.
+   * @param {Object} opts
+   * @param {number} [opts.page=1]
+   * @param {number} [opts.pageSize=10]
+   * @param {string} [opts.search='']
+   * @param {string} [opts.issueCategory='all']
+   * @param {string} [opts.season='all']
+   * @returns {Promise<{ data: Array, total: number }>}
+   */
+  async listUnassignedPaged({
+    page = 1,
+    pageSize = 10,
+    search = '',
+    issueCategory = 'all',
+    season = 'all',
+  } = {}) {
+    const safePage = Math.max(1, Number(page) || 1);
+    const safeSize = Math.min(100, Math.max(1, Number(pageSize) || 10));
+    const fromIdx = (safePage - 1) * safeSize;
+    const toIdx = fromIdx + safeSize - 1;
+
+    let query = supabase
+      .from('service_requests')
+      .select('*', { count: 'exact' })
+      .eq('is_cancelled', 'F')
+      .is('assigned_technician_id', null);
+
+    query = applyServiceRequestListFilters(query, { search, issueCategory, season });
 
     query = query
       .order('scheduled_end_time', { ascending: true, nullsFirst: false })

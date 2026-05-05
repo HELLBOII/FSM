@@ -6,7 +6,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Expand, CheckCircle, Calendar, Clock3, AlertTriangle, Search, Pencil, X } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import DashboardMap, { MAP_PIN_COLORS } from '@/components/map/DashboardMap';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
 import ServiceRequestForm from '@/components/forms/ServiceRequestForm';
@@ -214,8 +213,6 @@ export default function AdminDashboard() {
   /** Bumped on "Clients in view" row click so the map opens that marker's Leaflet popup. */
   const [listSelectionPopupNonce, setListSelectionPopupNonce] = useState(0);
   const [clientListSearch, setClientListSearch] = useState('');
-  /** `all` | `unscheduled` | `scheduled` | `overdue` | `completed` — matches map pin buckets */
-  const [clientListStatusFilter, setClientListStatusFilter] = useState('all');
   const [historyEditRequest, setHistoryEditRequest] = useState(null);
   const [historyCancelRequest, setHistoryCancelRequest] = useState(null);
 
@@ -335,18 +332,6 @@ export default function AdminDashboard() {
   const filteredMapClients = useMemo(() => {
     let list = mapJobs;
 
-    if (clientListStatusFilter !== 'all') {
-      list = list.filter((job) => {
-        if (clientListStatusFilter === 'completed') return job.mapStatus === 'completed';
-        if (clientListStatusFilter === 'overdue') return job.mapStatus === 'overdue';
-        if (clientListStatusFilter === 'unscheduled') return job.mapStatus === 'unscheduled';
-        if (clientListStatusFilter === 'scheduled') {
-          return job.mapStatus === 'scheduled';
-        }
-        return true;
-      });
-    }
-
     const q = clientListSearch.trim().toLowerCase();
     if (q) {
       list = list.filter((job) => {
@@ -358,7 +343,7 @@ export default function AdminDashboard() {
       });
     }
     return list;
-  }, [mapJobs, clientListStatusFilter, clientListSearch]);
+  }, [mapJobs, clientListSearch]);
 
   const mapMetrics = useMemo(() => {
     const year = new Date().getFullYear();
@@ -575,18 +560,6 @@ export default function AdminDashboard() {
                     <span className="text-[13px] font-medium text-gray-900">Clients in view</span>
                     <span className="shrink-0 text-[11px] text-[#888780]">{filteredMapClients.length} shown</span>
                   </div>
-                  <Select value={clientListStatusFilter} onValueChange={setClientListStatusFilter}>
-                    <SelectTrigger className="h-9 border-black/10 text-xs" aria-label="Filter by job status">
-                      <SelectValue placeholder="Status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All statuses</SelectItem>
-                      <SelectItem value="unscheduled">Unscheduled</SelectItem>
-                      <SelectItem value="scheduled">Scheduled</SelectItem>
-                      <SelectItem value="overdue">Overdue</SelectItem>
-                      <SelectItem value="completed">Completed</SelectItem>
-                    </SelectContent>
-                  </Select>
                   <div className="relative">
                     <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                     <Input
@@ -602,8 +575,8 @@ export default function AdminDashboard() {
                 <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain max-h-[min(50dvh,22rem)] lg:max-h-full">
                   {filteredMapClients.length === 0 ? (
                     <div className="px-3.5 py-8 text-center text-xs text-muted-foreground">
-                      {clientListSearch.trim() || clientListStatusFilter !== 'all' ?
-                      'No clients match your search or status filter.' :
+                      {clientListSearch.trim() ?
+                      'No clients match your search.' :
                       'No clients with map coordinates available.'}
                     </div>
                   ) : (

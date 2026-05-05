@@ -37,15 +37,24 @@ import { differenceInCalendarDays, format, isBefore, parseISO, startOfToday } fr
 import { useAuth } from '@/lib/AuthContext';
 import { mergeServiceRequestUpdateAudit, canCancelServiceRequestRow } from '@/utils/serviceRequestAudit';
 import { Tooltip } from '@/components/ui/tooltip';
-import { formatRequestStatusLabel } from '@/utils/serviceRequestSeason';
-import { SEASON_FILTER_OPTIONS, SERVICE_TYPE_FILTER_OPTIONS } from '@/utils/serviceRequestListFilters';
+import { formatRequestStatusLabel, formatSeasonFromDb } from '@/utils/serviceRequestSeason';
+import { SEASON_FILTER_OPTIONS, SERVICE_TYPE_FILTER_OPTIONS, isAssignedTechnicianIdNull } from '@/utils/serviceRequestListFilters';
+import { cn } from '@/lib/utils';
 
 const CLOSED_STATUSES = ['completed', 'approved', 'closed'];
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
 
+/** Table chrome: light primary tint (not overdue-red). */
+const TABLE_SHELL_CLASS = 'border border-primary/25 bg-white shadow-sm';
+const TABLE_HEADER_BAR_CLASS = 'border-b border-primary/20 bg-primary/5';
+const TABLE_HEAD_ROW_CLASS = 'bg-primary/[0.06]';
+const TABLE_CELL_BORDER = 'border-b border-primary/15';
+const TH_BASE =
+  'border-b border-primary/20 px-2 py-2 text-left text-xs font-medium text-primary sm:px-3.5 sm:text-sm';
+
 const ICON_ACTION_PRIMARY_CLASS =
-  'h-8 w-8 shrink-0 rounded-md bg-primary p-0 text-primary-foreground shadow-sm hover:bg-primary/90 hover:text-primary-foreground';
+  'h-8 w-8 shrink-0 rounded-md border-0 bg-primary p-0 text-white shadow-sm ring-1 ring-primary/20 hover:bg-primary/90 hover:text-white [&_svg]:text-white';
 
 function formatIssueCategoryDisplay(request) {
   const raw = request?.issue_category;
@@ -53,7 +62,7 @@ function formatIssueCategoryDisplay(request) {
   return String(raw).replace(/_/g, ' ');
 }
 
-export default function Scheduling() {
+export default function Unassigned() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const [editRequest, setEditRequest] = useState(null);
@@ -70,29 +79,27 @@ export default function Scheduling() {
   const [filterSeason, setFilterSeason] = useState('all');
   const [cancelConfirmRequest, setCancelConfirmRequest] = useState(null);
 
-  const { data: schedulingPage, isLoading: requestsLoading } = useQuery({
+  const { data: unassignedPage, isLoading: requestsLoading } = useQuery({
     queryKey: [
       'serviceRequests',
-      'schedulingOverdue',
+      'listUnassignedPaged',
       overduePage,
       overduePageSize,
       schedulingTableSearch,
       filterServiceType,
       filterSeason,
-      'assignedOnly',
     ],
     queryFn: () =>
-      serviceRequestService.listOverduePendingPaged({
+      serviceRequestService.listUnassignedPaged({
         page: overduePage,
         pageSize: overduePageSize,
         search: schedulingTableSearch.trim(),
         issueCategory: filterServiceType,
         season: filterSeason,
-        technicianAssignment: 'assigned',
       }),
   });
-  const overdueRows = schedulingPage?.data ?? [];
-  const schedulingTotal = schedulingPage?.total ?? 0;
+  const overdueRows = unassignedPage?.data ?? [];
+  const schedulingTotal = unassignedPage?.total ?? 0;
   const { data: techniciansForAssign = [], isLoading: isLoadingTechniciansForAssign } = useQuery({
     queryKey: ['technicians', 'forAssignDialog'],
     queryFn: () => technicianService.list(),
@@ -305,7 +312,7 @@ export default function Scheduling() {
   };
 
   const canShowAssignTechnician = (request) =>
-    !CLOSED_STATUSES.includes(request.status) && !request.assigned_technician_id;
+    !CLOSED_STATUSES.includes(request.status) && isAssignedTechnicianIdNull(request);
 
   const getDateTimeTone = (request) => {
     const closed = ['completed', 'approved', 'closed'].includes(request.status);
@@ -331,7 +338,7 @@ export default function Scheduling() {
   if (requestsLoading) {
     return (
       <div data-source-location="pages/Scheduling:144:6" data-dynamic-content="false" className="flex items-center justify-center min-h-[60vh]">
-        <LoadingSpinner data-source-location="pages/Scheduling:145:8" data-dynamic-content="false" size="lg" text="Loading schedule..." />
+        <LoadingSpinner data-source-location="pages/Unassigned:loading" data-dynamic-content="false" size="lg" text="Loading unassigned requests..." />
       </div>);
 
   }
@@ -340,14 +347,14 @@ export default function Scheduling() {
     <div className="space-y-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Overdue / Pending</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Unassigned requests</h1>
           <p className="mt-1 text-gray-500">
-            Assigned technicians only; overdue and pending work sorted by date (earliest first). Edit, reschedule, or reassign as needed.
+            Not cancelled, no technician assigned; assign, reschedule, or edit
           </p>
         </div>
       </div>
-      <div className="overflow-hidden rounded-lg border border-[#F7C1C1] bg-white">
-        <div className="flex flex-col gap-2 border-b border-[#F7C1C1] bg-[#FFFBFB] px-3 py-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+      <div className={cn('overflow-hidden rounded-lg', TABLE_SHELL_CLASS)}>
+        <div className={cn('flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end', TABLE_HEADER_BAR_CLASS)}>
           <Select value={filterServiceType} onValueChange={setFilterServiceType}>
             <SelectTrigger className="h-9 w-full border-primary/30 text-sm sm:w-[200px]" aria-label="Filter by service type">
               <SelectValue placeholder="Service type" />
@@ -380,28 +387,34 @@ export default function Scheduling() {
               onChange={(e) => setSchedulingTableSearch(e.target.value)}
               placeholder="Search"
               className="h-9 border-primary/30 pl-8"
-              aria-label="Filter overdue and pending requests"
+              aria-label="Filter unassigned requests"
             />
           </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[780px] border-collapse text-xs sm:min-w-[920px] sm:text-sm">
             <thead>
-              <tr className="bg-[#FFF8F8]">
-                <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Client</th>
-                <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Service type</th>
-                <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Season</th>
-                <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Due date</th>
-                <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Days overdue</th>
-                <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Technician</th>
-                <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Action</th>
+              <tr className={TABLE_HEAD_ROW_CLASS}>
+                <th className={TH_BASE}>Client</th>
+                <th className={TH_BASE}>Service type</th>
+                <th className={TH_BASE}>Season</th>
+                <th className={TH_BASE}>Due date</th>
+                <th className={TH_BASE}>Days overdue</th>
+                <th className={TH_BASE}>Technician</th>
+                <th className={TH_BASE}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {schedulingTotal === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-3.5 py-8 text-center text-xs text-[#888780]">
-                    No overdue or pending requests.
+                  <td colSpan={7} className="px-3.5 py-8 text-center text-xs text-muted-foreground">
+                    No unassigned requests match your filters.
+                  </td>
+                </tr>
+              ) : overdueRows.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-3.5 py-8 text-center text-xs text-muted-foreground">
+                    No unassigned rows on this page.
                   </td>
                 </tr>
               ) : (
@@ -411,19 +424,45 @@ export default function Scheduling() {
                   const daysOverdue = dueDate ? Math.max(1, differenceInCalendarDays(startOfToday(), dueDate)) : null;
                   const showCancelRow = canCancelServiceRequestRow(request);
                   return (
-                    <tr key={request.id} className="border-b border-[#F7C1C1] last:border-b-0">
+                    <tr key={request.id} className={cn(TABLE_CELL_BORDER, 'last:border-b-0')}>
                       <td className="px-2 py-2 font-medium text-gray-900 sm:px-3.5">{request.client_name || '-'}</td>
-                      <td className="px-2 py-2 text-black sm:px-3.5">{formatIssueCategoryDisplay(request)}</td>
-                      <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request.season}</td>
-                      <td className={`px-2 py-2 font-medium sm:px-3.5 ${getDateTimeTone(request)}`}>
+                      <td className="px-2 py-2 text-foreground sm:px-3.5">{formatIssueCategoryDisplay(request)}</td>
+                      <td className="px-2 py-2 text-muted-foreground sm:px-3.5">{request.season}</td>
+                      <td className={cn('px-2 py-2 font-medium sm:px-3.5', getDateTimeTone(request))}>
                         {dueDate ? format(dueDate, 'MMM d, h:mm a') : 'Unscheduled'}
                       </td>
-                      <td className="px-2 py-2 font-medium text-[#A32D2D] sm:px-3.5">
+                      <td className="px-2 py-2 font-medium text-destructive sm:px-3.5">
                         {daysOverdue ? `+${daysOverdue} day${daysOverdue > 1 ? 's' : ''}` : '—'}
                       </td>
-                      <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request.assigned_technician_name || 'Unassigned'}</td>
+                      <td className="px-2 py-2 sm:px-3.5">
+                        <span className="inline-flex rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                          Unassigned
+                        </span>
+                      </td>
                       <td className="px-2 py-2 sm:px-3.5">
                         <div className="flex flex-wrap items-center gap-1.5">
+                          {canShowAssignTechnician(request) ? (
+                            <Tooltip.Root>
+                              <Tooltip.Trigger asChild>
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="default"
+                                  className={ICON_ACTION_PRIMARY_CLASS}
+                                  aria-label="Assign technician"
+                                  onClick={() => setAssignRequest(request)}
+                                >
+                                  <UserRoundCog className="h-3.5 w-3.5 shrink-0" />
+                                </Button>
+                              </Tooltip.Trigger>
+                              <Tooltip.Portal>
+                                <Tooltip.Content side="top" sideOffset={4}>
+                                  Assign technician
+                                  <Tooltip.Arrow className="fill-popover" />
+                                </Tooltip.Content>
+                              </Tooltip.Portal>
+                            </Tooltip.Root>
+                          ) : null}
                           <Tooltip.Root>
                             <Tooltip.Trigger asChild>
                               <Button
@@ -451,7 +490,7 @@ export default function Scheduling() {
                                 size="icon"
                                 variant="default"
                                 className={ICON_ACTION_PRIMARY_CLASS}
-                                aria-label="Reschedule"
+                                aria-label="Reschedule and assign"
                                 onClick={() => handleReschedule(request)}
                               >
                                 <CalendarClock className="h-3.5 w-3.5 shrink-0" />
@@ -464,28 +503,6 @@ export default function Scheduling() {
                               </Tooltip.Content>
                             </Tooltip.Portal>
                           </Tooltip.Root>
-                          {canShowAssignTechnician(request) ? (
-                            <Tooltip.Root>
-                              <Tooltip.Trigger asChild>
-                                <Button
-                                  type="button"
-                                  size="icon"
-                                  variant="default"
-                                  className={ICON_ACTION_PRIMARY_CLASS}
-                                  aria-label="Assign technician"
-                                  onClick={() => setAssignRequest(request)}
-                                >
-                                  <UserRoundCog className="h-3.5 w-3.5 shrink-0" />
-                                </Button>
-                              </Tooltip.Trigger>
-                              <Tooltip.Portal>
-                                <Tooltip.Content side="top" sideOffset={4}>
-                                  Assign technician
-                                  <Tooltip.Arrow className="fill-popover" />
-                                </Tooltip.Content>
-                              </Tooltip.Portal>
-                            </Tooltip.Root>
-                          ) : null}
                           {showCancelRow ? (
                             <Tooltip.Root>
                               <Tooltip.Trigger asChild>
@@ -510,13 +527,6 @@ export default function Scheduling() {
                             </Tooltip.Root>
                           ) : null}
                         </div>
-                        {getStatusLabel(request) !== 'Overdue' && (
-                          <div className="mt-1">
-                            <span className={`inline-block rounded-[10px] px-2 py-0.5 text-[10px] font-medium ${getStatusTone(request)}`}>
-                              {getStatusLabel(request)}
-                            </span>
-                          </div>
-                        )}
                       </td>
                     </tr>
                   );
@@ -526,7 +536,7 @@ export default function Scheduling() {
           </table>
         </div>
         {schedulingTotal > 0 && (
-          <div className="flex flex-col gap-2 border-t border-[#F7C1C1] bg-[#FFFBFB] px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-2 border-t border-primary/20 bg-primary/5 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-gray-600">
               Showing{' '}
               <span className="font-medium text-gray-900">
@@ -652,8 +662,8 @@ export default function Scheduling() {
             <DialogTitle>Reschedule Job</DialogTitle>
             <DialogDescription>
               {rescheduleRequest
-                ? `Update schedule for #${rescheduleRequest.request_number || rescheduleRequest.id} — ${rescheduleRequest.client_name || 'Client'}`
-                : 'Choose a new schedule date'}
+                ? `Update schedule for #${rescheduleRequest.request_number || rescheduleRequest.id} — ${rescheduleRequest.client_name || 'Client'}. Choose a technician to assign with the new time.`
+                : 'Choose a new schedule date and technician'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">

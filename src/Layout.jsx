@@ -59,8 +59,10 @@ const webNavSections = [
 {
   label: 'Requests',
   items: [
-  { name: 'Service Requests', icon: FileText, page: 'ServiceRequests' },
-  { name: 'Overdue / Pending', icon: ClipboardCheck, page: 'Scheduling' }]
+  { name: 'Open / Overdue', icon: FileText, page: 'ServiceRequests' },
+  { name: 'Overdue / Pending', icon: ClipboardCheck, page: 'Scheduling' },
+  { name: 'Unassigned', icon: Users, page: 'Unassigned' }]
+
 },
 {
   label: 'Manage',
@@ -115,7 +117,7 @@ export default function Layout({ children, currentPageName }) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('service_requests')
-        .select('status, scheduled_end_time');
+        .select('status, scheduled_end_time, is_cancelled, assigned_technician_id');
 
       if (error) throw error;
 
@@ -131,8 +133,13 @@ export default function Layout({ children, currentPageName }) {
         due.setHours(0, 0, 0, 0);
         return due > today;
       }).length;
+      const unassigned = requests.filter(
+        (r) =>
+          String(r?.is_cancelled ?? '').toUpperCase() === 'F' &&
+          r?.assigned_technician_id == null
+      ).length;
 
-      return { total, overduePending };
+      return { total, overduePending, unassigned };
     },
     staleTime: 30000,
     refetchInterval: 60000,
@@ -151,6 +158,13 @@ export default function Layout({ children, currentPageName }) {
       return (
         <span className="ml-auto rounded-full bg-[#A32D2D] px-2 py-0.5 text-[10px] font-medium text-white">
           {navRequestCounts.overduePending}
+        </span>
+      );
+    }
+    if (page === 'Unassigned') {
+      return (
+        <span className="ml-auto rounded-full bg-primary px-2 py-0.5 text-[10px] font-medium text-white">
+          {navRequestCounts.unassigned ?? 0}
         </span>
       );
     }
