@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { serviceRequestService, clientService, technicianService, emailService } from '@/services';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, RefreshCw, FileText, AlertTriangle, CheckCircle, Clock3, Pencil, Ban, UserRoundCog, CalendarClock, ChevronLeft, ChevronRight, X, Eye, Search as SearchIcon } from 'lucide-react';
+import { Plus, RefreshCw, FileText, AlertTriangle, CheckCircle, Clock3, Pencil, Ban, UserRoundCog, CalendarClock, ChevronLeft, ChevronRight, X, Eye } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,8 +26,18 @@ import LoadingSpinner from '@/components/common/LoadingSpinner';
 import ServiceRequestForm from '@/components/forms/ServiceRequestForm';
 import { DateTimePicker } from "@/components/ui/DateTimePicker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { toast } from 'sonner';
-import { format, isBefore, startOfToday } from 'date-fns';
+import { endOfDay, format, isBefore, startOfDay, startOfToday } from 'date-fns';
 import { useAuth } from '@/lib/AuthContext';
 import { mergeServiceRequestUpdateAudit, canCancelServiceRequestRow } from '@/utils/serviceRequestAudit';
 import {
@@ -53,27 +63,85 @@ function formatIssueCategoryDisplay(request) {
   return String(raw).replace(/_/g, ' ');
 }
 
-/** Client-side filter for service request table rows (matches visible columns + common fields). */
-function matchesServiceRequestTableSearch(request, raw) {
-  const q = String(raw ?? '').trim().toLowerCase();
+const INITIAL_TABLE_COL_SEARCH = {
+  client: '',
+  serviceType: '',
+  season: '',
+  date: '',
+  technician: '',
+};
+
+const TABLE_DATE_DISPLAY_FORMAT = 'MMM d • h:mm a';
+const TABLE_DATE_SEARCH_FORMAT = 'MMMM d • h:mm a';
+
+function getDueDateRefForColumnSearch(request) {
+  return request?.scheduled_end_time || request?.scheduled_date || request?.scheduled_start_time || null;
+}
+
+function dueDateColumnSearchHaystack(request) {
+  const ref = getDueDateRefForColumnSearch(request);
+  const parts = [];
+  if (ref) {
+    const dt = new Date(ref);
+    if (!Number.isNaN(dt.getTime())) {
+      parts.push(format(dt, TABLE_DATE_DISPLAY_FORMAT));
+      parts.push(format(dt, TABLE_DATE_SEARCH_FORMAT));
+      parts.push(String(ref));
+    }
+  }
+  if (request?.scheduled_date) parts.push(String(request.scheduled_date));
+  return parts;
+}
+
+function scheduledStartColumnSearchHaystack(request) {
+  const ref = request?.scheduled_start_time || null;
+  if (!ref) return [];
+  const dt = new Date(ref);
+  if (Number.isNaN(dt.getTime())) return [String(ref)];
+  return [format(dt, TABLE_DATE_DISPLAY_FORMAT), format(dt, TABLE_DATE_SEARCH_FORMAT), String(ref)];
+}
+
+function columnQueryMatchesHaystack(parts, rawQuery) {
+  const q = String(rawQuery ?? '').trim().toLowerCase();
   if (!q) return true;
-  const hay = [
-    request?.client_name,
-    request?.farm_name,
-    request?.request_number,
-    request?.assigned_technician_name,
-    request?.status,
-    request?.description,
-    request?.scheduled_start_time,
-    request?.scheduled_end_time,
-    request?.scheduled_date,
-    formatIssueCategoryDisplay(request),
-    formatSeasonFromDb(request),
-  ]
+  const hay = parts
     .filter((v) => v != null && String(v).trim() !== '')
     .join(' ')
     .toLowerCase();
   return hay.includes(q);
+}
+
+/** @param {'due'|'scheduled'} dateMode */
+function matchesTableColumnSearch(request, s, dateMode) {
+  if (!columnQueryMatchesHaystack([request?.client_name || '-'], s.client)) return false;
+  if (!columnQueryMatchesHaystack([formatIssueCategoryDisplay(request)], s.serviceType)) return false;
+  if (!columnQueryMatchesHaystack([request?.season], s.season)) return false;
+  const dateParts = dateMode === 'due' ? dueDateColumnSearchHaystack(request) : scheduledStartColumnSearchHaystack(request);
+  if (!columnQueryMatchesHaystack(dateParts, s.date)) return false;
+  if (!columnQueryMatchesHaystack([request?.assigned_technician_name || 'Unassigned'], s.technician)) return false;
+  return true;
+}
+
+/** Column filter field: placeholder mirrors the table header label and typography. */
+function TableColSearchInput({ value, onValueChange, ariaLabel, placeholder, variant = 'default', className }) {
+  const variantClass =
+    variant === 'overdue'
+      ? 'border-[#F7C1C1]/60 text-[#292524] placeholder:text-[#A32D2D] placeholder:opacity-90 focus-visible:border-[#A32D2D] focus-visible:ring-[#F7C1C1]'
+      : 'border-black/15 text-[#292524] placeholder:text-[#888780]';
+  return (
+    <Input
+      type="search"
+      value={value}
+      onChange={(e) => onValueChange(e.target.value)}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
+      className={cn(
+        'h-8 w-full min-w-0 px-2 py-1 text-xs font-medium shadow-none sm:text-sm',
+        variantClass,
+        className
+      )}
+    />
+  );
 }
 
 const CLOSED_STATUSES = ['completed', 'approved', 'closed'];
@@ -94,12 +162,40 @@ const REQUEST_TABLE_COLGROUP = (
     <col className="w-[10%]" />
     <col className="w-[18%]" />
     <col className="w-[15%]" />
-    <col className="w-[25%]" />
+    <col className="w-[13%]" />
   </colgroup>
 );
 
 const ICON_ACTION_PRIMARY_CLASS =
   'h-8 w-8 shrink-0 rounded-md bg-primary p-0 text-primary-foreground shadow-sm hover:bg-primary/90 hover:text-primary-foreground';
+
+function DateOnlyPicker({ date, onDateChange, placeholder, ariaLabel }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          aria-label={ariaLabel}
+          className={cn(
+            "h-9 w-full justify-start border-primary/30 text-left text-sm font-normal sm:w-[180px]",
+            !date && "text-muted-foreground"
+          )}
+        >
+          {date ? format(date, 'MM/dd/yyyy') : placeholder}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-0" align="start">
+        <Calendar
+          mode="single"
+          selected={date ?? undefined}
+          onSelect={(next) => onDateChange(next ?? null)}
+          initialFocus
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 function ServiceRequestRowActions({
   request,
@@ -227,13 +323,19 @@ export default function ServiceRequests() {
   const [historyPageSize, setHistoryPageSize] = useState(10);
   /** Read-only detail dialog from completed / cancelled drill-down rows. */
   const [historyViewRequest, setHistoryViewRequest] = useState(null);
-  const [historyTableSearch, setHistoryTableSearch] = useState('');
-  const [overdueTableSearch, setOverdueTableSearch] = useState('');
-  const [openTableSearch, setOpenTableSearch] = useState('');
+  const [overdueColSearch, setOverdueColSearch] = useState(() => ({ ...INITIAL_TABLE_COL_SEARCH }));
+  const [openColSearch, setOpenColSearch] = useState(() => ({ ...INITIAL_TABLE_COL_SEARCH }));
+  const [historyColSearch, setHistoryColSearch] = useState(() => ({ ...INITIAL_TABLE_COL_SEARCH }));
   const [overdueFilterServiceType, setOverdueFilterServiceType] = useState('all');
   const [overdueFilterSeason, setOverdueFilterSeason] = useState('all');
+  const [overdueFilterDateFrom, setOverdueFilterDateFrom] = useState(null);
+  const [overdueFilterDateTo, setOverdueFilterDateTo] = useState(null);
+  const [overdueFilterTechnicianIds, setOverdueFilterTechnicianIds] = useState([]);
   const [openFilterServiceType, setOpenFilterServiceType] = useState('all');
   const [openFilterSeason, setOpenFilterSeason] = useState('all');
+  const [openFilterDateFrom, setOpenFilterDateFrom] = useState(null);
+  const [openFilterDateTo, setOpenFilterDateTo] = useState(null);
+  const [openFilterTechnicianIds, setOpenFilterTechnicianIds] = useState([]);
   const [historyFilterServiceType, setHistoryFilterServiceType] = useState('all');
   const [historyFilterSeason, setHistoryFilterSeason] = useState('all');
 
@@ -275,6 +377,15 @@ export default function ServiceRequests() {
     queryKey: ['technicians', 'active'],
     queryFn: () => technicianService.filter({ status: 'active' })
   });
+  /** Match AdminDashboard metric inputs to keep "Unscheduled" count consistent across pages. */
+  const { data: metricRequests = [] } = useQuery({
+    queryKey: ['serviceRequests', 'metricsList100'],
+    queryFn: () => serviceRequestService.list('created_at', 'desc', 100),
+  });
+  const { data: metricClients = [] } = useQuery({
+    queryKey: ['clients', 'metricsFullList'],
+    queryFn: () => clientService.list(),
+  });
   const { data: techniciansForAssign = [], isLoading: isLoadingTechniciansForAssign } = useQuery({
     queryKey: ['technicians', 'forAssignDialog'],
     queryFn: () => technicianService.list(),
@@ -285,7 +396,6 @@ export default function ServiceRequests() {
     () =>
       [...requests]
         .filter((r) => isRequestOverdue(r) || r.status === 'pending')
-        .filter((r) => isRequestAssignedTechnician(r))
         .sort(sortRequestsByDateAsc),
     [requests]
   );
@@ -294,15 +404,34 @@ export default function ServiceRequests() {
     () =>
       overdueListBase
         .filter((r) => requestMatchesServiceTypeFilter(r, overdueFilterServiceType))
-        .filter((r) => requestMatchesSeasonFilter(r, overdueFilterSeason)),
-    [overdueListBase, overdueFilterServiceType, overdueFilterSeason]
+        .filter((r) => requestMatchesSeasonFilter(r, overdueFilterSeason))
+        .filter((r) => {
+          if (overdueFilterTechnicianIds.length === 0) return true;
+          return overdueFilterTechnicianIds.includes(String(r.assigned_technician_id ?? ''));
+        })
+        .filter((r) => {
+          if (!overdueFilterDateFrom && !overdueFilterDateTo) return true;
+          const dateRef = r.scheduled_end_time;
+          if (!dateRef) return false;
+          const d = new Date(dateRef);
+          if (Number.isNaN(d.getTime())) return false;
+          if (overdueFilterDateFrom) {
+            const from = startOfDay(overdueFilterDateFrom);
+            if (d < from) return false;
+          }
+          if (overdueFilterDateTo) {
+            const to = endOfDay(overdueFilterDateTo);
+            if (d > to) return false;
+          }
+          return true;
+        }),
+    [overdueListBase, overdueFilterServiceType, overdueFilterSeason, overdueFilterDateFrom, overdueFilterDateTo, overdueFilterTechnicianIds]
   );
 
   const openListBase = useMemo(
     () =>
       [...requests]
         .filter((r) => !CLOSED_STATUSES.includes(r.status) && !isRequestOverdue(r))
-        .filter((r) => isRequestAssignedTechnician(r))
         .sort(sortRequestsByDateAsc),
     [requests]
   );
@@ -311,8 +440,28 @@ export default function ServiceRequests() {
     () =>
       openListBase
         .filter((r) => requestMatchesServiceTypeFilter(r, openFilterServiceType))
-        .filter((r) => requestMatchesSeasonFilter(r, openFilterSeason)),
-    [openListBase, openFilterServiceType, openFilterSeason]
+        .filter((r) => requestMatchesSeasonFilter(r, openFilterSeason))
+        .filter((r) => {
+          if (openFilterTechnicianIds.length === 0) return true;
+          return openFilterTechnicianIds.includes(String(r.assigned_technician_id ?? ''));
+        })
+        .filter((r) => {
+          if (!openFilterDateFrom && !openFilterDateTo) return true;
+          const dateRef = r.scheduled_start_time;
+          if (!dateRef) return false;
+          const d = new Date(dateRef);
+          if (Number.isNaN(d.getTime())) return false;
+          if (openFilterDateFrom) {
+            const from = startOfDay(openFilterDateFrom);
+            if (d < from) return false;
+          }
+          if (openFilterDateTo) {
+            const to = endOfDay(openFilterDateTo);
+            if (d > to) return false;
+          }
+          return true;
+        }),
+    [openListBase, openFilterServiceType, openFilterSeason, openFilterDateFrom, openFilterDateTo, openFilterTechnicianIds]
   );
 
   const {
@@ -340,15 +489,12 @@ export default function ServiceRequests() {
   }, [historyPanel, completedRowsFull, cancelledRowsFull]);
 
   const historyFilteredList = useMemo(() => {
-    let list = historySourceList
-      .filter((r) => isRequestAssignedTechnician(r))
+    return historySourceList
       .filter((r) => requestMatchesServiceTypeFilter(r, historyFilterServiceType))
       .filter((r) => requestMatchesSeasonFilter(r, historyFilterSeason))
+      .filter((r) => matchesTableColumnSearch(r, historyColSearch, 'scheduled'))
       .sort(sortRequestsByDateAsc);
-    const q = historyTableSearch.trim();
-    if (!q) return list;
-    return list.filter((r) => matchesServiceRequestTableSearch(r, q));
-  }, [historySourceList, historyTableSearch, historyFilterServiceType, historyFilterSeason]);
+  }, [historySourceList, historyFilterServiceType, historyFilterSeason, historyColSearch]);
 
   const historyTotal = historyFilteredList.length;
   const historyTotalPages = Math.max(1, Math.ceil(historyTotal / historyPageSize) || 1);
@@ -363,7 +509,7 @@ export default function ServiceRequests() {
 
   useEffect(() => {
     setHistoryPage(1);
-  }, [historyPanel, historyPageSize, historyTableSearch, historyFilterServiceType, historyFilterSeason]);
+  }, [historyPanel, historyPageSize, historyColSearch, historyFilterServiceType, historyFilterSeason]);
 
   useEffect(() => {
     setHistoryFilterServiceType('all');
@@ -371,24 +517,21 @@ export default function ServiceRequests() {
   }, [historyPanel]);
 
   useEffect(() => {
-    setHistoryTableSearch('');
+    setHistoryColSearch({ ...INITIAL_TABLE_COL_SEARCH });
   }, [historyPanel]);
 
   useEffect(() => {
     if (historyPage > historyTotalPages) setHistoryPage(historyTotalPages);
   }, [historyPage, historyTotalPages]);
 
-  const overdueListFiltered = useMemo(() => {
-    const q = overdueTableSearch.trim();
-    if (!q) return overdueListFull;
-    return overdueListFull.filter((r) => matchesServiceRequestTableSearch(r, q));
-  }, [overdueListFull, overdueTableSearch]);
-
-  const openListFiltered = useMemo(() => {
-    const q = openTableSearch.trim();
-    if (!q) return openListFull;
-    return openListFull.filter((r) => matchesServiceRequestTableSearch(r, q));
-  }, [openListFull, openTableSearch]);
+  const overdueListFiltered = useMemo(
+    () => overdueListFull.filter((r) => matchesTableColumnSearch(r, overdueColSearch, 'due')),
+    [overdueListFull, overdueColSearch]
+  );
+  const openListFiltered = useMemo(
+    () => openListFull.filter((r) => matchesTableColumnSearch(r, openColSearch, 'scheduled')),
+    [openListFull, openColSearch]
+  );
 
   const overdueTotal = overdueListFiltered.length;
   const openTotal = openListFiltered.length;
@@ -415,14 +558,6 @@ export default function ServiceRequests() {
   }, [overduePageSize]);
 
   useEffect(() => {
-    setOverduePage(1);
-  }, [overdueTableSearch]);
-
-  useEffect(() => {
-    setOpenPage(1);
-  }, [openTableSearch]);
-
-  useEffect(() => {
     if (openPage > openTotalPages) setOpenPage(openTotalPages);
   }, [openPage, openTotalPages]);
 
@@ -432,11 +567,15 @@ export default function ServiceRequests() {
 
   useEffect(() => {
     setOverduePage(1);
-  }, [overdueFilterServiceType, overdueFilterSeason]);
+  }, [overdueFilterServiceType, overdueFilterSeason, overdueFilterDateFrom, overdueFilterDateTo, overdueFilterTechnicianIds, overdueColSearch]);
 
   useEffect(() => {
     setOpenPage(1);
-  }, [openFilterServiceType, openFilterSeason]);
+  }, [openFilterServiceType, openFilterSeason, openFilterDateFrom, openFilterDateTo, openFilterTechnicianIds, openColSearch]);
+
+  const toggleTechnicianInFilter = (setIds, techId) => {
+    setIds((prev) => (prev.includes(techId) ? prev.filter((id) => id !== techId) : [...prev, techId]));
+  };
 
   const overdueRangeStart = overdueTotal === 0 ? 0 : (overduePage - 1) * overduePageSize + 1;
   const overdueRangeEnd = Math.min(overduePage * overduePageSize, overdueTotal);
@@ -656,22 +795,22 @@ export default function ServiceRequests() {
     if (!dateRef) return '—';
     const dt = new Date(dateRef);
     if (Number.isNaN(dt.getTime())) return '—';
-    return format(dt, 'MMM d • h:mm a');
+    return format(dt, TABLE_DATE_DISPLAY_FORMAT);
   };
 
   const formatScheduledStartDateTime = (dateRef) => {
     if (!dateRef) return '—';
-    return format(new Date(dateRef), 'MMM d • h:mm a');
+    return format(new Date(dateRef), TABLE_DATE_DISPLAY_FORMAT);
   };
 
   const metrics = useMemo(() => {
     const clientIdsWithScheduledOrCompleted = new Set(
-      requests
+      metricRequests
         .filter((r) => ['scheduled', 'completed'].includes(r.status) && r.client_id != null)
         .map((r) => String(r.client_id))
     );
 
-    const unscheduled = clients
+    const unscheduled = metricClients
       .filter((c) => {
         const lat = c.location?.lat ?? c.latitude;
         const lng = c.location?.lng ?? c.longitude;
@@ -684,7 +823,7 @@ export default function ServiceRequests() {
       overduePending: overdueListBase.length,
       unscheduled,
     };
-  }, [requests, clients, openListBase, overdueListBase]);
+  }, [metricRequests, metricClients, openListBase, overdueListBase]);
 
   return (
     <div className="space-y-4">
@@ -692,7 +831,7 @@ export default function ServiceRequests() {
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Service Requests</h1>
           <p className="mt-1 text-gray-500">
-            Review, reschedule, and manage active service requests. Main tables list assigned requests only, earliest date first; use each section&apos;s filters independently.
+            Review, reschedule, and manage active service requests. Overdue and open tables include unassigned requests, earliest date first; use each section&apos;s filters independently.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -814,7 +953,7 @@ export default function ServiceRequests() {
                   ) : null}
                 </div>
                 <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
-                  <Select value={historyFilterServiceType} onValueChange={setHistoryFilterServiceType}>
+                  {/* <Select value={historyFilterServiceType} onValueChange={setHistoryFilterServiceType}>
                     <SelectTrigger
                       className="h-9 w-full shrink-0 border-primary/30 text-sm sm:w-[200px]"
                       aria-label="Filter history by service type"
@@ -843,18 +982,7 @@ export default function ServiceRequests() {
                         </SelectItem>
                       ))}
                     </SelectContent>
-                  </Select>
-                  <div className="relative min-h-9 w-full min-w-0 sm:w-56 sm:max-w-xs">
-                    <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      type="search"
-                      value={historyTableSearch}
-                      onChange={(e) => setHistoryTableSearch(e.target.value)}
-                      placeholder="Search"
-                      className="h-9 border-primary/30 pl-8"
-                      aria-label="Filter completed or cancelled requests"
-                    />
-                  </div>
+                  </Select> */}
                   <Button
                     type="button"
                     variant="ghost"
@@ -887,6 +1015,49 @@ export default function ServiceRequests() {
                           <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Scheduled date</th>
                           <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Technician</th>
                           <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Actions</th>
+                        </tr>
+                        <tr className="bg-[#f4f4f3]">
+                          <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
+                            <TableColSearchInput
+                              value={historyColSearch.client}
+                              onValueChange={(v) => setHistoryColSearch((p) => ({ ...p, client: v }))}
+                              placeholder="Search"
+                              ariaLabel="Search history table by client"
+                            />
+                          </th>
+                          <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
+                            <TableColSearchInput
+                              value={historyColSearch.serviceType}
+                              onValueChange={(v) => setHistoryColSearch((p) => ({ ...p, serviceType: v }))}
+                              placeholder="Search"
+                              ariaLabel="Search history table by service type"
+                            />
+                          </th>
+                          <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
+                            <TableColSearchInput
+                              value={historyColSearch.season}
+                              onValueChange={(v) => setHistoryColSearch((p) => ({ ...p, season: v }))}
+                              placeholder="Search"
+                              ariaLabel="Search history table by season"
+                            />
+                          </th>
+                          <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
+                            <TableColSearchInput
+                              value={historyColSearch.date}
+                              onValueChange={(v) => setHistoryColSearch((p) => ({ ...p, date: v }))}
+                              placeholder="Search"
+                              ariaLabel="Search history table by scheduled date"
+                            />
+                          </th>
+                          <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
+                            <TableColSearchInput
+                              value={historyColSearch.technician}
+                              onValueChange={(v) => setHistoryColSearch((p) => ({ ...p, technician: v }))}
+                              placeholder="Search"
+                              ariaLabel="Search history table by technician"
+                            />
+                          </th>
+                          <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2" aria-hidden />
                         </tr>
                       </thead>
                       <tbody>
@@ -999,7 +1170,7 @@ export default function ServiceRequests() {
           <div>
             <div className="mb-2.5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-[12px] font-medium uppercase tracking-[0.06em] text-[#888780]">All overdue requests</div>
-              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+              {/* <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
                 <Select value={overdueFilterServiceType} onValueChange={setOverdueFilterServiceType}>
                   <SelectTrigger
                     className="h-9 w-full shrink-0 border-primary/30 text-sm sm:w-[200px]"
@@ -1030,18 +1201,53 @@ export default function ServiceRequests() {
                     ))}
                   </SelectContent>
                 </Select>
-                <div className="relative min-h-9 w-full min-w-0 sm:w-56 sm:max-w-xs">
-                  <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    type="search"
-                    value={overdueTableSearch}
-                    onChange={(e) => setOverdueTableSearch(e.target.value)}
-                    placeholder="Search"
-                    className="h-9 border-primary/30 pl-8"
-                    aria-label="Filter overdue requests"
-                  />
-                </div>
-              </div>
+                <DateOnlyPicker
+                  date={overdueFilterDateFrom}
+                  onDateChange={setOverdueFilterDateFrom}
+                  placeholder="From date"
+                  ariaLabel="Overdue table: date from (scheduled end)"
+                />
+                <DateOnlyPicker
+                  date={overdueFilterDateTo}
+                  onDateChange={setOverdueFilterDateTo}
+                  placeholder="To date"
+                  ariaLabel="Overdue table: date to (scheduled end)"
+                />
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-9 w-full justify-between border-primary/30 text-sm sm:w-[220px]"
+                    >
+                      <span className="truncate">
+                        {overdueFilterTechnicianIds.length > 0 ? `${overdueFilterTechnicianIds.length} technician(s)` : 'Technician'}
+                      </span>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuLabel>Filter technicians</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {technicians.length === 0 ? (
+                      <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">No active technicians</DropdownMenuLabel>
+                    ) : (
+                      technicians.map((tech) => {
+                        const techId = String(tech.id);
+                        return (
+                          <DropdownMenuCheckboxItem
+                            key={techId}
+                            checked={overdueFilterTechnicianIds.includes(techId)}
+                            onCheckedChange={() => toggleTechnicianInFilter(setOverdueFilterTechnicianIds, techId)}
+                            onSelect={(e) => e.preventDefault()}
+                          >
+                            {tech.name}
+                          </DropdownMenuCheckboxItem>
+                        );
+                      })
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div> */}
             </div>
             <div className="overflow-hidden rounded-lg border border-[#F7C1C1] bg-white">
               <div className="overflow-x-auto">
@@ -1055,6 +1261,54 @@ export default function ServiceRequests() {
                       <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Due date</th>
                       <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Technician</th>
                       <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Action</th>
+                    </tr>
+                    <tr className="bg-[#FFF5F5]">
+                      <th className="border-b border-[#F7C1C1] px-1.5 py-1.5 sm:px-2">
+                        <TableColSearchInput
+                          value={overdueColSearch.client}
+                          onValueChange={(v) => setOverdueColSearch((p) => ({ ...p, client: v }))}
+                          placeholder="Client"
+                          variant="overdue"
+                          ariaLabel="Search overdue table by client"
+                        />
+                      </th>
+                      <th className="border-b border-[#F7C1C1] px-1.5 py-1.5 sm:px-2">
+                        <TableColSearchInput
+                          value={overdueColSearch.serviceType}
+                          onValueChange={(v) => setOverdueColSearch((p) => ({ ...p, serviceType: v }))}
+                          placeholder="Search"
+                          variant="overdue"
+                          ariaLabel="Search overdue table by service type"
+                        />
+                      </th>
+                      <th className="border-b border-[#F7C1C1] px-1.5 py-1.5 sm:px-2">
+                        <TableColSearchInput
+                          value={overdueColSearch.season}
+                          onValueChange={(v) => setOverdueColSearch((p) => ({ ...p, season: v }))}
+                          placeholder="Search"
+                          variant="overdue"
+                          ariaLabel="Search overdue table by season"
+                        />
+                      </th>
+                      <th className="border-b border-[#F7C1C1] px-1.5 py-1.5 sm:px-2">
+                        <TableColSearchInput
+                          value={overdueColSearch.date}
+                          onValueChange={(v) => setOverdueColSearch((p) => ({ ...p, date: v }))}
+                          placeholder="Search"
+                          variant="overdue"
+                          ariaLabel="Search overdue table by due date"
+                        />
+                      </th>
+                      <th className="border-b border-[#F7C1C1] px-1.5 py-1.5 sm:px-2">
+                        <TableColSearchInput
+                          value={overdueColSearch.technician}
+                          onValueChange={(v) => setOverdueColSearch((p) => ({ ...p, technician: v }))}
+                          placeholder="Search"
+                          variant="overdue"
+                          ariaLabel="Search overdue table by technician"
+                        />
+                      </th>
+                      <th className="border-b border-[#F7C1C1] px-1.5 py-1.5 sm:px-2" aria-hidden />
                     </tr>
                   </thead>
                   <tbody>
@@ -1146,7 +1400,7 @@ export default function ServiceRequests() {
           <div>
             <div className="mb-2.5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-[12px] font-medium uppercase tracking-[0.06em] text-[#888780]">All open requests</div>
-              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+              {/* <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
                 <Select value={openFilterServiceType} onValueChange={setOpenFilterServiceType}>
                   <SelectTrigger
                     className="h-9 w-full shrink-0 border-primary/30 text-sm sm:w-[200px]"
@@ -1177,18 +1431,53 @@ export default function ServiceRequests() {
                     ))}
                   </SelectContent>
                 </Select>
-                <div className="relative min-h-9 w-full min-w-0 sm:w-56 sm:max-w-xs">
-                  <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    type="search"
-                    value={openTableSearch}
-                    onChange={(e) => setOpenTableSearch(e.target.value)}
-                    placeholder="Search"
-                    className="h-9 border-primary/30 pl-8"
-                    aria-label="Filter open requests"
-                  />
-                </div>
-              </div>
+                <DateOnlyPicker
+                  date={openFilterDateFrom}
+                  onDateChange={setOpenFilterDateFrom}
+                  placeholder="From date"
+                  ariaLabel="Open table: date from (scheduled start)"
+                />
+                <DateOnlyPicker
+                  date={openFilterDateTo}
+                  onDateChange={setOpenFilterDateTo}
+                  placeholder="To date"
+                  ariaLabel="Open table: date to (scheduled start)"
+                />
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-9 w-full justify-between border-primary/30 text-sm sm:w-[220px]"
+                    >
+                      <span className="truncate">
+                        {openFilterTechnicianIds.length > 0 ? `${openFilterTechnicianIds.length} technician(s)` : 'Technician'}
+                      </span>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuLabel>Filter technicians</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {technicians.length === 0 ? (
+                      <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">No active technicians</DropdownMenuLabel>
+                    ) : (
+                      technicians.map((tech) => {
+                        const techId = String(tech.id);
+                        return (
+                          <DropdownMenuCheckboxItem
+                            key={techId}
+                            checked={openFilterTechnicianIds.includes(techId)}
+                            onCheckedChange={() => toggleTechnicianInFilter(setOpenFilterTechnicianIds, techId)}
+                            onSelect={(e) => e.preventDefault()}
+                          >
+                            {tech.name}
+                          </DropdownMenuCheckboxItem>
+                        );
+                      })
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div> */}
             </div>
             <div className="overflow-hidden rounded-lg border border-black/10 bg-white">
               <div className="overflow-x-auto">
@@ -1202,6 +1491,49 @@ export default function ServiceRequests() {
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Scheduled date</th>
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Technician</th>
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Action</th>
+                    </tr>
+                    <tr className="bg-[#f4f4f3]">
+                      <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
+                        <TableColSearchInput
+                          value={openColSearch.client}
+                          onValueChange={(v) => setOpenColSearch((p) => ({ ...p, client: v }))}
+                          placeholder="Search"
+                          ariaLabel="Search open requests table by client"
+                        />
+                      </th>
+                      <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
+                        <TableColSearchInput
+                          value={openColSearch.serviceType}
+                          onValueChange={(v) => setOpenColSearch((p) => ({ ...p, serviceType: v }))}
+                          placeholder="Search"
+                          ariaLabel="Search open requests table by service type"
+                        />
+                      </th>
+                      <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
+                        <TableColSearchInput
+                          value={openColSearch.season}
+                          onValueChange={(v) => setOpenColSearch((p) => ({ ...p, season: v }))}
+                          placeholder="Search"
+                          ariaLabel="Search open requests table by season"
+                        />
+                      </th>
+                      <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
+                        <TableColSearchInput
+                          value={openColSearch.date}
+                          onValueChange={(v) => setOpenColSearch((p) => ({ ...p, date: v }))}
+                          placeholder="Search"
+                          ariaLabel="Search open requests table by scheduled date"
+                        />
+                      </th>
+                      <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
+                        <TableColSearchInput
+                          value={openColSearch.technician}
+                          onValueChange={(v) => setOpenColSearch((p) => ({ ...p, technician: v }))}
+                          placeholder="Search"
+                          ariaLabel="Search open requests table by technician"
+                        />
+                      </th>
+                      <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2" aria-hidden />
                     </tr>
                   </thead>
                   <tbody>

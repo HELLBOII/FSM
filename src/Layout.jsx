@@ -60,9 +60,9 @@ const webNavSections = [
   label: 'Requests',
   items: [
   { name: 'Open / Overdue', icon: FileText, page: 'ServiceRequests' },
-  { name: 'Overdue / Pending', icon: ClipboardCheck, page: 'Scheduling' },
-  { name: 'Unassigned', icon: Users, page: 'Unassigned' }]
-
+  // { name: 'Overdue / Pending', icon: ClipboardCheck, page: 'Scheduling' },
+  // { name: 'Unassigned', icon: Users, page: 'Unassigned' }
+  ]
 },
 {
   label: 'Manage',
@@ -122,16 +122,22 @@ export default function Layout({ children, currentPageName }) {
       if (error) throw error;
 
       const requests = data || [];
-      const total = requests.length;
+      const CLOSED_STATUSES = ['completed', 'approved', 'closed'];
       const overduePending = requests.filter((r) => {
-        if (r.status === 'completed') return false;
+        if (String(r?.is_cancelled ?? '').toUpperCase() === 'T') return false;
+        if (CLOSED_STATUSES.includes(String(r?.status ?? '').toLowerCase())) return false;
+        if (String(r?.status ?? '').toLowerCase() === 'pending') return true;
         if (!r.scheduled_end_time) return false;
         const due = new Date(r.scheduled_end_time);
         if (Number.isNaN(due.getTime())) return false;
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         due.setHours(0, 0, 0, 0);
-        return due > today;
+        return due < today;
+      }).length;
+      const openOverdue = requests.filter((r) => {
+        if (String(r?.is_cancelled ?? '').toUpperCase() === 'T') return false;
+        return !CLOSED_STATUSES.includes(String(r?.status ?? '').toLowerCase());
       }).length;
       const unassigned = requests.filter(
         (r) =>
@@ -139,7 +145,7 @@ export default function Layout({ children, currentPageName }) {
           r?.assigned_technician_id == null
       ).length;
 
-      return { total, overduePending, unassigned };
+      return { openOverdue, overduePending, unassigned };
     },
     staleTime: 30000,
     refetchInterval: 60000,
@@ -150,7 +156,7 @@ export default function Layout({ children, currentPageName }) {
     if (page === 'ServiceRequests') {
       return (
         <span className="ml-auto rounded-full bg-[#534AB7] px-2 py-0.5 text-[10px] font-medium text-white">
-          {navRequestCounts.total}
+          {navRequestCounts.openOverdue}
         </span>
       );
     }
