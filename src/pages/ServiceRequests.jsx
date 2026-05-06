@@ -1267,7 +1267,7 @@ export default function ServiceRequests() {
                         <TableColSearchInput
                           value={overdueColSearch.client}
                           onValueChange={(v) => setOverdueColSearch((p) => ({ ...p, client: v }))}
-                          placeholder="Client"
+                          placeholder="Search"
                           variant="overdue"
                           ariaLabel="Search overdue table by client"
                         />
