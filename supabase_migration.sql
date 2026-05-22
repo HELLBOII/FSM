@@ -659,6 +659,22 @@ ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS season TEXT;
 -- Optional: run supabase_rls_jwt_security.sql for JWT-scoped RLS (TO authenticated) helpers.
 
 -- ============================================
+-- App visibility: hide clients/technicians from selection dropdowns when false
+-- ============================================
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS app_visible BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE technicians ADD COLUMN IF NOT EXISTS app_visible BOOLEAN NOT NULL DEFAULT true;
+CREATE INDEX IF NOT EXISTS idx_clients_app_visible ON clients(app_visible);
+CREATE INDEX IF NOT EXISTS idx_technicians_app_visible ON technicians(app_visible);
+
+-- Technician name parts and sign-in username (user_id stores generated userid)
+ALTER TABLE technicians ADD COLUMN IF NOT EXISTS first_name TEXT;
+ALTER TABLE technicians ADD COLUMN IF NOT EXISTS middle_name TEXT;
+ALTER TABLE technicians ADD COLUMN IF NOT EXISTS last_name TEXT;
+ALTER TABLE technicians ADD COLUMN IF NOT EXISTS username TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_technicians_username ON technicians(username) WHERE username IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_technicians_user_id_unique ON technicians(user_id) WHERE user_id IS NOT NULL;
+
+-- ============================================
 -- SUCCESS MESSAGE
 -- ============================================
 DO $$

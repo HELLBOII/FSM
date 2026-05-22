@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { filterAppVisible } from '@/utils/appVisible';
 
 /**
  * Technician Service - CRUD operations for Technicians
@@ -18,6 +19,14 @@ export const technicianService = {
 
     if (error) throw error;
     return data || [];
+  },
+
+  /**
+   * Technicians visible in app selection dropdowns (app_visible !== false).
+   */
+  async listForSelection(orderBy = 'created_at', orderDirection = 'desc') {
+    const rows = await this.list(orderBy, orderDirection);
+    return filterAppVisible(rows);
   },
 
   /**
@@ -50,7 +59,7 @@ export const technicianService = {
     if (q) {
       const esc = q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
       query = query.or(
-        `name.ilike.%${esc}%,employee_id.ilike.%${esc}%,phone.ilike.%${esc}%`
+        `name.ilike.%${esc}%,first_name.ilike.%${esc}%,last_name.ilike.%${esc}%,username.ilike.%${esc}%,employee_id.ilike.%${esc}%,phone.ilike.%${esc}%`
       );
     }
 
@@ -179,7 +188,7 @@ export const technicianService = {
       .eq('status', 'active');
 
     if (error) throw error;
-    return data || [];
+    return filterAppVisible(data || []);
   },
 
   /**
@@ -226,7 +235,31 @@ export const technicianService = {
 
     const { data, error } = await query.order('created_at', { ascending: false });
     if (error) throw error;
-    return data || [];
+    return filterAppVisible(data || []);
+  },
+
+  /**
+   * Active technicians for selection UIs (status active + app_visible).
+   */
+  async listActiveForSelection() {
+    return this.filter({ status: 'active' });
+  },
+
+  /**
+   * Existing username and employee_id values for uniqueness checks.
+   * @returns {Promise<{ usernames: string[], employeeIds: string[] }>}
+   */
+  async listUsedIdentifiers() {
+    const { data, error } = await supabase
+      .from('technicians')
+      .select('username, employee_id');
+
+    if (error) throw error;
+    const rows = data || [];
+    return {
+      usernames: rows.map((r) => r.username).filter(Boolean),
+      employeeIds: rows.map((r) => r.employee_id).filter(Boolean)
+    };
   }
 };
 

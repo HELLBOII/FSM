@@ -37,6 +37,7 @@ import {
 "@/components/ui/dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { DateTimePicker } from "@/components/ui/DateTimePicker";
 import PageHeader from '@/components/common/PageHeader';
 import StatusBadge from '@/components/ui/StatusBadge';
@@ -45,15 +46,6 @@ import EmptyState from '@/components/common/EmptyState';
 import ClientNotesHistoryDialog from '@/components/clients/ClientNotesHistoryDialog';
 import { normalizeNotesHistory } from '@/utils/clientNotesHistory';
 import { toast } from 'sonner';
-
-const irrigationSystems = [
-'Drip Irrigation',
-'Sprinkler System',
-'Center Pivot',
-'Flood Irrigation',
-'Micro Sprinkler',
-'Subsurface Drip'];
-
 
 const PAGE_SIZE_OPTIONS = [12, 24, 48];
 
@@ -127,7 +119,8 @@ export default function Clients() {
     total_acreage: '',
     irrigation_systems: [],
     notes: '',
-    status: 'active'
+    status: 'active',
+    app_visible: true
   });
 
   useEffect(() => {
@@ -170,20 +163,21 @@ export default function Clients() {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
-  const { data: dbIrrigationSystems = [], isLoading: isLoadingIrrigationSystems } = useQuery({
+  const { data: dbIrrigationSystems = [] } = useQuery({
     queryKey: ['irrigationSystems'],
     queryFn: () => irrigationSystemsService.list()
   });
 
-  // Get all unique irrigation systems from database and combine with hardcoded ones
-  const getAllIrrigationSystems = (clientsData = [], dbSystems = []) => {
-    const dbSystemNames = dbSystems.map(sys => sys.irrigation_systems);
-    const clientSystems = clientsData.flatMap(client => client.irrigation_systems || []);
-    const allSystems = [...new Set([...irrigationSystems, ...dbSystemNames, ...clientSystems])];
-    return allSystems.sort();
-  };
-
-  const availableIrrigationSystems = getAllIrrigationSystems(clients, dbIrrigationSystems);
+  /** DB rows + any labels already on clients (legacy / not yet in `irrigation_systems` table). */
+  const availableIrrigationSystems = useMemo(() => {
+    const fromDb = dbIrrigationSystems
+      .map((row) => (row.irrigation_systems == null ? '' : String(row.irrigation_systems).trim()))
+      .filter(Boolean);
+    const fromClients = clients.flatMap((client) =>
+      (client.irrigation_systems || []).map((s) => (s == null ? '' : String(s).trim())).filter(Boolean)
+    );
+    return [...new Set([...fromDb, ...fromClients])].sort((a, b) => a.localeCompare(b));
+  }, [clients, dbIrrigationSystems]);
 
   const createIrrigationSystemMutation = useMutation({
     mutationFn: (data) => irrigationSystemsService.create(data),
@@ -200,26 +194,23 @@ export default function Clients() {
 
   const handleAddIrrigationSystem = async () => {
     const systemName = newIrrigationSystem.trim();
-    if (systemName && !availableIrrigationSystems.includes(systemName)) {
-      // Check if it already exists in database
-      try {
-        const existing = await irrigationSystemsService.getByName(systemName);
-        if (existing) {
-          toast.error('This irrigation system already exists');
-          return;
-        }
-      } catch (error) {
-        // If error is not "not found", rethrow it
-        if (error.code !== 'PGRST116') {
-          throw error;
-        }
-      }
+    if (!systemName) return;
 
-      // Create new irrigation system in database
-      await createIrrigationSystemMutation.mutateAsync({
-        irrigation_systems: systemName
-      });
+    try {
+      const existing = await irrigationSystemsService.getByName(systemName);
+      if (existing) {
+        toast.error('This irrigation system already exists');
+        return;
+      }
+    } catch (error) {
+      if (error.code !== 'PGRST116') {
+        throw error;
+      }
     }
+
+    await createIrrigationSystemMutation.mutateAsync({
+      irrigation_systems: systemName
+    });
   };
 
   const { data: requests = [] } = useQuery({
@@ -270,7 +261,8 @@ export default function Clients() {
       total_acreage: '',
       irrigation_systems: [],
       notes: '',
-      status: 'active'
+      status: 'active',
+      app_visible: true
     });
   };
 
@@ -299,7 +291,8 @@ export default function Clients() {
       total_acreage: client.total_acreage?.toString() || '',
       irrigation_systems: client.irrigation_systems || [],
       notes: latestNoteText || client.notes || '',
-      status: client.status || 'active'
+      status: client.status || 'active',
+      app_visible: client.app_visible !== false
     });
     setShowForm(true);
   };
@@ -323,7 +316,8 @@ export default function Clients() {
       longitude: lng,
       location: lat != null && lng != null ? { lat, lng } : null,
       notes_history: selectedClient ? normalizeNotesHistory(selectedClient.notes_history) : [],
-      inactivedate: inactiveIso
+      inactivedate: inactiveIso,
+      app_visible: formData.app_visible !== false
     };
     if (selectedClient) {
       await updateMutation.mutateAsync({ id: selectedClient.id, data: submitData });
@@ -474,6 +468,11 @@ export default function Clients() {
 
                     <div data-source-location="pages/Clients:271:20" data-dynamic-content="true" className="flex items-center justify-between mb-3 shrink-0">
                       <StatusBadge data-source-location="pages/Clients:272:22" data-dynamic-content="false" status={client.status} size="sm" />
+                      {client.app_visible === false && (
+                        <Badge className="text-xs bg-red-100 text-red-600 border-red-200 hover:bg-red-100">
+                          Hidden from app
+                        </Badge>
+                      )}
                       {client.total_acreage &&
                   <span data-source-location="pages/Clients:274:24" data-dynamic-content="true" className="text-sm text-gray-500">{client.total_acreage} acres</span>
                   }
@@ -660,6 +659,22 @@ export default function Clients() {
                   value={formData.longitude}
                   onChange={(e) => setFormData((prev) => ({ ...prev, longitude: e.target.value }))}
                   placeholder="-115.1522" />
+                </div>
+
+                <div className="flex items-center justify-between gap-4 rounded-lg border border-primary/20 bg-muted/30 px-4 py-3">
+                  <div className="space-y-0.5">
+                    <Label className="text-sm font-medium">Visible in application</Label>
+                    <p className="text-xs text-muted-foreground">
+                      When off, this client is hidden from service request and selection lists in the app.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={formData.app_visible !== false}
+                    onCheckedChange={(checked) =>
+                      setFormData((prev) => ({ ...prev, app_visible: checked }))
+                    }
+                    aria-label="Visible in application"
+                  />
                 </div>
               </div>
 
@@ -929,7 +944,15 @@ export default function Clients() {
                 type="button"
                 className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground"
                 onClick={handleAddIrrigationSystem}
-                disabled={!newIrrigationSystem.trim() || availableIrrigationSystems.includes(newIrrigationSystem.trim()) || createIrrigationSystemMutation.isPending}
+                disabled={
+                  !newIrrigationSystem.trim() ||
+                  createIrrigationSystemMutation.isPending ||
+                  dbIrrigationSystems.some(
+                    (row) =>
+                      (row.irrigation_systems || '').trim().toLowerCase() ===
+                      newIrrigationSystem.trim().toLowerCase()
+                  )
+                }
               >
                 {createIrrigationSystemMutation.isPending ? 'Adding...' : 'Add System'}
               </Button>

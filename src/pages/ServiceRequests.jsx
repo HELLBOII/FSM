@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { serviceRequestService, clientService, technicianService, emailService } from '@/services';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, RefreshCw, FileText, AlertTriangle, CheckCircle, Clock3, Pencil, Ban, UserRoundCog, CalendarClock, ChevronLeft, ChevronRight, X, Eye } from 'lucide-react';
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Dialog,
@@ -53,9 +52,6 @@ import { Tooltip } from '@/components/ui/tooltip';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
 
-const TABLE_COLS_CLASS =
-  'table-fixed w-full min-w-[820px] border-collapse text-xs sm:min-w-[880px] sm:text-sm';
-
 /** Service type column: `issue_category` formatted for display. */
 function formatIssueCategoryDisplay(request) {
   const raw = request?.issue_category;
@@ -63,86 +59,7 @@ function formatIssueCategoryDisplay(request) {
   return String(raw).replace(/_/g, ' ');
 }
 
-const INITIAL_TABLE_COL_SEARCH = {
-  client: '',
-  serviceType: '',
-  season: '',
-  date: '',
-  technician: '',
-};
-
 const TABLE_DATE_DISPLAY_FORMAT = 'MMM d • h:mm a';
-const TABLE_DATE_SEARCH_FORMAT = 'MMMM d • h:mm a';
-
-function getDueDateRefForColumnSearch(request) {
-  return request?.scheduled_end_time || request?.scheduled_date || request?.scheduled_start_time || null;
-}
-
-function dueDateColumnSearchHaystack(request) {
-  const ref = getDueDateRefForColumnSearch(request);
-  const parts = [];
-  if (ref) {
-    const dt = new Date(ref);
-    if (!Number.isNaN(dt.getTime())) {
-      parts.push(format(dt, TABLE_DATE_DISPLAY_FORMAT));
-      parts.push(format(dt, TABLE_DATE_SEARCH_FORMAT));
-      parts.push(String(ref));
-    }
-  }
-  if (request?.scheduled_date) parts.push(String(request.scheduled_date));
-  return parts;
-}
-
-function scheduledStartColumnSearchHaystack(request) {
-  const ref = request?.scheduled_start_time || null;
-  if (!ref) return [];
-  const dt = new Date(ref);
-  if (Number.isNaN(dt.getTime())) return [String(ref)];
-  return [format(dt, TABLE_DATE_DISPLAY_FORMAT), format(dt, TABLE_DATE_SEARCH_FORMAT), String(ref)];
-}
-
-function columnQueryMatchesHaystack(parts, rawQuery) {
-  const q = String(rawQuery ?? '').trim().toLowerCase();
-  if (!q) return true;
-  const hay = parts
-    .filter((v) => v != null && String(v).trim() !== '')
-    .join(' ')
-    .toLowerCase();
-  return hay.includes(q);
-}
-
-/** @param {'due'|'scheduled'} dateMode */
-function matchesTableColumnSearch(request, s, dateMode) {
-  if (!columnQueryMatchesHaystack([request?.client_name || '-'], s.client)) return false;
-  if (!columnQueryMatchesHaystack([formatIssueCategoryDisplay(request)], s.serviceType)) return false;
-  if (!columnQueryMatchesHaystack([request?.season], s.season)) return false;
-  const dateParts = dateMode === 'due' ? dueDateColumnSearchHaystack(request) : scheduledStartColumnSearchHaystack(request);
-  if (!columnQueryMatchesHaystack(dateParts, s.date)) return false;
-  if (!columnQueryMatchesHaystack([request?.assigned_technician_name || 'Unassigned'], s.technician)) return false;
-  return true;
-}
-
-/** Column filter field: placeholder mirrors the table header label and typography. */
-function TableColSearchInput({ value, onValueChange, ariaLabel, placeholder, variant = 'default', className }) {
-  const variantClass =
-    variant === 'overdue'
-      ? 'border-[#F7C1C1]/60 text-[#292524] placeholder:text-[#A32D2D] placeholder:opacity-90 focus-visible:border-[#A32D2D] focus-visible:ring-[#F7C1C1]'
-      : 'border-black/15 text-[#292524] placeholder:text-[#888780]';
-  return (
-    <Input
-      type="search"
-      value={value}
-      onChange={(e) => onValueChange(e.target.value)}
-      placeholder={placeholder}
-      aria-label={ariaLabel}
-      className={cn(
-        'h-8 w-full min-w-0 px-2 py-1 text-xs font-medium shadow-none sm:text-sm',
-        variantClass,
-        className
-      )}
-    />
-  );
-}
 
 const CLOSED_STATUSES = ['completed', 'approved', 'closed'];
 
@@ -155,13 +72,45 @@ function isRequestOverdue(request) {
   return isBefore(d, startOfToday());
 }
 
+/** Same reference logic as the scheduled column; used only for schedule date range filtering. */
+function getScheduledInstantForDateRangeFilter(request) {
+  const ref = isRequestOverdue(request)
+    ? (request.scheduled_end_time || request.scheduled_start_time || null)
+    : (request.scheduled_start_time || null);
+  if (!ref) return null;
+  const d = new Date(ref);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function getRequestStatusFilterBucket(request) {
+  if (String(request?.is_cancelled || '').toUpperCase() === 'T' || String(request?.status || '').toLowerCase() === 'cancelled') {
+    return 'cancelled';
+  }
+  if (String(request?.status || '').toLowerCase() === 'completed') {
+    return 'completed';
+  }
+  if (isRequestOverdue(request) || String(request?.status || '').toLowerCase() === 'pending') {
+    return 'overdue';
+  }
+  return 'scheduled';
+}
+
+function getRequestStatusBadgeMeta(request) {
+  const bucket = getRequestStatusFilterBucket(request);
+  if (bucket === 'cancelled') return { label: 'Cancelled', className: 'bg-stone-100 text-stone-700 border-stone-300' };
+  if (bucket === 'completed') return { label: 'Completed', className: 'bg-emerald-100 text-emerald-700 border-emerald-300' };
+  if (bucket === 'overdue') return { label: 'Overdue', className: 'bg-rose-100 text-rose-700 border-rose-300' };
+  return { label: 'Scheduled', className: 'bg-violet-100 text-violet-700 border-violet-300' };
+}
+
 const REQUEST_TABLE_COLGROUP = (
   <colgroup>
-    <col className="w-[17%]" />
+    <col className="w-[16%]" />
     <col className="w-[15%]" />
     <col className="w-[10%]" />
-    <col className="w-[18%]" />
-    <col className="w-[15%]" />
+    <col className="w-[16%]" />
+    <col className="w-[12%]" />
+    <col className="w-[14%]" />
     <col className="w-[13%]" />
   </colgroup>
 );
@@ -178,7 +127,7 @@ function DateOnlyPicker({ date, onDateChange, placeholder, ariaLabel }) {
           variant="outline"
           aria-label={ariaLabel}
           className={cn(
-            "h-9 w-full justify-start border-primary/30 text-left text-sm font-normal sm:w-[180px]",
+            "h-9 w-full justify-start border-primary/30 text-left text-sm font-normal",
             !date && "text-muted-foreground"
           )}
         >
@@ -207,6 +156,9 @@ function ServiceRequestRowActions({
   onOpenCancelConfirm,
   cancelBusy,
 }) {
+  const statusKey = String(request?.status || '').toLowerCase();
+  const isCancelled = statusKey === 'cancelled' || String(request?.is_cancelled || '').toUpperCase() === 'T';
+  const isViewOnly = statusKey === 'completed' || isCancelled;
   const showCancel = canCancelServiceRequestRow(request);
   return (
     <div className="flex flex-wrap items-center justify-start gap-1.5">
@@ -217,20 +169,24 @@ function ServiceRequestRowActions({
             variant="default"
             size="icon"
             className={ICON_ACTION_PRIMARY_CLASS}
-            aria-label="Edit request"
+            aria-label={isViewOnly ? 'View request' : 'Edit request'}
             onClick={() => onEdit(request)}
           >
-            <Pencil className="h-3.5 w-3.5 shrink-0" />
+            {isViewOnly ? (
+              <Eye className="h-3.5 w-3.5 shrink-0" />
+            ) : (
+              <Pencil className="h-3.5 w-3.5 shrink-0" />
+            )}
           </Button>
         </Tooltip.Trigger>
         <Tooltip.Portal>
           <Tooltip.Content side="top" sideOffset={4}>
-            Edit request
-            <Tooltip.Arrow className="fill-popover" />
+            {isViewOnly ? 'View request' : 'Edit request'}
+            <Tooltip.Arrow />
           </Tooltip.Content>
         </Tooltip.Portal>
       </Tooltip.Root>
-      {canAssign ? (
+      {!isViewOnly && canAssign ? (
         <Tooltip.Root>
           <Tooltip.Trigger asChild>
             <Button
@@ -247,12 +203,12 @@ function ServiceRequestRowActions({
           <Tooltip.Portal>
             <Tooltip.Content side="top" sideOffset={4}>
               Assign technician
-              <Tooltip.Arrow className="fill-popover" />
+              <Tooltip.Arrow />
             </Tooltip.Content>
           </Tooltip.Portal>
         </Tooltip.Root>
       ) : null}
-      {showReschedule ? (
+      {!isViewOnly && showReschedule ? (
         <Tooltip.Root>
           <Tooltip.Trigger asChild>
             <Button
@@ -269,12 +225,12 @@ function ServiceRequestRowActions({
           <Tooltip.Portal>
             <Tooltip.Content side="top" sideOffset={4}>
               Reschedule
-              <Tooltip.Arrow className="fill-popover" />
+              <Tooltip.Arrow />
             </Tooltip.Content>
           </Tooltip.Portal>
         </Tooltip.Root>
       ) : null}
-      {showCancel && onOpenCancelConfirm ? (
+      {!isViewOnly && showCancel && onOpenCancelConfirm ? (
         <Tooltip.Root>
           <Tooltip.Trigger asChild>
             <Button
@@ -292,7 +248,7 @@ function ServiceRequestRowActions({
           <Tooltip.Portal>
             <Tooltip.Content side="top" sideOffset={4}>
               Cancel request
-              <Tooltip.Arrow className="fill-popover" />
+              <Tooltip.Arrow />
             </Tooltip.Content>
           </Tooltip.Portal>
         </Tooltip.Root>
@@ -306,49 +262,47 @@ export default function ServiceRequests() {
   const { user } = useAuth();
   const [showForm, setShowForm] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState(null);
+  const [formMode, setFormMode] = useState('edit');
+  const [isOpeningForm, setIsOpeningForm] = useState(false);
+  const [isViewActionDelayActive, setIsViewActionDelayActive] = useState(false);
+  const openingTimerRef = useRef(null);
+  const viewDelayTimerRef = useRef(null);
   const [showRescheduleDialog, setShowRescheduleDialog] = useState(false);
   const [rescheduleRequest, setRescheduleRequest] = useState(null);
   const [rescheduleDateTime, setRescheduleDateTime] = useState(null);
   const [rescheduleTechnicianId, setRescheduleTechnicianId] = useState('');
-  const [overduePage, setOverduePage] = useState(1);
-  const [overduePageSize, setOverduePageSize] = useState(10);
-  const [openPage, setOpenPage] = useState(1);
-  const [openPageSize, setOpenPageSize] = useState(10);
+  const [unifiedPage, setUnifiedPage] = useState(1);
+  const [unifiedPageSize, setUnifiedPageSize] = useState(10);
   const [assignRequest, setAssignRequest] = useState(null);
   const [assignSelectedTechnician, setAssignSelectedTechnician] = useState(null);
   const [cancelConfirmRequest, setCancelConfirmRequest] = useState(null);
-  /** Metrics drill-down: table like "All open requests" for completed or cancelled. */
-  const [historyPanel, setHistoryPanel] = useState(null);
-  const [historyPage, setHistoryPage] = useState(1);
-  const [historyPageSize, setHistoryPageSize] = useState(10);
-  /** Read-only detail dialog from completed / cancelled drill-down rows. */
-  const [historyViewRequest, setHistoryViewRequest] = useState(null);
-  const [overdueColSearch, setOverdueColSearch] = useState(() => ({ ...INITIAL_TABLE_COL_SEARCH }));
-  const [openColSearch, setOpenColSearch] = useState(() => ({ ...INITIAL_TABLE_COL_SEARCH }));
-  const [historyColSearch, setHistoryColSearch] = useState(() => ({ ...INITIAL_TABLE_COL_SEARCH }));
-  const [overdueFilterServiceType, setOverdueFilterServiceType] = useState('all');
-  const [overdueFilterSeason, setOverdueFilterSeason] = useState('all');
-  const [overdueFilterDateFrom, setOverdueFilterDateFrom] = useState(null);
-  const [overdueFilterDateTo, setOverdueFilterDateTo] = useState(null);
-  const [overdueFilterTechnicianIds, setOverdueFilterTechnicianIds] = useState([]);
-  const [openFilterServiceType, setOpenFilterServiceType] = useState('all');
-  const [openFilterSeason, setOpenFilterSeason] = useState('all');
-  const [openFilterDateFrom, setOpenFilterDateFrom] = useState(null);
-  const [openFilterDateTo, setOpenFilterDateTo] = useState(null);
-  const [openFilterTechnicianIds, setOpenFilterTechnicianIds] = useState([]);
-  const [historyFilterServiceType, setHistoryFilterServiceType] = useState('all');
-  const [historyFilterSeason, setHistoryFilterSeason] = useState('all');
+  const [filterServiceTypes, setFilterServiceTypes] = useState([]);
+  const [filterSeasons, setFilterSeasons] = useState([]);
+  const [filterScheduledStartDate, setFilterScheduledStartDate] = useState(null);
+  const [filterScheduledEndDate, setFilterScheduledEndDate] = useState(null);
+  const [filterTechnicianIds, setFilterTechnicianIds] = useState([]);
+  const [filterStatuses, setFilterStatuses] = useState([]);
 
   // Check URL params for actions
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('action') === 'new') {
+      setFormMode('edit');
+      setIsOpeningForm(false);
+      setIsViewActionDelayActive(false);
       setShowForm(true);
     }
     if (params.get('id')) {
 
       // TODO: Load and show specific request
     }}, []);
+
+  useEffect(() => {
+    return () => {
+      if (openingTimerRef.current) clearTimeout(openingTimerRef.current);
+      if (viewDelayTimerRef.current) clearTimeout(viewDelayTimerRef.current);
+    };
+  }, []);
 
   /** Requests + cancelled count load together; tables do not wait on full client list. */
   const {
@@ -374,8 +328,8 @@ export default function ServiceRequests() {
   const clients = clientsData ?? [];
 
   const { data: technicians = [] } = useQuery({
-    queryKey: ['technicians', 'active'],
-    queryFn: () => technicianService.filter({ status: 'active' })
+    queryKey: ['technicians', 'active', 'forSelection'],
+    queryFn: () => technicianService.listActiveForSelection()
   });
   /** Match AdminDashboard metric inputs to keep "Unscheduled" count consistent across pages. */
   const { data: metricRequests = [] } = useQuery({
@@ -387,8 +341,8 @@ export default function ServiceRequests() {
     queryFn: () => clientService.list(),
   });
   const { data: techniciansForAssign = [], isLoading: isLoadingTechniciansForAssign } = useQuery({
-    queryKey: ['technicians', 'forAssignDialog'],
-    queryFn: () => technicianService.list(),
+    queryKey: ['technicians', 'forAssignDialog', 'forSelection'],
+    queryFn: () => technicianService.listForSelection(),
     enabled: !!assignRequest,
   });
 
@@ -400,34 +354,6 @@ export default function ServiceRequests() {
     [requests]
   );
 
-  const overdueListFull = useMemo(
-    () =>
-      overdueListBase
-        .filter((r) => requestMatchesServiceTypeFilter(r, overdueFilterServiceType))
-        .filter((r) => requestMatchesSeasonFilter(r, overdueFilterSeason))
-        .filter((r) => {
-          if (overdueFilterTechnicianIds.length === 0) return true;
-          return overdueFilterTechnicianIds.includes(String(r.assigned_technician_id ?? ''));
-        })
-        .filter((r) => {
-          if (!overdueFilterDateFrom && !overdueFilterDateTo) return true;
-          const dateRef = r.scheduled_end_time;
-          if (!dateRef) return false;
-          const d = new Date(dateRef);
-          if (Number.isNaN(d.getTime())) return false;
-          if (overdueFilterDateFrom) {
-            const from = startOfDay(overdueFilterDateFrom);
-            if (d < from) return false;
-          }
-          if (overdueFilterDateTo) {
-            const to = endOfDay(overdueFilterDateTo);
-            if (d > to) return false;
-          }
-          return true;
-        }),
-    [overdueListBase, overdueFilterServiceType, overdueFilterSeason, overdueFilterDateFrom, overdueFilterDateTo, overdueFilterTechnicianIds]
-  );
-
   const openListBase = useMemo(
     () =>
       [...requests]
@@ -436,151 +362,101 @@ export default function ServiceRequests() {
     [requests]
   );
 
-  const openListFull = useMemo(
-    () =>
-      openListBase
-        .filter((r) => requestMatchesServiceTypeFilter(r, openFilterServiceType))
-        .filter((r) => requestMatchesSeasonFilter(r, openFilterSeason))
-        .filter((r) => {
-          if (openFilterTechnicianIds.length === 0) return true;
-          return openFilterTechnicianIds.includes(String(r.assigned_technician_id ?? ''));
-        })
-        .filter((r) => {
-          if (!openFilterDateFrom && !openFilterDateTo) return true;
-          const dateRef = r.scheduled_start_time;
-          if (!dateRef) return false;
-          const d = new Date(dateRef);
-          if (Number.isNaN(d.getTime())) return false;
-          if (openFilterDateFrom) {
-            const from = startOfDay(openFilterDateFrom);
-            if (d < from) return false;
-          }
-          if (openFilterDateTo) {
-            const to = endOfDay(openFilterDateTo);
-            if (d > to) return false;
-          }
-          return true;
-        }),
-    [openListBase, openFilterServiceType, openFilterSeason, openFilterDateFrom, openFilterDateTo, openFilterTechnicianIds]
-  );
-
-  const {
-    data: completedRowsFull = [],
-    isFetching: isFetchingCompletedRows,
-  } = useQuery({
-    queryKey: ['serviceRequests', 'completedRows', 500],
-    queryFn: () => serviceRequestService.listCompleted(500),
-    enabled: historyPanel === 'completed',
-  });
-
   const {
     data: cancelledRowsFull = [],
-    isFetching: isFetchingCancelledRows,
   } = useQuery({
     queryKey: ['serviceRequests', 'cancelledRows', 500],
     queryFn: () => serviceRequestService.listCancelled(500),
-    enabled: historyPanel === 'cancelled',
+    enabled: true,
   });
 
-  const historySourceList = useMemo(() => {
-    if (historyPanel === 'completed') return completedRowsFull;
-    if (historyPanel === 'cancelled') return cancelledRowsFull;
-    return [];
-  }, [historyPanel, completedRowsFull, cancelledRowsFull]);
-
-  const historyFilteredList = useMemo(() => {
-    return historySourceList
-      .filter((r) => requestMatchesServiceTypeFilter(r, historyFilterServiceType))
-      .filter((r) => requestMatchesSeasonFilter(r, historyFilterSeason))
-      .filter((r) => matchesTableColumnSearch(r, historyColSearch, 'scheduled'))
-      .sort(sortRequestsByDateAsc);
-  }, [historySourceList, historyFilterServiceType, historyFilterSeason, historyColSearch]);
-
-  const historyTotal = historyFilteredList.length;
-  const historyTotalPages = Math.max(1, Math.ceil(historyTotal / historyPageSize) || 1);
-
-  const historyPagedList = useMemo(() => {
-    const from = (historyPage - 1) * historyPageSize;
-    return historyFilteredList.slice(from, from + historyPageSize);
-  }, [historyFilteredList, historyPage, historyPageSize]);
-
-  const historyRangeStart = historyTotal === 0 ? 0 : (historyPage - 1) * historyPageSize + 1;
-  const historyRangeEnd = Math.min(historyPage * historyPageSize, historyTotal);
-
-  useEffect(() => {
-    setHistoryPage(1);
-  }, [historyPanel, historyPageSize, historyColSearch, historyFilterServiceType, historyFilterSeason]);
-
-  useEffect(() => {
-    setHistoryFilterServiceType('all');
-    setHistoryFilterSeason('all');
-  }, [historyPanel]);
-
-  useEffect(() => {
-    setHistoryColSearch({ ...INITIAL_TABLE_COL_SEARCH });
-  }, [historyPanel]);
-
-  useEffect(() => {
-    if (historyPage > historyTotalPages) setHistoryPage(historyTotalPages);
-  }, [historyPage, historyTotalPages]);
-
-  const overdueListFiltered = useMemo(
-    () => overdueListFull.filter((r) => matchesTableColumnSearch(r, overdueColSearch, 'due')),
-    [overdueListFull, overdueColSearch]
-  );
-  const openListFiltered = useMemo(
-    () => openListFull.filter((r) => matchesTableColumnSearch(r, openColSearch, 'scheduled')),
-    [openListFull, openColSearch]
+  const allActiveCombinedList = useMemo(
+    () => {
+      const byId = new Map();
+      [...requests, ...cancelledRowsFull].forEach((r) => {
+        if (!r?.id) return;
+        byId.set(String(r.id), r);
+      });
+      return [...byId.values()].sort(sortRequestsByDateAsc);
+    },
+    [requests, cancelledRowsFull]
   );
 
-  const overdueTotal = overdueListFiltered.length;
-  const openTotal = openListFiltered.length;
+  const unifiedFilteredList = useMemo(
+    () =>
+      allActiveCombinedList
+        .filter((r) => {
+          if (filterServiceTypes.length === 0) return true;
+          return filterServiceTypes.some((value) => requestMatchesServiceTypeFilter(r, value));
+        })
+        .filter((r) => {
+          if (filterSeasons.length === 0) return true;
+          return filterSeasons.some((value) => requestMatchesSeasonFilter(r, value));
+        })
+        .filter((r) => {
+          if (filterTechnicianIds.length === 0) return true;
+          if (!r.assigned_technician_id) return filterTechnicianIds.includes('unassigned');
+          return filterTechnicianIds.includes(String(r.assigned_technician_id));
+        })
+        .filter((r) => {
+          if (filterStatuses.length === 0) return true;
+          return filterStatuses.includes(getRequestStatusFilterBucket(r));
+        })
+        .filter((r) => {
+          if (!filterScheduledStartDate && !filterScheduledEndDate) return true;
+          const d = getScheduledInstantForDateRangeFilter(r);
+          if (!d) return false;
+          if (filterScheduledStartDate && filterScheduledEndDate) {
+            const sd = startOfDay(filterScheduledStartDate);
+            const ed = startOfDay(filterScheduledEndDate);
+            const from = isBefore(ed, sd) ? startOfDay(filterScheduledEndDate) : startOfDay(filterScheduledStartDate);
+            const to = isBefore(ed, sd) ? endOfDay(filterScheduledStartDate) : endOfDay(filterScheduledEndDate);
+            return d >= from && d <= to;
+          }
+          if (filterScheduledStartDate) return d >= startOfDay(filterScheduledStartDate);
+          return d <= endOfDay(filterScheduledEndDate);
+        }),
+    [
+      allActiveCombinedList,
+      filterSeasons,
+      filterScheduledEndDate,
+      filterScheduledStartDate,
+      filterServiceTypes,
+      filterStatuses,
+      filterTechnicianIds,
+    ]
+  );
 
-  const overdueRequests = useMemo(() => {
-    const from = (overduePage - 1) * overduePageSize;
-    return overdueListFiltered.slice(from, from + overduePageSize);
-  }, [overdueListFiltered, overduePage, overduePageSize]);
+  const unifiedTotal = unifiedFilteredList.length;
+  const unifiedTotalPages = Math.max(1, Math.ceil(unifiedTotal / unifiedPageSize) || 1);
 
-  const openRequests = useMemo(() => {
-    const from = (openPage - 1) * openPageSize;
-    return openListFiltered.slice(from, from + openPageSize);
-  }, [openListFiltered, openPage, openPageSize]);
-
-  const overdueTotalPages = Math.max(1, Math.ceil(overdueTotal / overduePageSize) || 1);
-  const openTotalPages = Math.max(1, Math.ceil(openTotal / openPageSize) || 1);
+  const unifiedRequests = useMemo(() => {
+    const from = (unifiedPage - 1) * unifiedPageSize;
+    return unifiedFilteredList.slice(from, from + unifiedPageSize);
+  }, [unifiedFilteredList, unifiedPage, unifiedPageSize]);
 
   useEffect(() => {
-    if (overduePage > overdueTotalPages) setOverduePage(overdueTotalPages);
-  }, [overduePage, overdueTotalPages]);
+    if (unifiedPage > unifiedTotalPages) setUnifiedPage(unifiedTotalPages);
+  }, [unifiedPage, unifiedTotalPages]);
 
   useEffect(() => {
-    setOverduePage(1);
-  }, [overduePageSize]);
+    setUnifiedPage(1);
+  }, [unifiedPageSize]);
 
   useEffect(() => {
-    if (openPage > openTotalPages) setOpenPage(openTotalPages);
-  }, [openPage, openTotalPages]);
-
-  useEffect(() => {
-    setOpenPage(1);
-  }, [openPageSize]);
-
-  useEffect(() => {
-    setOverduePage(1);
-  }, [overdueFilterServiceType, overdueFilterSeason, overdueFilterDateFrom, overdueFilterDateTo, overdueFilterTechnicianIds, overdueColSearch]);
-
-  useEffect(() => {
-    setOpenPage(1);
-  }, [openFilterServiceType, openFilterSeason, openFilterDateFrom, openFilterDateTo, openFilterTechnicianIds, openColSearch]);
+    setUnifiedPage(1);
+  }, [filterServiceTypes, filterSeasons, filterScheduledStartDate, filterScheduledEndDate, filterTechnicianIds, filterStatuses]);
 
   const toggleTechnicianInFilter = (setIds, techId) => {
     setIds((prev) => (prev.includes(techId) ? prev.filter((id) => id !== techId) : [...prev, techId]));
   };
 
-  const overdueRangeStart = overdueTotal === 0 ? 0 : (overduePage - 1) * overduePageSize + 1;
-  const overdueRangeEnd = Math.min(overduePage * overduePageSize, overdueTotal);
-  const openRangeStart = openTotal === 0 ? 0 : (openPage - 1) * openPageSize + 1;
-  const openRangeEnd = Math.min(openPage * openPageSize, openTotal);
+  const toggleValueInFilter = (setValues, value) => {
+    setValues((prev) => (prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]));
+  };
+
+  const unifiedRangeStart = unifiedTotal === 0 ? 0 : (unifiedPage - 1) * unifiedPageSize + 1;
+  const unifiedRangeEnd = Math.min(unifiedPage * unifiedPageSize, unifiedTotal);
 
   const pageBlockingLoad = isPendingRequestsPage;
 
@@ -589,8 +465,13 @@ export default function ServiceRequests() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['serviceRequests'] });
       queryClient.invalidateQueries({ queryKey: ['technicianJobs'] });
+      if (openingTimerRef.current) clearTimeout(openingTimerRef.current);
+      if (viewDelayTimerRef.current) clearTimeout(viewDelayTimerRef.current);
       setShowForm(false);
       setSelectedRequest(null);
+      setFormMode('edit');
+      setIsOpeningForm(false);
+      setIsViewActionDelayActive(false);
       toast.success('Service request created successfully');
     },
     onError: (error) => {
@@ -603,8 +484,13 @@ export default function ServiceRequests() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['serviceRequests'] });
       queryClient.invalidateQueries({ queryKey: ['technicianJobs'] });
+      if (openingTimerRef.current) clearTimeout(openingTimerRef.current);
+      if (viewDelayTimerRef.current) clearTimeout(viewDelayTimerRef.current);
       setShowForm(false);
       setSelectedRequest(null);
+      setFormMode('edit');
+      setIsOpeningForm(false);
+      setIsViewActionDelayActive(false);
       toast.success('Request updated successfully');
     },
     onError: (error) => {
@@ -621,8 +507,20 @@ export default function ServiceRequests() {
   };
 
   const handleEdit = (request) => {
+    if (openingTimerRef.current) clearTimeout(openingTimerRef.current);
+    if (viewDelayTimerRef.current) clearTimeout(viewDelayTimerRef.current);
+    const statusKey = String(request?.status || '').toLowerCase();
+    const isCancelled = statusKey === 'cancelled' || String(request?.is_cancelled || '').toUpperCase() === 'T';
+    const isViewOnly = statusKey === 'completed' || isCancelled;
+    setFormMode(isViewOnly ? 'view' : 'edit');
+    setIsOpeningForm(true);
+    setIsViewActionDelayActive(isViewOnly);
     setSelectedRequest(request);
     setShowForm(true);
+    openingTimerRef.current = setTimeout(() => setIsOpeningForm(false), 450);
+    if (isViewOnly) {
+      viewDelayTimerRef.current = setTimeout(() => setIsViewActionDelayActive(false), 3000);
+    }
   };
 
   const handleReschedule = (request) => {
@@ -697,8 +595,13 @@ export default function ServiceRequests() {
       setCancelConfirmRequest(null);
       toast.success('Request cancelled');
       if (selectedRequest && String(selectedRequest.id) === String(request.id)) {
+        if (openingTimerRef.current) clearTimeout(openingTimerRef.current);
+        if (viewDelayTimerRef.current) clearTimeout(viewDelayTimerRef.current);
         setShowForm(false);
         setSelectedRequest(null);
+        setFormMode('edit');
+        setIsOpeningForm(false);
+        setIsViewActionDelayActive(false);
       }
     },
     onError: (err) => {
@@ -776,7 +679,9 @@ export default function ServiceRequests() {
     request.scheduled_end_time || request.scheduled_date || request.scheduled_start_time || null;
 
   const getScheduledDateRef = (request) =>
-    request.scheduled_start_time || null;
+    isRequestOverdue(request)
+      ? (request.scheduled_end_time || request.scheduled_start_time || null)
+      : (request.scheduled_start_time || null);
 
   const canShowAssignTechnician = (request) =>
     !CLOSED_STATUSES.includes(request.status) && !request.assigned_technician_id;
@@ -826,7 +731,7 @@ export default function ServiceRequests() {
   }, [metricRequests, metricClients, openListBase, overdueListBase]);
 
   return (
-    <div className="space-y-4">
+    <div className="flex h-[calc(100vh-3rem)] flex-col gap-4 overflow-hidden">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Service Requests</h1>
@@ -847,7 +752,15 @@ export default function ServiceRequests() {
           >
             <RefreshCw className="h-4 w-4" />
           </Button>
-          <Button onClick={() => setShowForm(true)} className="h-9">
+          <Button
+            onClick={() => {
+              setFormMode('edit');
+              setIsOpeningForm(false);
+              setIsViewActionDelayActive(false);
+              setShowForm(true);
+            }}
+            className="h-9"
+          >
             <Plus className="mr-1.5 h-4 w-4" />
             New Request
           </Button>
@@ -859,470 +772,93 @@ export default function ServiceRequests() {
           <LoadingSpinner size="lg" text="Loading requests..." />
         </div>
       ) : (
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-            <div className="rounded-md border border-black/10 bg-white px-3 py-2.5">
-              <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
+        <div className="grid flex-1 min-h-0 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-[minmax(0,1fr)_210px] lg:items-stretch">
+          <div className="flex min-h-0 flex-col gap-4">
+            <div className="shrink-0 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
+              <div className="flex flex-col rounded-md border border-black/10 bg-white px-2.5 py-1.5">
+              <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-[#888780]">
                 <span>Open requests</span>
-                <FileText className="h-3.5 w-3.5 text-[#534AB7]" />
+                <FileText className="h-3 w-3 text-[#534AB7]" />
               </div>
-              <div className="text-[22px] font-medium text-[#534AB7]">{metrics.open}</div>
+              <div className="text-[19px] font-medium text-[#534AB7]">{metrics.open}</div>
             </div>
-            <div className="rounded-md border border-black/10 bg-white px-3 py-2.5">
-              <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
+            <div className="flex flex-col rounded-md border border-black/10 bg-white px-2.5 py-1.5">
+              <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-[#888780]">
                 <span>Overdue / pending</span>
-                <AlertTriangle className="h-3.5 w-3.5 text-[#A32D2D]" />
+                <AlertTriangle className="h-3 w-3 text-[#A32D2D]" />
               </div>
-              <div className="text-[22px] font-medium text-[#A32D2D]">{metrics.overduePending}</div>
+              <div className="text-[19px] font-medium text-[#A32D2D]">{metrics.overduePending}</div>
             </div>
-            <div className="rounded-md border border-black/10 bg-white px-3 py-2.5">
-              <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
+            <div className="flex flex-col rounded-md border border-black/10 bg-white px-2.5 py-1.5">
+              <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-[#888780]">
                 <span>Completed</span>
-                <CheckCircle className="h-3.5 w-3.5 text-[#1D9E75]" />
+                <CheckCircle className="h-3 w-3 text-[#1D9E75]" />
               </div>
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-[22px] font-medium text-[#0F6E56]">{completedCountTotal}</div>
-                <Button
-                  type="button"
-                  variant={historyPanel === 'completed' ? 'outline' : 'default'}
-                  size="sm"
-                  className={
-                    historyPanel === 'completed'
-                      ? 'h-7 shrink-0 border-primary/30 px-2 text-[11px] font-medium text-primary hover:bg-primary/10'
-                      : 'h-7 shrink-0 bg-primary px-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90'
-                  }
-                  disabled={completedCountTotal === 0}
-                  onClick={() => {
-                    setHistoryPanel((p) => (p === 'completed' ? null : 'completed'));
-                    setHistoryPage(1);
-                  }}
-                >
-                  {historyPanel === 'completed' ? 'Hide details' : 'View details'}
-                </Button>
-              </div>
+              <div className="text-[19px] font-medium text-[#0F6E56]">{completedCountTotal}</div>
             </div>
-            <div className="rounded-md border border-black/10 bg-white px-3 py-2.5">
-              <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
+            <div className="flex flex-col rounded-md border border-black/10 bg-white px-2.5 py-1.5">
+              <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-[#888780]">
                 <span>Unscheduled</span>
-                <Clock3 className="h-3.5 w-3.5 text-[#BA7517]" />
+                <Clock3 className="h-3 w-3 text-[#BA7517]" />
               </div>
-              <div className="text-[22px] font-medium text-[#BA7517]">
+              <div className="text-[19px] font-medium text-[#BA7517]">
                 {isPendingClients ? '—' : metrics.unscheduled}
               </div>
             </div>
-            <div className="rounded-md border border-black/10 bg-white px-3 py-2.5">
-              <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
+            <div className="flex flex-col rounded-md border border-black/10 bg-white px-2.5 py-1.5">
+              <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-[#888780]">
                 <span>Cancelled requests</span>
-                <Ban className="h-3.5 w-3.5 text-[#78716C]" />
+                <Ban className="h-3 w-3 text-[#78716C]" />
               </div>
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-[22px] font-medium text-[#57534E]">{cancelledCount}</div>
-                <Button
-                  type="button"
-                  variant={historyPanel === 'cancelled' ? 'outline' : 'default'}
-                  size="sm"
-                  className={
-                    historyPanel === 'cancelled'
-                      ? 'h-7 shrink-0 border-primary/30 px-2 text-[11px] font-medium text-primary hover:bg-primary/10'
-                      : 'h-7 shrink-0 bg-primary px-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90'
-                  }
-                  disabled={cancelledCount === 0}
-                  onClick={() => {
-                    setHistoryPanel((p) => (p === 'cancelled' ? null : 'cancelled'));
-                    setHistoryPage(1);
-                  }}
-                >
-                  {historyPanel === 'cancelled' ? 'Hide details' : 'View details'}
-                </Button>
-              </div>
+              <div className="text-[19px] font-medium text-[#57534E]">{cancelledCount}</div>
             </div>
           </div>
 
-          {historyPanel ? (
-            <div className="overflow-hidden rounded-lg border border-black/10 bg-white">
-              <div className="flex flex-col gap-2 border-b border-black/10 bg-[#fafaf9] px-3 py-2.5 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0">
-                  <div className="text-[12px] font-medium uppercase tracking-[0.06em] text-[#888780]">
-                    {historyPanel === 'completed' ? 'Completed requests' : 'Cancelled requests'}
-                  </div>
-                  {historyPanel === 'cancelled' && cancelledCount !== cancelledRowsFull.length ? (
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      Showing {cancelledRowsFull.length.toLocaleString()} loaded row
-                      {cancelledRowsFull.length === 1 ? '' : 's'}; total cancelled: {cancelledCount.toLocaleString()}.
-                    </p>
-                  ) : null}
-                </div>
-                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
-                  {/* <Select value={historyFilterServiceType} onValueChange={setHistoryFilterServiceType}>
-                    <SelectTrigger
-                      className="h-9 w-full shrink-0 border-primary/30 text-sm sm:w-[200px]"
-                      aria-label="Filter history by service type"
-                    >
-                      <SelectValue placeholder="Service type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {SERVICE_TYPE_FILTER_OPTIONS.map((o) => (
-                        <SelectItem key={o.value} value={o.value}>
-                          {o.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select value={historyFilterSeason} onValueChange={setHistoryFilterSeason}>
-                    <SelectTrigger
-                      className="h-9 w-full shrink-0 border-primary/30 text-sm sm:w-[160px]"
-                      aria-label="Filter history by season"
-                    >
-                      <SelectValue placeholder="Season" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {SEASON_FILTER_OPTIONS.map((o) => (
-                        <SelectItem key={o.value} value={o.value}>
-                          {o.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select> */}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-9 shrink-0 text-muted-foreground hover:text-foreground"
-                    onClick={() => setHistoryPanel(null)}
-                  >
-                    Close
-                  </Button>
-                </div>
-              </div>
-              {historyPanel === 'completed' && isFetchingCompletedRows && completedRowsFull.length === 0 ? (
-                <div className="flex min-h-[120px] items-center justify-center py-6">
-                  <LoadingSpinner size="md" text="Loading completed requests…" />
-                </div>
-              ) : historyPanel === 'cancelled' && isFetchingCancelledRows && cancelledRowsFull.length === 0 ? (
-                <div className="flex min-h-[120px] items-center justify-center py-6">
-                  <LoadingSpinner size="md" text="Loading cancelled requests…" />
-                </div>
-              ) : (
-                <>
-                  <div className="overflow-x-auto">
-                    <table className={TABLE_COLS_CLASS}>
-                      {REQUEST_TABLE_COLGROUP}
-                      <thead>
-                        <tr className="bg-[#f8f8f7]">
-                          <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Client</th>
-                          <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Service type</th>
-                          <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Season</th>
-                          <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Scheduled date</th>
-                          <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Technician</th>
-                          <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Actions</th>
-                        </tr>
-                        <tr className="bg-[#f4f4f3]">
-                          <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
-                            <TableColSearchInput
-                              value={historyColSearch.client}
-                              onValueChange={(v) => setHistoryColSearch((p) => ({ ...p, client: v }))}
-                              placeholder="Search"
-                              ariaLabel="Search history table by client"
-                            />
-                          </th>
-                          <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
-                            <TableColSearchInput
-                              value={historyColSearch.serviceType}
-                              onValueChange={(v) => setHistoryColSearch((p) => ({ ...p, serviceType: v }))}
-                              placeholder="Search"
-                              ariaLabel="Search history table by service type"
-                            />
-                          </th>
-                          <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
-                            <TableColSearchInput
-                              value={historyColSearch.season}
-                              onValueChange={(v) => setHistoryColSearch((p) => ({ ...p, season: v }))}
-                              placeholder="Search"
-                              ariaLabel="Search history table by season"
-                            />
-                          </th>
-                          <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
-                            <TableColSearchInput
-                              value={historyColSearch.date}
-                              onValueChange={(v) => setHistoryColSearch((p) => ({ ...p, date: v }))}
-                              placeholder="Search"
-                              ariaLabel="Search history table by scheduled date"
-                            />
-                          </th>
-                          <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
-                            <TableColSearchInput
-                              value={historyColSearch.technician}
-                              onValueChange={(v) => setHistoryColSearch((p) => ({ ...p, technician: v }))}
-                              placeholder="Search"
-                              ariaLabel="Search history table by technician"
-                            />
-                          </th>
-                          <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2" aria-hidden />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {historyTotal === 0 ? (
-                          <tr>
-                            <td colSpan={6} className="px-3.5 py-6 text-center text-xs text-[#888780]">
-                              {historyPanel === 'completed'
-                                ? 'No completed requests in the current list.'
-                                : 'No cancelled requests found.'}
-                            </td>
-                          </tr>
-                        ) : (
-                          historyPagedList.map((request) => (
-                            <tr key={request.id} className="border-b border-black/10 last:border-b-0">
-                              <td className="px-2 py-2 font-medium text-gray-900 sm:px-3.5">{request.client_name || '-'}</td>
-                              <td className="px-2 py-2 text-black sm:px-3.5">{formatIssueCategoryDisplay(request)}</td>
-                              <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request.season}</td>
-                              <td className={`px-2 py-2 font-medium sm:px-3.5 ${getDateTimeTone(request)}`}>
-                                {formatScheduledStartDateTime(getScheduledDateRef(request))}
-                              </td>
-                              <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request.assigned_technician_name || 'Unassigned'}</td>
-                              <td className="px-2 py-2 text-left sm:px-3.5">
-                                <Tooltip.Root>
-                                  <Tooltip.Trigger asChild>
-                                    <Button
-                                      type="button"
-                                      variant="default"
-                                      size="icon"
-                                      className={ICON_ACTION_PRIMARY_CLASS}
-                                      aria-label="View request"
-                                      onClick={() => setHistoryViewRequest(request)}
-                                    >
-                                      <Eye className="h-3.5 w-3.5 shrink-0" />
-                                    </Button>
-                                  </Tooltip.Trigger>
-                                  <Tooltip.Portal>
-                                    <Tooltip.Content side="top" sideOffset={4}>
-                                      View request
-                                      <Tooltip.Arrow className="fill-popover" />
-                                    </Tooltip.Content>
-                                  </Tooltip.Portal>
-                                </Tooltip.Root>
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                  {historyTotal > 0 && (
-                    <div className="flex flex-col gap-2 border-t border-black/10 bg-[#fafaf9] px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-                      <p className="text-sm text-gray-600">
-                        Showing{' '}
-                        <span className="font-medium text-gray-900">
-                          {historyRangeStart.toLocaleString()}–{historyRangeEnd.toLocaleString()}
-                        </span>{' '}
-                        of <span className="font-medium text-gray-900">{historyTotal.toLocaleString()}</span>
-                      </p>
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        <Select
-                          value={String(historyPageSize)}
-                          onValueChange={(v) => setHistoryPageSize(Number(v))}
-                        >
-                          <SelectTrigger className="h-9 w-[130px] border-primary/30 text-sm">
-                            <SelectValue placeholder="Per page" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {PAGE_SIZE_OPTIONS.map((n) => (
-                              <SelectItem key={n} value={String(n)}>
-                                {n} per page
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            className="h-9 w-9 border-primary/30"
-                            disabled={historyPage <= 1}
-                            onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}
-                            aria-label="Previous page"
-                          >
-                            <ChevronLeft className="h-4 w-4" />
-                          </Button>
-                          <span className="min-w-[7rem] px-2 text-center text-sm text-gray-700 tabular-nums">
-                            Page {historyPage} / {historyTotalPages}
-                          </span>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            className="h-9 w-9 border-primary/30"
-                            disabled={historyPage >= historyTotalPages}
-                            onClick={() => setHistoryPage((p) => Math.min(historyTotalPages, p + 1))}
-                            aria-label="Next page"
-                          >
-                            <ChevronRight className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          ) : null}
-
-          <div>
-            <div className="mb-2.5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="text-[12px] font-medium uppercase tracking-[0.06em] text-[#888780]">All overdue requests</div>
-              {/* <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
-                <Select value={overdueFilterServiceType} onValueChange={setOverdueFilterServiceType}>
-                  <SelectTrigger
-                    className="h-9 w-full shrink-0 border-primary/30 text-sm sm:w-[200px]"
-                    aria-label="Overdue table: filter by service type"
-                  >
-                    <SelectValue placeholder="Service type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SERVICE_TYPE_FILTER_OPTIONS.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select value={overdueFilterSeason} onValueChange={setOverdueFilterSeason}>
-                  <SelectTrigger
-                    className="h-9 w-full shrink-0 border-primary/30 text-sm sm:w-[160px]"
-                    aria-label="Overdue table: filter by season"
-                  >
-                    <SelectValue placeholder="Season" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SEASON_FILTER_OPTIONS.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <DateOnlyPicker
-                  date={overdueFilterDateFrom}
-                  onDateChange={setOverdueFilterDateFrom}
-                  placeholder="From date"
-                  ariaLabel="Overdue table: date from (scheduled end)"
-                />
-                <DateOnlyPicker
-                  date={overdueFilterDateTo}
-                  onDateChange={setOverdueFilterDateTo}
-                  placeholder="To date"
-                  ariaLabel="Overdue table: date to (scheduled end)"
-                />
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-9 w-full justify-between border-primary/30 text-sm sm:w-[220px]"
-                    >
-                      <span className="truncate">
-                        {overdueFilterTechnicianIds.length > 0 ? `${overdueFilterTechnicianIds.length} technician(s)` : 'Technician'}
-                      </span>
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-56">
-                    <DropdownMenuLabel>Filter technicians</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    {technicians.length === 0 ? (
-                      <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">No active technicians</DropdownMenuLabel>
-                    ) : (
-                      technicians.map((tech) => {
-                        const techId = String(tech.id);
-                        return (
-                          <DropdownMenuCheckboxItem
-                            key={techId}
-                            checked={overdueFilterTechnicianIds.includes(techId)}
-                            onCheckedChange={() => toggleTechnicianInFilter(setOverdueFilterTechnicianIds, techId)}
-                            onSelect={(e) => e.preventDefault()}
-                          >
-                            {tech.name}
-                          </DropdownMenuCheckboxItem>
-                        );
-                      })
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div> */}
-            </div>
-            <div className="overflow-hidden rounded-lg border border-[#F7C1C1] bg-white">
-              <div className="overflow-x-auto">
-                <table className={TABLE_COLS_CLASS}>
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-black/10 bg-white">
+                <div className="flex-1 overflow-y-auto overflow-x-hidden">
+                  <table className="w-full table-fixed border-collapse text-xs sm:text-sm">
                   {REQUEST_TABLE_COLGROUP}
-                  <thead>
-                    <tr className="bg-[#FFF8F8]">
-                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Client</th>
-                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Service type</th>
-                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Season</th>
-                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Due date</th>
-                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Technician</th>
-                      <th className="border-b border-[#F7C1C1] px-2 py-2 text-left text-xs font-medium text-[#A32D2D] sm:px-3.5 sm:text-sm">Action</th>
-                    </tr>
-                    <tr className="bg-[#FFF5F5]">
-                      <th className="border-b border-[#F7C1C1] px-1.5 py-1.5 sm:px-2">
-                        <TableColSearchInput
-                          value={overdueColSearch.client}
-                          onValueChange={(v) => setOverdueColSearch((p) => ({ ...p, client: v }))}
-                          placeholder="Search"
-                          variant="overdue"
-                          ariaLabel="Search overdue table by client"
-                        />
-                      </th>
-                      <th className="border-b border-[#F7C1C1] px-1.5 py-1.5 sm:px-2">
-                        <TableColSearchInput
-                          value={overdueColSearch.serviceType}
-                          onValueChange={(v) => setOverdueColSearch((p) => ({ ...p, serviceType: v }))}
-                          placeholder="Search"
-                          variant="overdue"
-                          ariaLabel="Search overdue table by service type"
-                        />
-                      </th>
-                      <th className="border-b border-[#F7C1C1] px-1.5 py-1.5 sm:px-2">
-                        <TableColSearchInput
-                          value={overdueColSearch.season}
-                          onValueChange={(v) => setOverdueColSearch((p) => ({ ...p, season: v }))}
-                          placeholder="Search"
-                          variant="overdue"
-                          ariaLabel="Search overdue table by season"
-                        />
-                      </th>
-                      <th className="border-b border-[#F7C1C1] px-1.5 py-1.5 sm:px-2">
-                        <TableColSearchInput
-                          value={overdueColSearch.date}
-                          onValueChange={(v) => setOverdueColSearch((p) => ({ ...p, date: v }))}
-                          placeholder="Search"
-                          variant="overdue"
-                          ariaLabel="Search overdue table by due date"
-                        />
-                      </th>
-                      <th className="border-b border-[#F7C1C1] px-1.5 py-1.5 sm:px-2">
-                        <TableColSearchInput
-                          value={overdueColSearch.technician}
-                          onValueChange={(v) => setOverdueColSearch((p) => ({ ...p, technician: v }))}
-                          placeholder="Search"
-                          variant="overdue"
-                          ariaLabel="Search overdue table by technician"
-                        />
-                      </th>
-                      <th className="border-b border-[#F7C1C1] px-1.5 py-1.5 sm:px-2" aria-hidden />
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-[#f8f8f7]">
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Client</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Service type</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Season</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Scheduled date</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Technician</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Status</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Action</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {overdueTotal === 0 ? (
+                    {unifiedTotal === 0 ? (
                       <tr>
-                        <td colSpan={6} className="px-3.5 py-6 text-center text-xs text-[#888780]">No overdue or pending requests.</td>
+                        <td colSpan={7} className="h-[320px] px-3.5 py-6 align-middle text-center text-xs text-[#888780]">No matching requests.</td>
                       </tr>
-                    ) : overdueRequests.map((request) => (
-                      <tr key={request.id} className="border-b border-[#F7C1C1] last:border-b-0">
+                    ) : unifiedRequests.map((request) => (
+                      <tr key={request.id} className="border-b border-black/10 last:border-b-0">
                         <td className="px-2 py-2 font-medium text-gray-900 sm:px-3.5">{request.client_name || '-'}</td>
-                        <td className="px-2 py-2 text-black sm:px-3.5">{formatIssueCategoryDisplay(request)}</td>
-                          <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request.season}</td>
-                        <td className={`px-2 py-2 font-medium sm:px-3.5 ${getDateTimeTone(request)}`}>{formatDueDateTime(getDueDateRef(request))}</td>
+                        <td className="px-2 py-2 text-black sm:px-3.5">{request.issue_category}</td>
+                        <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request.season}</td>
+                        <td className={`px-2 py-2 font-medium sm:px-3.5 ${getDateTimeTone(request)}`}>
+                          {formatScheduledStartDateTime(getScheduledDateRef(request))}
+                        </td>
                         <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request.assigned_technician_name || 'Unassigned'}</td>
+                        <td className="px-2 py-2 sm:px-3.5">
+                          {(() => {
+                            const statusMeta = getRequestStatusBadgeMeta(request);
+                            return (
+                              <span
+                                className={cn(
+                                  'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium',
+                                  statusMeta.className
+                                )}
+                              >
+                                {statusMeta.label}
+                              </span>
+                            );
+                          })()}
+                        </td>
                         <td className="px-2 py-2 text-left sm:px-3.5">
                           <ServiceRequestRowActions
                             request={request}
@@ -1338,21 +874,20 @@ export default function ServiceRequests() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
-              </div>
-              {overdueTotal > 0 && (
-                <div className="flex flex-col gap-2 border-t border-[#F7C1C1] bg-[#FFFBFB] px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  </table>
+                </div>
+                <div className="mt-auto flex flex-col gap-2 border-t border-black/10 bg-[#fafaf9] px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-sm text-gray-600">
                     Showing{' '}
                     <span className="font-medium text-gray-900">
-                      {overdueRangeStart.toLocaleString()}–{overdueRangeEnd.toLocaleString()}
+                      {unifiedRangeStart.toLocaleString()}–{unifiedRangeEnd.toLocaleString()}
                     </span>{' '}
-                    of <span className="font-medium text-gray-900">{overdueTotal.toLocaleString()}</span>
+                    of <span className="font-medium text-gray-900">{unifiedTotal.toLocaleString()}</span>
                   </p>
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     <Select
-                      value={String(overduePageSize)}
-                      onValueChange={(v) => setOverduePageSize(Number(v))}
+                      value={String(unifiedPageSize)}
+                      onValueChange={(v) => setUnifiedPageSize(Number(v))}
                     >
                       <SelectTrigger className="h-9 w-[130px] border-primary/30 text-sm">
                         <SelectValue placeholder="Per page" />
@@ -1371,22 +906,22 @@ export default function ServiceRequests() {
                         variant="outline"
                         size="icon"
                         className="h-9 w-9 border-primary/30"
-                        disabled={overduePage <= 1}
-                        onClick={() => setOverduePage((p) => Math.max(1, p - 1))}
+                        disabled={unifiedTotal === 0 || unifiedPage <= 1}
+                        onClick={() => setUnifiedPage((p) => Math.max(1, p - 1))}
                         aria-label="Previous page"
                       >
                         <ChevronLeft className="h-4 w-4" />
                       </Button>
                       <span className="min-w-[7rem] px-2 text-center text-sm text-gray-700 tabular-nums">
-                        Page {overduePage} / {overdueTotalPages}
+                        Page {unifiedPage} / {unifiedTotalPages}
                       </span>
                       <Button
                         type="button"
                         variant="outline"
                         size="icon"
                         className="h-9 w-9 border-primary/30"
-                        disabled={overduePage >= overdueTotalPages}
-                        onClick={() => setOverduePage((p) => Math.min(overdueTotalPages, p + 1))}
+                        disabled={unifiedTotal === 0 || unifiedPage >= unifiedTotalPages}
+                        onClick={() => setUnifiedPage((p) => Math.min(unifiedTotalPages, p + 1))}
                         aria-label="Next page"
                       >
                         <ChevronRight className="h-4 w-4" />
@@ -1394,234 +929,166 @@ export default function ServiceRequests() {
                     </div>
                   </div>
                 </div>
-              )}
+              </div>
             </div>
           </div>
-          <div>
-            <div className="mb-2.5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="text-[12px] font-medium uppercase tracking-[0.06em] text-[#888780]">All open requests</div>
-              {/* <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
-                <Select value={openFilterServiceType} onValueChange={setOpenFilterServiceType}>
-                  <SelectTrigger
-                    className="h-9 w-full shrink-0 border-primary/30 text-sm sm:w-[200px]"
-                    aria-label="Open requests table: filter by service type"
-                  >
-                    <SelectValue placeholder="Service type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SERVICE_TYPE_FILTER_OPTIONS.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select value={openFilterSeason} onValueChange={setOpenFilterSeason}>
-                  <SelectTrigger
-                    className="h-9 w-full shrink-0 border-primary/30 text-sm sm:w-[160px]"
-                    aria-label="Open requests table: filter by season"
-                  >
-                    <SelectValue placeholder="Season" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SEASON_FILTER_OPTIONS.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <DateOnlyPicker
-                  date={openFilterDateFrom}
-                  onDateChange={setOpenFilterDateFrom}
-                  placeholder="From date"
-                  ariaLabel="Open table: date from (scheduled start)"
-                />
-                <DateOnlyPicker
-                  date={openFilterDateTo}
-                  onDateChange={setOpenFilterDateTo}
-                  placeholder="To date"
-                  ariaLabel="Open table: date to (scheduled start)"
-                />
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-9 w-full justify-between border-primary/30 text-sm sm:w-[220px]"
-                    >
-                      <span className="truncate">
-                        {openFilterTechnicianIds.length > 0 ? `${openFilterTechnicianIds.length} technician(s)` : 'Technician'}
-                      </span>
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-56">
-                    <DropdownMenuLabel>Filter technicians</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    {technicians.length === 0 ? (
-                      <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">No active technicians</DropdownMenuLabel>
-                    ) : (
-                      technicians.map((tech) => {
-                        const techId = String(tech.id);
-                        return (
-                          <DropdownMenuCheckboxItem
-                            key={techId}
-                            checked={openFilterTechnicianIds.includes(techId)}
-                            onCheckedChange={() => toggleTechnicianInFilter(setOpenFilterTechnicianIds, techId)}
-                            onSelect={(e) => e.preventDefault()}
-                          >
-                            {tech.name}
-                          </DropdownMenuCheckboxItem>
-                        );
-                      })
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div> */}
-            </div>
-            <div className="overflow-hidden rounded-lg border border-black/10 bg-white">
-              <div className="overflow-x-auto">
-                <table className={TABLE_COLS_CLASS}>
-                  {REQUEST_TABLE_COLGROUP}
-                  <thead>
-                    <tr className="bg-[#f8f8f7]">
-                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Client</th>
-                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Service type</th>
-                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Season</th>
-                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Scheduled date</th>
-                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Technician</th>
-                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Action</th>
-                    </tr>
-                    <tr className="bg-[#f4f4f3]">
-                      <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
-                        <TableColSearchInput
-                          value={openColSearch.client}
-                          onValueChange={(v) => setOpenColSearch((p) => ({ ...p, client: v }))}
-                          placeholder="Search"
-                          ariaLabel="Search open requests table by client"
-                        />
-                      </th>
-                      <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
-                        <TableColSearchInput
-                          value={openColSearch.serviceType}
-                          onValueChange={(v) => setOpenColSearch((p) => ({ ...p, serviceType: v }))}
-                          placeholder="Search"
-                          ariaLabel="Search open requests table by service type"
-                        />
-                      </th>
-                      <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
-                        <TableColSearchInput
-                          value={openColSearch.season}
-                          onValueChange={(v) => setOpenColSearch((p) => ({ ...p, season: v }))}
-                          placeholder="Search"
-                          ariaLabel="Search open requests table by season"
-                        />
-                      </th>
-                      <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
-                        <TableColSearchInput
-                          value={openColSearch.date}
-                          onValueChange={(v) => setOpenColSearch((p) => ({ ...p, date: v }))}
-                          placeholder="Search"
-                          ariaLabel="Search open requests table by scheduled date"
-                        />
-                      </th>
-                      <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2">
-                        <TableColSearchInput
-                          value={openColSearch.technician}
-                          onValueChange={(v) => setOpenColSearch((p) => ({ ...p, technician: v }))}
-                          placeholder="Search"
-                          ariaLabel="Search open requests table by technician"
-                        />
-                      </th>
-                      <th className="border-b border-black/10 px-1.5 py-1.5 sm:px-2" aria-hidden />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {openTotal === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="px-3.5 py-6 text-center text-xs text-[#888780]">No open requests.</td>
-                      </tr>
-                    ) : openRequests.map((request) => (
-                      <tr key={request.id} className="border-b border-black/10 last:border-b-0">
-                        <td className="px-2 py-2 font-medium text-gray-900 sm:px-3.5">{request.client_name || '-'}</td>
-                        <td className="px-2 py-2 text-black sm:px-3.5">{formatIssueCategoryDisplay(request)}</td>
-                        <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request.season}</td>
-                        <td className={`px-2 py-2 font-medium sm:px-3.5 ${getDateTimeTone(request)}`}>
-                          {formatScheduledStartDateTime(getScheduledDateRef(request))}
-                        </td>
-                        <td className="px-2 py-2 text-gray-800 sm:px-3.5">{request.assigned_technician_name || 'Unassigned'}</td>
-                        <td className="px-2 py-2 text-left sm:px-3.5">
-                          <ServiceRequestRowActions
-                            request={request}
-                            showReschedule={false}
-                            onEdit={handleEdit}
-                            onAssign={setAssignRequest}
-                            onReschedule={handleReschedule}
-                            canAssign={canShowAssignTechnician(request)}
-                            onOpenCancelConfirm={setCancelConfirmRequest}
-                            cancelBusy={cancelRequestMutation.isPending}
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {openTotal > 0 && (
-                <div className="flex flex-col gap-2 border-t border-black/10 bg-[#fafaf9] px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-sm text-gray-600">
-                    Showing{' '}
-                    <span className="font-medium text-gray-900">
-                      {openRangeStart.toLocaleString()}–{openRangeEnd.toLocaleString()}
-                    </span>{' '}
-                    of <span className="font-medium text-gray-900">{openTotal.toLocaleString()}</span>
-                  </p>
-                  <div className="flex flex-wrap items-center justify-end gap-2">
-                    <Select
-                      value={String(openPageSize)}
-                      onValueChange={(v) => setOpenPageSize(Number(v))}
-                    >
-                      <SelectTrigger className="h-9 w-[130px] border-primary/30 text-sm">
-                        <SelectValue placeholder="Per page" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {PAGE_SIZE_OPTIONS.map((n) => (
-                          <SelectItem key={n} value={String(n)}>
-                            {n} per page
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="h-9 w-9 border-primary/30"
-                        disabled={openPage <= 1}
-                        onClick={() => setOpenPage((p) => Math.max(1, p - 1))}
-                        aria-label="Previous page"
-                      >
-                        <ChevronLeft className="h-4 w-4" />
+          <div className="lg:sticky lg:top-0 lg:h-full">
+            <div className="h-full rounded-lg border border-black/10 bg-white p-2.5 sm:p-3">
+              <div className="mb-3 text-[12px] font-medium uppercase tracking-[0.06em] text-[#888780]">Filters</div>
+              <div className="grid grid-cols-1 gap-2.5">
+                <div className="space-y-1">
+                  <Label className="text-xs font-medium text-[#888780]">Service Type</Label>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button type="button" variant="outline" className="h-8 w-full justify-between border-primary/30 text-sm">
+                        <span className="truncate">{filterServiceTypes.length > 0 ? `${filterServiceTypes.length} selected` : 'All service types'}</span>
                       </Button>
-                      <span className="min-w-[7rem] px-2 text-center text-sm text-gray-700 tabular-nums">
-                        Page {openPage} / {openTotalPages}
-                      </span>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="h-9 w-9 border-primary/30"
-                        disabled={openPage >= openTotalPages}
-                        onClick={() => setOpenPage((p) => Math.min(openTotalPages, p + 1))}
-                        aria-label="Next page"
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-64">
+                      <DropdownMenuLabel>Select service types</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      {SERVICE_TYPE_FILTER_OPTIONS.filter((o) => o.value !== 'all').map((o) => (
+                        <DropdownMenuCheckboxItem
+                          key={o.value}
+                          checked={filterServiceTypes.includes(o.value)}
+                          onCheckedChange={() => toggleValueInFilter(setFilterServiceTypes, o.value)}
+                          onSelect={(e) => e.preventDefault()}
+                        >
+                          {o.label}
+                        </DropdownMenuCheckboxItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
-              )}
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-medium text-[#888780]">Season</Label>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button type="button" variant="outline" className="h-8 w-full justify-between border-primary/30 text-sm">
+                        <span className="truncate">{filterSeasons.length > 0 ? `${filterSeasons.length} selected` : 'All seasons'}</span>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-56">
+                      <DropdownMenuLabel>Select seasons</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      {SEASON_FILTER_OPTIONS.filter((o) => o.value !== 'all').map((o) => (
+                        <DropdownMenuCheckboxItem
+                          key={o.value}
+                          checked={filterSeasons.includes(o.value)}
+                          onCheckedChange={() => toggleValueInFilter(setFilterSeasons, o.value)}
+                          onSelect={(e) => e.preventDefault()}
+                        >
+                          {o.label}
+                        </DropdownMenuCheckboxItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-medium text-[#888780]">Schedule Start Date</Label>
+                  <DateOnlyPicker
+                    date={filterScheduledStartDate}
+                    onDateChange={setFilterScheduledStartDate}
+                    placeholder="Schedule Start Date"
+                    ariaLabel="Filter by schedule start date"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-medium text-[#888780]">Schedule End Date</Label>
+                  <DateOnlyPicker
+                    date={filterScheduledEndDate}
+                    onDateChange={setFilterScheduledEndDate}
+                    placeholder="Schedule End Date"
+                    ariaLabel="Filter by schedule end date"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-medium text-[#888780]">Technician</Label>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button type="button" variant="outline" className="h-8 w-full justify-between border-primary/30 text-sm">
+                        <span className="truncate">{filterTechnicianIds.length > 0 ? `${filterTechnicianIds.length} selected` : 'All technicians'}</span>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-56">
+                      <DropdownMenuLabel>Filter technicians</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuCheckboxItem
+                        checked={filterTechnicianIds.includes('unassigned')}
+                        onCheckedChange={() => toggleTechnicianInFilter(setFilterTechnicianIds, 'unassigned')}
+                        onSelect={(e) => e.preventDefault()}
+                      >
+                        Unassigned
+                      </DropdownMenuCheckboxItem>
+                      {technicians.length > 0 ? <DropdownMenuSeparator /> : null}
+                      {technicians.length === 0 ? (
+                        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">No active technicians</DropdownMenuLabel>
+                      ) : (
+                        technicians.map((tech) => {
+                          const techId = String(tech.id);
+                          return (
+                            <DropdownMenuCheckboxItem
+                              key={techId}
+                              checked={filterTechnicianIds.includes(techId)}
+                              onCheckedChange={() => toggleTechnicianInFilter(setFilterTechnicianIds, techId)}
+                              onSelect={(e) => e.preventDefault()}
+                            >
+                              {tech.name}
+                            </DropdownMenuCheckboxItem>
+                          );
+                        })
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-medium text-[#888780]">Status</Label>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button type="button" variant="outline" className="h-8 w-full justify-between border-primary/30 text-sm">
+                        <span className="truncate">{filterStatuses.length > 0 ? `${filterStatuses.length} selected` : 'All status'}</span>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-56">
+                      <DropdownMenuLabel>Select status</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuCheckboxItem
+                        checked={filterStatuses.includes('scheduled')}
+                        onCheckedChange={() => toggleValueInFilter(setFilterStatuses, 'scheduled')}
+                        onSelect={(e) => e.preventDefault()}
+                      >
+                        Scheduled
+                      </DropdownMenuCheckboxItem>
+                      <DropdownMenuCheckboxItem
+                        checked={filterStatuses.includes('overdue')}
+                        onCheckedChange={() => toggleValueInFilter(setFilterStatuses, 'overdue')}
+                        onSelect={(e) => e.preventDefault()}
+                      >
+                        Overdue
+                      </DropdownMenuCheckboxItem>
+                      <DropdownMenuCheckboxItem
+                        checked={filterStatuses.includes('completed')}
+                        onCheckedChange={() => toggleValueInFilter(setFilterStatuses, 'completed')}
+                        onSelect={(e) => e.preventDefault()}
+                      >
+                        Completed
+                      </DropdownMenuCheckboxItem>
+                      <DropdownMenuCheckboxItem
+                        checked={filterStatuses.includes('cancelled')}
+                        onCheckedChange={() => toggleValueInFilter(setFilterStatuses, 'cancelled')}
+                        onSelect={(e) => e.preventDefault()}
+                      >
+                        Cancelled
+                      </DropdownMenuCheckboxItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1630,59 +1097,62 @@ export default function ServiceRequests() {
       {/* Form Dialog */}
       <Dialog data-source-location="pages/ServiceRequests:454:6" data-dynamic-content="true" open={showForm} onOpenChange={(open) => {
         setShowForm(open);
-        if (!open) setSelectedRequest(null);
+        if (!open) {
+          if (openingTimerRef.current) clearTimeout(openingTimerRef.current);
+          if (viewDelayTimerRef.current) clearTimeout(viewDelayTimerRef.current);
+          setSelectedRequest(null);
+          setFormMode('edit');
+          setIsOpeningForm(false);
+          setIsViewActionDelayActive(false);
+        }
       }}>
-        <DialogContent data-source-location="pages/ServiceRequests:458:8" data-dynamic-content="true" className="max-w-6xl w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto">
+        <DialogContent
+          data-source-location="pages/ServiceRequests:458:8"
+          data-dynamic-content="true"
+          className="max-w-6xl w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+        >
           <DialogHeader data-source-location="pages/ServiceRequests:459:10" data-dynamic-content="true">
             <DialogTitle data-source-location="pages/ServiceRequests:460:12" data-dynamic-content="true">
-              {selectedRequest ? 'Edit Service Request' : 'New Service Request'}
+              {selectedRequest ? (formMode === 'view' ? 'View Service Request' : 'Edit Service Request') : 'New Service Request'}
             </DialogTitle>
             <DialogDescription data-source-location="pages/ServiceRequests:463:12" data-dynamic-content="true">
-              {selectedRequest ? 'Update the service request details below' : 'Fill in the details for the new service request'}
+              {selectedRequest
+                ? (formMode === 'view'
+                  ? ''
+                  : 'Update the service request details below')
+                : 'Fill in the details for the new service request'}
             </DialogDescription>
           </DialogHeader>
-          <ServiceRequestForm
-            data-source-location="pages/ServiceRequests:467:10"
-            data-dynamic-content="false"
-            key={selectedRequest ? String(selectedRequest.id) : 'new'}
-            request={selectedRequest}
-            onSubmit={handleSubmit}
-            onCancel={() => {
-              setShowForm(false);
-              setSelectedRequest(null);
-            }}
-          />
-
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={!!historyViewRequest}
-        onOpenChange={(open) => {
-          if (!open) setHistoryViewRequest(null);
-        }}
-      >
-        <DialogContent
-          overlayClassName="z-[10016]"
-          className="z-[10017] max-w-6xl w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto"
-        >
-          <DialogHeader>
-            <DialogTitle>Service request</DialogTitle>
-            <DialogDescription>
-              {historyViewRequest
-                ? `Request #${historyViewRequest.request_number || historyViewRequest.id} — view details; use Close when finished.`
-                : ''}
-            </DialogDescription>
-          </DialogHeader>
-          {historyViewRequest ? (
+          {isOpeningForm ? (
+            <div className="flex min-h-[240px] items-center justify-center">
+              <LoadingSpinner
+                size="md"
+                text={formMode === 'view' ? 'Opening view mode...' : 'Opening edit mode...'}
+              />
+            </div>
+          ) : (
             <ServiceRequestForm
-              key={historyViewRequest.id}
-              request={historyViewRequest}
-              readOnly
-              onSubmit={async () => {}}
-              onCancel={() => setHistoryViewRequest(null)}
+              data-source-location="pages/ServiceRequests:467:10"
+              data-dynamic-content="false"
+              key={`${selectedRequest ? String(selectedRequest.id) : 'new'}-${formMode}`}
+              request={selectedRequest}
+              readOnly={formMode === 'view'}
+              showEditInReadOnly={formMode === 'view'}
+              onEditRequest={() => setFormMode('edit')}
+              actionsDisabled={isViewActionDelayActive}
+              onSubmit={handleSubmit}
+              onCancel={() => {
+                if (openingTimerRef.current) clearTimeout(openingTimerRef.current);
+                if (viewDelayTimerRef.current) clearTimeout(viewDelayTimerRef.current);
+                setShowForm(false);
+                setSelectedRequest(null);
+                setFormMode('edit');
+                setIsOpeningForm(false);
+                setIsViewActionDelayActive(false);
+              }}
             />
-          ) : null}
+          )}
+
         </DialogContent>
       </Dialog>
 
@@ -1788,7 +1258,7 @@ export default function ServiceRequests() {
           setRescheduleTechnicianId('');
         }
       }}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0">
           <DialogHeader>
             <DialogTitle>Reschedule Job</DialogTitle>
             <DialogDescription>
@@ -1808,7 +1278,7 @@ export default function ServiceRequests() {
             </div>
             <div>
               <Label className="mb-2 block text-sm">Technician</Label>
-              <Select value={rescheduleTechnicianId} onValueChange={setRescheduleTechnicianId}>
+              <Select modal={false} value={rescheduleTechnicianId} onValueChange={setRescheduleTechnicianId}>
                 <SelectTrigger className="h-9 text-sm">
                   <SelectValue placeholder="Select technician..." />
                 </SelectTrigger>

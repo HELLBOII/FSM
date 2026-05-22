@@ -140,8 +140,8 @@ export default function AdminTechnicianJobs() {
   });
 
   const { data: allTechnicians = [], isLoading: isLoadingTechnicians } = useQuery({
-    queryKey: ['technicians'],
-    queryFn: () => technicianService.list(),
+    queryKey: ['technicians', 'forSelection'],
+    queryFn: () => technicianService.listForSelection(),
     enabled: !!reassignJob
   });
   const { data: clients = [] } = useQuery({
@@ -657,7 +657,7 @@ export default function AdminTechnicianJobs() {
                                   <Tooltip.Portal>
                                     <Tooltip.Content side="top" sideOffset={4}>
                                       Edit request
-                                      <Tooltip.Arrow className="fill-popover" />
+                                      <Tooltip.Arrow />
                                     </Tooltip.Content>
                                   </Tooltip.Portal>
                                 </Tooltip.Root>
@@ -679,7 +679,7 @@ export default function AdminTechnicianJobs() {
                                   <Tooltip.Portal>
                                     <Tooltip.Content side="top" sideOffset={4}>
                                       Reassign technician
-                                      <Tooltip.Arrow className="fill-popover" />
+                                      <Tooltip.Arrow />
                                     </Tooltip.Content>
                                   </Tooltip.Portal>
                                 </Tooltip.Root>
@@ -702,7 +702,7 @@ export default function AdminTechnicianJobs() {
                                   <Tooltip.Portal>
                                     <Tooltip.Content side="top" sideOffset={4}>
                                       Cancel request
-                                      <Tooltip.Arrow className="fill-popover" />
+                                      <Tooltip.Arrow />
                                     </Tooltip.Content>
                                   </Tooltip.Portal>
                                 </Tooltip.Root>

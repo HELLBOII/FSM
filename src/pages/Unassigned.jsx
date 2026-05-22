@@ -101,8 +101,8 @@ export default function Unassigned() {
   const overdueRows = unassignedPage?.data ?? [];
   const schedulingTotal = unassignedPage?.total ?? 0;
   const { data: techniciansForAssign = [], isLoading: isLoadingTechniciansForAssign } = useQuery({
-    queryKey: ['technicians', 'forAssignDialog'],
-    queryFn: () => technicianService.list(),
+    queryKey: ['technicians', 'forAssignDialog', 'forSelection'],
+    queryFn: () => technicianService.listForSelection(),
     enabled: !!assignRequest,
   });
   const { data: clients = [] } = useQuery({
@@ -110,8 +110,8 @@ export default function Unassigned() {
     queryFn: () => clientService.list()
   });
   const { data: technicians = [] } = useQuery({
-    queryKey: ['technicians', 'active'],
-    queryFn: () => technicianService.filter({ status: 'active' }),
+    queryKey: ['technicians', 'active', 'forSelection'],
+    queryFn: () => technicianService.listActiveForSelection(),
   });
 
   const assignTechnicianMutation = useMutation({
@@ -458,7 +458,7 @@ export default function Unassigned() {
                               <Tooltip.Portal>
                                 <Tooltip.Content side="top" sideOffset={4}>
                                   Assign technician
-                                  <Tooltip.Arrow className="fill-popover" />
+                                  <Tooltip.Arrow />
                                 </Tooltip.Content>
                               </Tooltip.Portal>
                             </Tooltip.Root>
@@ -479,7 +479,7 @@ export default function Unassigned() {
                             <Tooltip.Portal>
                               <Tooltip.Content side="top" sideOffset={4}>
                                 Edit request
-                                <Tooltip.Arrow className="fill-popover" />
+                                <Tooltip.Arrow />
                               </Tooltip.Content>
                             </Tooltip.Portal>
                           </Tooltip.Root>
@@ -499,7 +499,7 @@ export default function Unassigned() {
                             <Tooltip.Portal>
                               <Tooltip.Content side="top" sideOffset={4}>
                                 Reschedule
-                                <Tooltip.Arrow className="fill-popover" />
+                                <Tooltip.Arrow />
                               </Tooltip.Content>
                             </Tooltip.Portal>
                           </Tooltip.Root>
@@ -521,7 +521,7 @@ export default function Unassigned() {
                               <Tooltip.Portal>
                                 <Tooltip.Content side="top" sideOffset={4}>
                                   Cancel request
-                                  <Tooltip.Arrow className="fill-popover" />
+                                  <Tooltip.Arrow />
                                 </Tooltip.Content>
                               </Tooltip.Portal>
                             </Tooltip.Root>

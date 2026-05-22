@@ -766,7 +766,7 @@ export default function AdminDashboard() {
                                   <Tooltip.Portal>
                                     <Tooltip.Content side="top" sideOffset={4}>
                                       Edit request
-                                      <Tooltip.Arrow className="fill-popover" />
+                                      <Tooltip.Arrow />
                                     </Tooltip.Content>
                                   </Tooltip.Portal>
                                 </Tooltip.Root>
@@ -787,7 +787,7 @@ export default function AdminDashboard() {
                                   <Tooltip.Portal>
                                     <Tooltip.Content side="top" sideOffset={4}>
                                       Cancel request
-                                      <Tooltip.Arrow className="fill-popover" />
+                                      <Tooltip.Arrow />
                                     </Tooltip.Content>
                                   </Tooltip.Portal>
                                 </Tooltip.Root>
@@ -921,7 +921,7 @@ export default function AdminDashboard() {
         setShowServiceRequestDialog(open);
         if (!open) setClientForServiceRequest(null);
       }}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-6xl w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0">
           <DialogHeader>
             <DialogTitle>New Service Request</DialogTitle>
             <DialogDescription>
@@ -948,7 +948,7 @@ export default function AdminDashboard() {
           if (!open) setHistoryEditRequest(null);
         }}
       >
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-6xl w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0">
           <DialogHeader>
             <DialogTitle>Edit Service Request</DialogTitle>
             <DialogDescription>

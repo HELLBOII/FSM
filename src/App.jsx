@@ -46,6 +46,7 @@ const pageAccess = {
     'Scheduling',
     'Unassigned',
     'Settings',
+    'CreateUsers',
     'Messages',
     'JobDetails', // Admins can view job details
     'TechnicianHome',

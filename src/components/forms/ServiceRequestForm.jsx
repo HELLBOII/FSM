@@ -42,70 +42,19 @@ import { toast } from 'sonner';
 import { addDays, format, isBefore, startOfToday } from 'date-fns';
 import DashboardMap, { MAP_PIN_COLORS } from '@/components/map/DashboardMap';
 
-/** Default irrigation system option labels (merged with DB + client lists). */
-const HARDCODED_IRRIGATION_SYSTEMS = [
-  'Drip Irrigation',
-  'Sprinkler System',
-  'Center Pivot',
-  'Flood Irrigation',
-  'Micro Sprinkler',
-  'Subsurface Drip',
-];
-
-/** Stored in DB; UI labels per product (Repair & Service maps to `leak_repair` for CHECK constraint). */
+/** Select options; values are persisted as chosen (same strings in DB). */
 const issueCategories = [
   { value: 'Scheduled Maintenance', label: 'Scheduled Maintenance' },
   { value: 'Repair & Service', label: 'Repair & Service' },
   { value: 'Other', label: 'Other' },
 ];
 
-const FORM_ISSUE_CATEGORY_VALUES = new Set(issueCategories.map((c) => c.value));
-
-/** Stored as lowercase on `service_requests.season`. */
 const SEASON_OPTIONS = [
   { value: 'Spring', label: 'Spring' },
   { value: 'Summer', label: 'Summer' },
   { value: 'Fall', label: 'Fall' },
   { value: 'Winter', label: 'Winter' },
 ];
-
-function normalizeSeasonFromRequest(raw) {
-  if (raw == null || String(raw).trim() === '') return '';
-  const s = String(raw).trim().toLowerCase();
-  if (SEASON_OPTIONS.some((o) => o.value === s)) return s;
-  const t = String(raw).trim();
-  const match = SEASON_OPTIONS.find((o) => o.label.toLowerCase() === t.toLowerCase());
-  return match ? match.value : '';
-}
-
-/**
- * Map stored `issue_category` (CHECK constraint / legacy snake_case) to form Select values.
- * Used when hydrating the form from API rows (e.g. read-only view from completed/cancelled lists).
- */
-function LEGACY_ISSUE_TO_FORM(raw) {
-  if (raw == null || String(raw).trim() === '') return '';
-  const s = String(raw).trim();
-  if (FORM_ISSUE_CATEGORY_VALUES.has(s)) return s;
-
-  const lower = s.toLowerCase().replace(/\s+/g, ' ');
-  if (
-    ['leak_repair', 'pump_issue', 'pipe_repair', 'valve_replacement'].includes(lower) ||
-    lower === 'repair & service' ||
-    lower === 'repair and service'
-  ) {
-    return 'Repair & Service';
-  }
-  if (lower === 'scheduled_maintenance' || lower === 'scheduled maintenance') {
-    return 'Scheduled Maintenance';
-  }
-  if (lower === 'other') return 'Other';
-
-  const asWords = lower.replace(/_/g, ' ');
-  const match = issueCategories.find(
-    (c) => c.label.toLowerCase() === asWords || c.value.toLowerCase() === asWords
-  );
-  return match ? match.value : '';
-}
 
 /** API may return 'T'/'F', boolean, or missing */
 function normalizeIsCancelled(value) {
@@ -139,13 +88,6 @@ function normalizeIrrigationSystemsFromRequest(request) {
   if (!list.length) list = parseFlexible(request.irrigation_type);
   return list;
 }
-
-const priorities = [
-  { value: 'low', label: 'Low', description: 'Non-urgent, can wait' },
-  { value: 'medium', label: 'Medium', description: 'Standard service' },
-  { value: 'high', label: 'High', description: 'Needs attention soon' },
-  { value: 'urgent', label: 'Urgent', description: 'Critical - crop damage risk' }
-];
 
 const CLOSED_STATUSES = ['completed', 'approved', 'closed'];
 
@@ -340,6 +282,9 @@ export default function ServiceRequestForm({
   initialStartTime,
   initialEndTime,
   readOnly = false,
+  showEditInReadOnly = false,
+  onEditRequest,
+  actionsDisabled = false,
 }) {
   const isReadOnly = readOnly === true;
   /** Thinner focus ring / border once a value is chosen; slightly stronger when empty. */
@@ -349,8 +294,8 @@ export default function ServiceRequestForm({
       'h-10 min-h-10 text-sm sm:text-base border bg-transparent',
       flex && 'flex-1 min-w-0',
       filled
-        ? 'border-primary/25 focus:border-primary focus:ring-1 focus:ring-primary/40'
-        : 'border-primary/30 focus:border-primary focus:ring-2 focus:ring-primary/35'
+        ? 'border-primary/25 focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary/40'
+        : 'border-primary/30 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/35'
     );
   }
   const queryClient = useQueryClient();
@@ -393,16 +338,60 @@ export default function ServiceRequestForm({
   const [mapClientSheetOpen, setMapClientSheetOpen] = useState(false);
   const [mapSheetClientId, setMapSheetClientId] = useState(null);
   const [mapSheetFlyTo, setMapSheetFlyTo] = useState(null);
+  const statusKey = String(formData?.status || request?.status || '').toLowerCase();
+  const isCancelledStatus =
+    statusKey === 'cancelled' || normalizeIsCancelled(formData?.is_cancelled ?? request?.is_cancelled) === 'T';
+  const isCompletedStatus = statusKey === 'completed';
+  const isCompletedOrCancelled = isCompletedStatus || isCancelledStatus;
 
   const { data: clients = [], isLoading: isLoadingClients } = useQuery({
-    queryKey: ['clients'],
-    queryFn: () => clientService.list()
+    queryKey: ['clients', 'forSelection'],
+    queryFn: () => clientService.listForSelection()
   });
 
   const { data: technicians = [], isLoading: isLoadingTechnicians } = useQuery({
-    queryKey: ['technicians', 'active'],
-    queryFn: () => technicianService.filter({ status: 'active' })
+    queryKey: ['technicians', 'active', 'forSelection'],
+    queryFn: () => technicianService.listActiveForSelection()
   });
+
+  const selectedClientId = formData.client_id ? String(formData.client_id) : '';
+  const selectedTechnicianId = formData.assigned_technician_id
+    ? String(formData.assigned_technician_id)
+    : '';
+
+  const needsLinkedClient =
+    !!selectedClientId && !clients.some((c) => String(c.id) === selectedClientId);
+  const { data: linkedClient } = useQuery({
+    queryKey: ['clients', 'linked', selectedClientId],
+    queryFn: () => clientService.getById(selectedClientId),
+    enabled: needsLinkedClient
+  });
+
+  const needsLinkedTechnician =
+    !!selectedTechnicianId &&
+    !technicians.some((t) => String(t.id) === selectedTechnicianId);
+  const { data: linkedTechnician } = useQuery({
+    queryKey: ['technicians', 'linked', selectedTechnicianId],
+    queryFn: () => technicianService.getById(selectedTechnicianId),
+    enabled: needsLinkedTechnician
+  });
+
+  const clientsForSelect = useMemo(() => {
+    if (linkedClient && !clients.some((c) => String(c.id) === String(linkedClient.id))) {
+      return [linkedClient, ...clients];
+    }
+    return clients;
+  }, [clients, linkedClient]);
+
+  const techniciansForSelect = useMemo(() => {
+    if (
+      linkedTechnician &&
+      !technicians.some((t) => String(t.id) === String(linkedTechnician.id))
+    ) {
+      return [linkedTechnician, ...technicians];
+    }
+    return technicians;
+  }, [technicians, linkedTechnician]);
   const { data: requestsBundle } = useQuery({
     queryKey: ['serviceRequests', 'listForRequestsPage', 500],
     queryFn: () => serviceRequestService.listActiveWithCancelledCount(500),
@@ -413,10 +402,15 @@ export default function ServiceRequestForm({
     queryFn: () => irrigationSystemsService.list()
   });
 
+  /** `irrigation_systems` table + labels already on clients (legacy / not yet in lookup table). */
   const availableIrrigationSystems = useMemo(() => {
-    const dbNames = dbIrrigationSystems.map((s) => s.irrigation_systems);
-    const fromClients = clients.flatMap((c) => c.irrigation_systems || []);
-    return [...new Set([...HARDCODED_IRRIGATION_SYSTEMS, ...dbNames, ...fromClients])].sort();
+    const fromDb = dbIrrigationSystems
+      .map((row) => (row.irrigation_systems == null ? '' : String(row.irrigation_systems).trim()))
+      .filter(Boolean);
+    const fromClients = clients.flatMap((c) =>
+      (c.irrigation_systems || []).map((s) => (s == null ? '' : String(s).trim())).filter(Boolean)
+    );
+    return [...new Set([...fromDb, ...fromClients])].sort((a, b) => a.localeCompare(b));
   }, [clients, dbIrrigationSystems]);
 
   const irrigationPickList = useMemo(
@@ -440,12 +434,8 @@ export default function ServiceRequestForm({
 
   const handleAddIrrigationSystem = async () => {
     const systemName = newIrrigationSystem.trim();
-    if (!systemName || availableIrrigationSystems.includes(systemName)) {
-      if (systemName && availableIrrigationSystems.includes(systemName)) {
-        toast.error('This irrigation system is already in the list');
-      }
-      return;
-    }
+    if (!systemName) return;
+
     try {
       const existing = await irrigationSystemsService.getByName(systemName);
       if (existing) {
@@ -624,8 +614,8 @@ export default function ServiceRequestForm({
         acreage_affected: request.acreage_affected?.toString() || '1',
         from_time: fromDateTimeValue,
         to_time: toDateTimeValue,
-        issue_category: LEGACY_ISSUE_TO_FORM(request.issue_category),
-        season: normalizeSeasonFromRequest(request.season),
+        issue_category: request.issue_category != null ? String(request.issue_category).trim() : '',
+        season: request.season != null ? String(request.season).trim() : '',
         irrigation_systems: irrigationSystemsFromRequest,
         is_cancelled: normalizeIsCancelled(request.is_cancelled),
       });
@@ -733,10 +723,7 @@ export default function ServiceRequestForm({
     if (!formData.client_id) nextErrors.client_id = 'Client is required.';
     if (!formData.irrigation_systems?.length) nextErrors.irrigation_systems = 'Add at least one irrigation system.';
     if (!formData.issue_category) nextErrors.issue_category = 'Issue category is required.';
-    if (
-      !formData.season ||
-      !SEASON_OPTIONS.some((o) => o.value === formData.season)
-    ) {
+    if (!String(formData.season || '').trim()) {
       nextErrors.season = 'Season is required.';
     }
     if (!fromDateTime) nextErrors.from_time = 'Start time is required.';
@@ -880,10 +867,7 @@ export default function ServiceRequestForm({
         assigned_technician_name: formData.assigned_technician_id ? formData.assigned_technician_name : null,
         assigned_technician_phone: formData.assigned_technician_id ? (formData.assigned_technician_phone || '') : '',
         is_cancelled: 'F',
-        season:
-          formData.season && SEASON_OPTIONS.some((o) => o.value === formData.season)
-            ? formData.season
-            : null,
+        season: String(formData.season || '').trim() || null,
       };
 
       const actorId = user?.id ?? null;
@@ -909,10 +893,10 @@ export default function ServiceRequestForm({
       await onSubmit(submitData);
       
       // Send email notifications after successful submission
-      const isUpdate = !!request;
+      // const isUpdate = !!request;
       
       // Get technician data if assigned (for including in client email)
-      let technician = null;
+      // let technician = null;
       // if (submitData.assigned_technician_id) {
       //   technician = technicians.find(t => t.id === submitData.assigned_technician_id);
       //   // Add technician phone to submitData for client email
@@ -935,14 +919,14 @@ export default function ServiceRequestForm({
       // }
       
       // Send email to technician if assigned
-      if (technician && technician.email) {
-        try {
-          await emailService.sendTechnicianNotification(submitData, technician, isUpdate);
-        } catch (error) {
-          console.error('Failed to send email to technician:', error);
-          // Don't show error to user, email sending failure shouldn't block form submission
-        }
-      }
+      // if (technician && technician.email) {
+      //   try {
+      //     await emailService.sendTechnicianNotification(submitData, technician, isUpdate);
+      //   } catch (error) {
+      //     console.error('Failed to send email to technician:', error);
+      //     // Don't show error to user, email sending failure shouldn't block form submission
+      //   }
+      // }
     } finally {
       setIsLoading(false);
     }
@@ -989,9 +973,10 @@ export default function ServiceRequestForm({
             ) : (
               <div className="flex items-center gap-2">
                 <Select
+                  modal={false}
                   value={formData.client_id ? String(formData.client_id) : undefined}
                   onValueChange={handleClientSelect}
-                  disabled={isReadOnly || clients.length === 0}
+                  disabled={isReadOnly || clientsForSelect.length === 0}
                 >
                   <SelectTrigger
                     className={cn(
@@ -1004,8 +989,8 @@ export default function ServiceRequestForm({
                     <SelectValue placeholder="Choose a client..." />
                   </SelectTrigger>
                   <SelectContent>
-                    {clients.length > 0 ? (
-                      clients.map((client) => (
+                    {clientsForSelect.length > 0 ? (
+                      clientsForSelect.map((client) => (
                         <SelectItem key={client.id} value={String(client.id)}>
                           {[client.name, client.farm_name].filter(Boolean).join(' — ') || String(client.id)}
                         </SelectItem>
@@ -1044,6 +1029,7 @@ export default function ServiceRequestForm({
               Issue Category <span className="text-red-600">*</span>
             </Label>
             <Select
+              modal={false}
               value={formData.issue_category || undefined}
               onValueChange={(v) => {
                 setFormData((prev) => ({ ...prev, issue_category: v }));
@@ -1164,6 +1150,7 @@ export default function ServiceRequestForm({
               Season <span className="text-red-600">*</span>
             </Label>
             <Select
+              modal={false}
               value={formData.season || undefined}
               onValueChange={(v) => {
                 setFormData((prev) => ({ ...prev, season: v }));
@@ -1229,9 +1216,10 @@ export default function ServiceRequestForm({
                 <SelectSkeleton />
               ) : (
                 <Select
+                  modal={false}
                   value={formData.assigned_technician_id ? String(formData.assigned_technician_id) : undefined}
                   onValueChange={(v) => {
-                    const technician = technicians.find((t) => String(t.id) === String(v));
+                    const technician = techniciansForSelect.find((t) => String(t.id) === String(v));
                     setFormData((prev) => ({
                       ...prev,
                       assigned_technician_id: v || '',
@@ -1239,7 +1227,7 @@ export default function ServiceRequestForm({
                       assigned_technician_phone: technician ? technician.phone : '',
                     }));
                   }}
-                  disabled={isReadOnly || technicians.length === 0}
+                  disabled={isReadOnly || techniciansForSelect.length === 0}
                 >
                   <SelectTrigger
                     className={cn(
@@ -1250,8 +1238,8 @@ export default function ServiceRequestForm({
                     <SelectValue placeholder="Select technician..." />
                   </SelectTrigger>
                   <SelectContent>
-                    {technicians.length > 0 ? (
-                      technicians.map((tech) => (
+                    {techniciansForSelect.length > 0 ? (
+                      techniciansForSelect.map((tech) => (
                         <SelectItem key={tech.id} value={String(tech.id)}>
                           {tech.name}
                         </SelectItem>
@@ -1368,31 +1356,54 @@ export default function ServiceRequestForm({
         </DialogContent>
       </Dialog>
 
-      {normalizeIsCancelled(formData.is_cancelled) === 'T' && (
-        <p className="text-sm font-medium text-destructive">This request has been cancelled.</p>
-      )}
-
       {/* Actions */}
       <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
-        <Button type="button" variant="outline" onClick={onCancel} className="border-primary text-primary hover:bg-primary hover:text-primary-foreground">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={onCancel}
+          disabled={actionsDisabled}
+          className="border-primary text-primary hover:bg-primary hover:text-primary-foreground"
+        >
           Close
         </Button>
-        {!isReadOnly && request && normalizeIsCancelled(formData.is_cancelled) !== 'T' ? (
+        {isReadOnly && showEditInReadOnly ? (
+          !isCompletedOrCancelled ? (
           <Button
             type="button"
-            variant="outline"
-            className="border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
-            disabled={isLoading || isCancelSaving}
-            onClick={() => setCancelConfirmOpen(true)}
+            className="bg-primary hover:bg-primary/90 text-primary-foreground"
+            onClick={onEditRequest}
+            disabled={actionsDisabled}
           >
-            Cancel Request
+            Edit Request
+          </Button>
+          ) : null
+        ) : null}
+        {request ? (
+          <Button
+            type="button"
+            variant={isCompletedOrCancelled ? 'default' : 'outline'}
+            className={
+              isCompletedStatus
+                ? 'bg-emerald-600 text-white hover:bg-emerald-600 disabled:bg-emerald-600 disabled:text-white disabled:opacity-100'
+                : isCancelledStatus
+                  ? 'bg-destructive text-white hover:bg-destructive disabled:bg-destructive disabled:text-white disabled:opacity-100'
+                  : 'border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive'
+            }
+            disabled={isLoading || isCancelSaving || actionsDisabled || isCompletedOrCancelled}
+            onClick={() => {
+              if (isCompletedOrCancelled) return;
+              setCancelConfirmOpen(true);
+            }}
+          >
+            {isCompletedStatus ? 'Completed' : isCancelledStatus ? 'Cancelled' : 'Cancel Request'}
           </Button>
         ) : null}
-        {!isReadOnly ? (
+        {!isReadOnly && !isCompletedOrCancelled ? (
           <Button
             type="submit"
             className="bg-primary hover:bg-primary/90 text-primary-foreground"
-            disabled={isLoading || isCancelSaving || normalizeIsCancelled(formData.is_cancelled) === 'T'}
+            disabled={isLoading || isCancelSaving || actionsDisabled}
           >
             {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin text-primary-foreground" />}
             {request ? 'Edit Request' : 'Save Request'}
@@ -1464,7 +1475,15 @@ export default function ServiceRequestForm({
               <Button
                 type="button"
                 className="bg-primary text-primary-foreground hover:bg-primary/90"
-                disabled={!newIrrigationSystem.trim() || createIrrigationSystemMutation.isPending}
+                disabled={
+                  !newIrrigationSystem.trim() ||
+                  createIrrigationSystemMutation.isPending ||
+                  dbIrrigationSystems.some(
+                    (row) =>
+                      (row.irrigation_systems || '').trim().toLowerCase() ===
+                      newIrrigationSystem.trim().toLowerCase()
+                  )
+                }
                 onClick={() => handleAddIrrigationSystem()}
               >
                 {createIrrigationSystemMutation.isPending ? 'Adding...' : 'Add system'}

@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { normalizeNotesHistory, newNoteEntry } from '@/utils/clientNotesHistory';
+import { filterAppVisible } from '@/utils/appVisible';
 
 /**
  * Client Service - CRUD operations for Clients
@@ -34,6 +35,17 @@ export const clientService = {
       throw error;
     }
     return data || [];
+  },
+
+  /**
+   * Clients visible in app selection dropdowns (app_visible !== false).
+   * @param {string} [orderBy]
+   * @param {string} [orderDirection='asc']
+   * @returns {Promise<Array>}
+   */
+  async listForSelection(orderBy, orderDirection = 'asc') {
+    const rows = await this.list(orderBy, orderDirection);
+    return filterAppVisible(rows);
   },
 
   /**

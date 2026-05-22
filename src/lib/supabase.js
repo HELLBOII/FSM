@@ -11,10 +11,10 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.error('VITE_SUPABASE_ANON_KEY=your_supabase_anon_key');
 }
 
-// Create a single supabase client for interacting with your database
-// Add error handling and better configuration
-// Note: Even if URL/key are empty, we create the client to avoid errors
-// but validation should happen before making requests
+// Single Supabase client. Each request from this app uses the logged-in user's
+// JWT access token automatically (Authorization: Bearer …). Row Level Security
+// in Postgres evaluates auth.uid() and auth.jwt() from that token — never ship
+// the service_role key in the browser; use the anon key + RLS only.
 export const supabase = createClient(
   supabaseUrl || 'https://placeholder.supabase.co', 
   supabaseAnonKey || 'placeholder-key',

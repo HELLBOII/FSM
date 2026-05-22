@@ -1,5 +1,6 @@
-import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
+import React, { createContext, useState, useContext, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
+import { toAuthEmail, toDisplayUsername } from '@/lib/userEmail';
 
 const AuthContext = createContext();
 
@@ -9,6 +10,8 @@ export const AuthProvider = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [authError, setAuthError] = useState(null);
+  /** While admin creates a user, signUp briefly signs in the new account — ignore that session. */
+  const preservingAdminUserIdRef = useRef(null);
 
   const applySession = useCallback((nextSession) => {
     setSession(nextSession ?? null);
@@ -65,6 +68,14 @@ export const AuthProvider = ({ children }) => {
           return;
         }
         if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+          const preservedAdminId = preservingAdminUserIdRef.current;
+          if (
+            preservedAdminId &&
+            nextSession?.user?.id &&
+            nextSession.user.id !== preservedAdminId
+          ) {
+            return;
+          }
           applySession(nextSession);
           setAuthError(null);
         } else if (event === 'SIGNED_OUT') {
@@ -79,14 +90,14 @@ export const AuthProvider = ({ children }) => {
     };
   }, [checkUserAuth, applySession]);
 
-  const login = async (email, password) => {
+  const login = async (username, password) => {
     try {
       setIsLoadingAuth(true);
       setAuthError(null);
 
       // Validate inputs
-      if (!email || !password) {
-        const error = new Error('Email and password are required');
+      if (!username || !password) {
+        const error = new Error('Username and password are required');
         setAuthError({
           type: 'login_error',
           message: error.message
@@ -109,9 +120,11 @@ export const AuthProvider = ({ children }) => {
         throw error;
       }
 
+      const email = toAuthEmail(username);
+
       // Attempt login with Supabase
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
+        email,
         password: password
       });
 
@@ -177,112 +190,113 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const signup = async (email, password, metadata = {}) => {
+  const createUser = async (username, password, metadata = {}) => {
     try {
-      setIsLoadingAuth(true);
       setAuthError(null);
 
-      // Validate inputs
-      if (!email || !password) {
-        const error = new Error('Email and password are required');
-        setAuthError({
-          type: 'signup_error',
-          message: error.message
-        });
-        setIsLoadingAuth(false);
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      const role = currentUser?.user_metadata?.user_role;
+      if (role !== 'admin') {
+        const error = new Error('Only administrators can create users.');
+        setAuthError({ type: 'create_user_error', message: error.message });
+        throw error;
+      }
+
+      if (!username || !password) {
+        const error = new Error('Username and password are required');
+        setAuthError({ type: 'create_user_error', message: error.message });
         throw error;
       }
 
       if (password.length < 6) {
         const error = new Error('Password must be at least 6 characters long');
-        setAuthError({
-          type: 'signup_error',
-          message: error.message
-        });
-        setIsLoadingAuth(false);
+        setAuthError({ type: 'create_user_error', message: error.message });
         throw error;
       }
 
-      // Validate Supabase configuration
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
       if (!supabaseUrl || !supabaseAnonKey) {
         const error = new Error('Supabase is not configured. Please check your environment variables.');
-        setAuthError({
-          type: 'config_error',
-          message: error.message
-        });
-        setIsLoadingAuth(false);
+        setAuthError({ type: 'config_error', message: error.message });
         throw error;
       }
 
-      // Attempt signup with Supabase
-      const { data, error } = await supabase.auth.signUp({
-        email: email.trim(),
-        password: password,
-        options: {
-          data: metadata,
-          emailRedirectTo: "https://fsm-nine.vercel.app"
-        }
-      });
+      const { data: sessionData } = await supabase.auth.getSession();
+      const adminSession = sessionData?.session;
+      const adminUserId = adminSession?.user?.id;
 
-      console.log(data);
-
-      if (error) {
-        // Handle specific Supabase errors
-        let errorMessage = 'Sign up failed. Please try again.';
-        
-        if (error.message) {
-          errorMessage = error.message;
-        } else if (error.status === 400) {
-          errorMessage = 'Invalid email or password format.';
-        } else if (error.status === 422) {
-          errorMessage = 'This email is already registered. Please sign in instead.';
-        } else if (error.status === 429) {
-          errorMessage = 'Too many signup attempts. Please try again later.';
-        }
-
-        setAuthError({
-          type: 'signup_error',
-          message: errorMessage
-        });
-        setIsLoadingAuth(false);
+      if (!adminSession || !adminUserId) {
+        const error = new Error('Admin session not found. Please sign in again.');
+        setAuthError({ type: 'create_user_error', message: error.message });
         throw error;
       }
 
-      if (data?.user && data?.session) {
-        applySession(data.session);
-        setAuthError(null);
+      const email = toAuthEmail(username);
+      const displayName = toDisplayUsername(email);
+
+      preservingAdminUserIdRef.current = adminUserId;
+      try {
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              ...metadata,
+              full_name: metadata.full_name
+                ? toDisplayUsername(String(metadata.full_name))
+                : displayName,
+            },
+          },
+        });
+
+        if (error) {
+          let errorMessage = 'Failed to create user. Please try again.';
+          if (error.message) {
+            errorMessage = error.message;
+          } else if (error.status === 422) {
+            errorMessage = 'This username is already registered.';
+          }
+          setAuthError({ type: 'create_user_error', message: errorMessage });
+          throw error;
+        }
+
+        const { data: restored, error: restoreError } = await supabase.auth.setSession({
+          access_token: adminSession.access_token,
+          refresh_token: adminSession.refresh_token,
+        });
+
+        if (restoreError) {
+          setAuthError({ type: 'create_user_error', message: restoreError.message });
+          throw restoreError;
+        }
+
+        applySession(restored.session ?? adminSession);
+
+        return data;
+      } finally {
+        preservingAdminUserIdRef.current = null;
       }
-      // If user exists but no session, email confirmation is pending - do not set authenticated
-      
-      setIsLoadingAuth(false);
-      return data;
     } catch (error) {
-      setIsLoadingAuth(false);
-      
-      // If it's not already handled, set a generic error
       if (!authError) {
         setAuthError({
-          type: 'signup_error',
-          message: error.message || 'An unexpected error occurred during signup.'
+          type: 'create_user_error',
+          message: error.message || 'An unexpected error occurred while creating the user.',
         });
       }
-      
       throw error;
     }
   };
 
-  const resendVerificationEmail = async (emailAddress) => {
+  const resendVerificationEmail = async (usernameOrEmail) => {
     try {
       setAuthError(null);
-      if (!emailAddress?.trim()) {
-        throw new Error('Email is required to resend verification.');
+      if (!usernameOrEmail?.trim()) {
+        throw new Error('Username is required to resend verification.');
       }
       const { data, error } = await supabase.auth.resend({
         type: 'signup',
-        email: emailAddress.trim()
+        email: toAuthEmail(usernameOrEmail)
       });
       if (error) throw error;
       return { success: true, data };
@@ -293,15 +307,15 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const resetPasswordForEmail = async (emailAddress) => {
+  const resetPasswordForEmail = async (usernameOrEmail) => {
     try {
       setAuthError(null);
-      if (!emailAddress?.trim()) {
-        throw new Error('Email is required to reset password.');
+      if (!usernameOrEmail?.trim()) {
+        throw new Error('Username is required to reset password.');
       }
       const origin = import.meta.env.VITE_URL;
       const redirectTo = `${origin}/reset-password`;
-      const { data, error } = await supabase.auth.resetPasswordForEmail(emailAddress.trim(), {
+      const { data, error } = await supabase.auth.resetPasswordForEmail(toAuthEmail(usernameOrEmail), {
         redirectTo
       });
       if (error) throw error;
@@ -360,7 +374,7 @@ export const AuthProvider = ({ children }) => {
       isLoadingAuth,
       authError,
       login,
-      signup,
+      createUser,
       resendVerificationEmail,
       resetPasswordForEmail,
       updatePassword,

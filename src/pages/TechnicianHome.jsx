@@ -2,6 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { useAuth } from '@/lib/AuthContext';
+import { toDisplayUsername } from '@/lib/userEmail';
 import { technicianService, serviceRequestService } from '@/services';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
@@ -73,6 +74,12 @@ export default function TechnicianHome() {
     pending: todayJobs.filter((j) => ['assigned', 'scheduled'].includes(j.status)).length
   };
 
+  const displayName =
+    user?.user_metadata?.full_name?.split(' ')[0] ||
+    technician?.name?.split(' ')[0] ||
+    toDisplayUsername(user?.email) ||
+    'Technician';
+
   if (userLoading || isLoadingTechnician || requestsLoading) {
     return (
       <div data-source-location="pages/TechnicianHome:92:6" data-dynamic-content="false" className="flex items-center justify-center min-h-[60vh]">
@@ -88,12 +95,12 @@ export default function TechnicianHome() {
           <Avatar data-source-location="pages/TechnicianHome:113:10" data-dynamic-content="true" className="h-14 w-14">
             <AvatarImage data-source-location="pages/TechnicianHome:114:12" data-dynamic-content="false" src={user?.avatar_url} />
             <AvatarFallback data-source-location="pages/TechnicianHome:115:12" data-dynamic-content="true" className="bg-gradient-to-br from-emerald-100 to-blue-100 text-emerald-700 text-lg">
-              {user?.email?.charAt(0).toUpperCase() || 'T'}
+              {displayName?.charAt(0).toUpperCase() || 'T'}
             </AvatarFallback>
           </Avatar>
           <div data-source-location="pages/TechnicianHome:119:10" data-dynamic-content="true">
-            <p data-source-location="pages/TechnicianHome:120:12" data-dynamic-content="true" className="text-gray-500 text-sm">Hello Technician,</p>
-            <h1 data-source-location="pages/TechnicianHome:121:12" data-dynamic-content="true" className="text-xl font-bold text-gray-900">{user?.email || 'Technician'}</h1>
+            <p data-source-location="pages/TechnicianHome:120:12" data-dynamic-content="true" className="text-gray-500 text-sm">Hello,</p>
+            <h1 data-source-location="pages/TechnicianHome:121:12" data-dynamic-content="true" className="text-xl font-bold text-gray-900">{displayName}</h1>
           </div>
         </div>
         {/* <Button data-source-location="pages/TechnicianHome:124:8" data-dynamic-content="false" variant="outline" size="icon" onClick={handleRefresh}>

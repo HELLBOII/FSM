@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { serviceRequestService } from '@/services';
 import { useAuth } from '@/lib/AuthContext';
+import { toDisplayUsername } from '@/lib/userEmail';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import {
@@ -63,7 +64,10 @@ export default function ClientDashboard() {
     );
   }
 
-  const displayName = user?.user_metadata?.full_name?.split(' ')[0] || user?.email?.split('@')[0] || 'Farmer';
+  const displayName =
+    user?.user_metadata?.full_name?.split(' ')[0] ||
+    toDisplayUsername(user?.email) ||
+    'Farmer';
 
   return (
     <div className="p-4 space-y-6 pb-24">

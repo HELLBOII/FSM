@@ -24,7 +24,10 @@ export default function AssignmentPanel({ serviceRequest, onClose }) {
 
   const { data: technicians = [] } = useQuery({
     queryKey: ['technicians'],
-    queryFn: () => technicianService.list().then(techs => techs.filter(t => t.status === 'active'))
+    queryFn: () =>
+      technicianService.listForSelection().then((techs) =>
+        techs.filter((t) => t.status === 'active')
+      )
   });
 
   const assignMutation = useMutation({

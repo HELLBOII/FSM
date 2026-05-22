@@ -3,6 +3,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import Calendar from './pages/Calendar';
 import ClientDashboard from './pages/ClientDashboard';
 import Clients from './pages/Clients';
+import CreateUsers from './pages/CreateUsers';
 import EquipmentInventory from './pages/EquipmentInventory';
 import JobDetails from './pages/JobDetails';
 import AdminJobDetails from './pages/AdminJobDetails';
@@ -34,6 +35,7 @@ export const pagesConfig = {
     Calendar,
     ClientDashboard,
     Clients,
+    CreateUsers,
     EquipmentInventory,
     JobDetails,
     AdminJobDetails,

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { technicianService, specializationsService } from '@/services';
+import { technicianService, specializationsService, userService } from '@/services';
+import { useAuth } from '@/lib/AuthContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -8,11 +9,16 @@ import {
   Plus,
   Phone,
   Mail,
+  MapPin,
   Star,
   ChevronRight,
   ChevronLeft,
-  Edit,
-  MoreVertical } from
+  Lock,
+  Eye,
+  EyeOff,
+  Loader2,
+  User,
+  UserCog } from
 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,30 +40,33 @@ import {
   DialogHeader,
   DialogTitle } from
 "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger } from
-"@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { DateTimePicker } from "@/components/ui/DateTimePicker";
 import PageHeader from '@/components/common/PageHeader';
 import StatusBadge from '@/components/ui/StatusBadge';
 import EmptyState from '@/components/common/EmptyState';
 import { toast } from 'sonner';
-
-const specializations = [
-'Drip Irrigation',
-'Sprinkler Systems',
-'Center Pivot',
-'Pump Repair',
-'Controller Programming',
-'Water Management'];
-
+import { toAuthEmail, toDisplayUsername } from '@/lib/userEmail';
+import {
+  generateTechnicianIdentifiers,
+  shouldPreserveTechnicianIdentifiers,
+  filterUsedIdentifiersForEdit
+} from '@/utils/technicianIdentifiers';
 
 const PAGE_SIZE_OPTIONS = [12, 24, 48];
+const TECHNICIAN_DEFAULT_PASSWORD = 'Tech@123';
+
+function buildTechnicianFullName({ first_name, middle_name, last_name }) {
+  return [first_name, middle_name, last_name]
+    .map((p) => (p == null ? '' : String(p).trim()))
+    .filter(Boolean)
+    .join(' ');
+}
+
+const readonlyGeneratedFieldClass =
+  'bg-gray-50 text-foreground opacity-100 disabled:opacity-100 disabled:cursor-default cursor-default';
 
 function RequiredMark() {
   return <span className="text-red-600 ml-0.5" aria-hidden="true">*</span>;
@@ -71,11 +80,19 @@ function parseOptionalNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+
+function formatTechnicianAddressLine(tech) {
+  const parts = [tech.address, tech.city, tech.state, tech.zipcode]
+    .map((p) => (p == null ? '' : String(p).trim()))
+    .filter(Boolean);
+  return parts.join(', ');
+}
+
 function TechnicianCardSkeleton() {
   return (
-    <Card className="border bg-card shadow-sm">
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between gap-2 mb-4">
+    <Card className="h-full min-h-0 border bg-card shadow-sm">
+      <CardContent className="p-5 flex flex-col gap-4">
+        <div className="flex items-start gap-2">
           <div className="flex items-center gap-3 flex-1 min-w-0">
             <div className="h-12 w-12 rounded-full bg-muted animate-pulse shrink-0" />
             <div className="flex-1 space-y-2 min-w-0">
@@ -83,21 +100,22 @@ function TechnicianCardSkeleton() {
               <div className="h-3 w-1/2 max-w-[8rem] rounded bg-muted animate-pulse" />
             </div>
           </div>
-          <div className="h-8 w-8 rounded-md bg-muted animate-pulse shrink-0" />
         </div>
-        <div className="space-y-2 mb-4">
+        <div className="space-y-2">
           <div className="h-3 w-full rounded bg-muted animate-pulse" />
           <div className="h-3 w-4/5 rounded bg-muted animate-pulse" />
+          <div className="h-3 w-full rounded bg-muted animate-pulse" />
         </div>
-        <div className="flex justify-between gap-2 mb-3">
+        <div className="flex justify-between gap-2 pt-1">
           <div className="h-6 w-16 rounded-full bg-muted animate-pulse" />
           <div className="h-6 w-16 rounded-full bg-muted animate-pulse" />
         </div>
-        <div className="flex items-center justify-between pt-3 border-t">
+        <div className="h-px w-full bg-muted/60" />
+        <div className="flex items-center justify-between">
           <div className="h-4 w-12 rounded bg-muted animate-pulse" />
           <div className="h-4 w-28 rounded bg-muted animate-pulse" />
         </div>
-        <div className="flex flex-wrap gap-1 mt-3">
+        <div className="flex flex-wrap gap-1">
           <div className="h-5 w-16 rounded-full bg-muted animate-pulse" />
           <div className="h-5 w-20 rounded-full bg-muted animate-pulse" />
         </div>
@@ -108,6 +126,7 @@ function TechnicianCardSkeleton() {
 
 export default function Technicians() {
   const queryClient = useQueryClient();
+  const { createUser } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -118,8 +137,19 @@ export default function Technicians() {
   const [showAddSpecializationDialog, setShowAddSpecializationDialog] = useState(false);
   const [newSpecialization, setNewSpecialization] = useState('');
   const [inactiveDateTime, setInactiveDateTime] = useState(null);
+  const [showUpdateUserModal, setShowUpdateUserModal] = useState(false);
+  const [updateUserPassword, setUpdateUserPassword] = useState('');
+  const [showUpdateUserPassword, setShowUpdateUserPassword] = useState(false);
+  const [authUserIdForUpdate, setAuthUserIdForUpdate] = useState(null);
+  const [isResolvingAuthUser, setIsResolvingAuthUser] = useState(false);
+  const [isUpdatingUserPassword, setIsUpdatingUserPassword] = useState(false);
+  const [isProvisioningUser, setIsProvisioningUser] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
+    first_name: '',
+    middle_name: '',
+    last_name: '',
+    username: '',
     phone: '',
     email: '',
     employee_id: '',
@@ -131,7 +161,8 @@ export default function Technicians() {
     city: '',
     state: '',
     zipcode: '',
-    country: ''
+    country: '',
+    app_visible: true
   });
 
   useEffect(() => {
@@ -143,9 +174,20 @@ export default function Technicians() {
     setPage(1);
   }, [debouncedSearch, statusFilter, pageSize]);
 
+  useEffect(() => {
+    if (!showForm) return;
+    const fullName = buildTechnicianFullName({
+      first_name: formData.first_name,
+      middle_name: formData.middle_name,
+      last_name: formData.last_name
+    });
+    setFormData((prev) => (prev.name === fullName ? prev : { ...prev, name: fullName }));
+  }, [showForm, formData.first_name, formData.middle_name, formData.last_name]);
+
   const {
     data: pageResult,
-    isFetching
+    isPending: techniciansPending,
+    isFetching: techniciansFetching
   } = useQuery({
     queryKey: ['technicians', 'paged', page, pageSize, debouncedSearch, statusFilter],
     queryFn: () =>
@@ -158,7 +200,7 @@ export default function Technicians() {
     placeholderData: (previousData) => previousData
   });
 
-  const showPageSkeleton = isFetching;
+  const showPageSkeleton = techniciansPending && !pageResult;
   const technicians = pageResult?.data ?? [];
   const total = pageResult?.total ?? 0;
 
@@ -179,12 +221,48 @@ export default function Technicians() {
     queryFn: () => specializationsService.list()
   });
 
-  // Hardcoded + DB + specializations seen on the current page (for add/edit dropdown)
+  const { data: usedIdentifiers, isLoading: identifiersLoading } = useQuery({
+    queryKey: ['technicians', 'usedIdentifiers'],
+    queryFn: () => technicianService.listUsedIdentifiers(),
+    enabled: showForm
+  });
+
+  const generatedDisplay = useMemo(() => {
+    const firstName = formData.first_name;
+    const lastName = formData.last_name;
+
+    if (
+      shouldPreserveTechnicianIdentifiers(selectedTech, firstName, lastName)
+    ) {
+      return {
+        username: selectedTech.username || '',
+        employee_id: selectedTech.employee_id || ''
+      };
+    }
+
+    const { usedUsernames, usedEmployeeIds } = filterUsedIdentifiersForEdit(
+      usedIdentifiers?.usernames ?? [],
+      usedIdentifiers?.employeeIds ?? [],
+      selectedTech
+    );
+
+    return generateTechnicianIdentifiers({
+      firstName,
+      lastName,
+      usedUsernames,
+      usedEmployeeIds
+    });
+  }, [selectedTech, formData.first_name, formData.last_name, usedIdentifiers]);
+
+  /** DB rows + any labels already on technicians (legacy / not yet in `specializations` table). */
   const availableSpecializations = useMemo(() => {
-    const dbSystemNames = dbSpecializations.map((sys) => sys.specializations);
-    const technicianSystems = technicians.flatMap((tech) => tech.specializations || []);
-    const allSystems = [...new Set([...specializations, ...dbSystemNames, ...technicianSystems])];
-    return allSystems.sort();
+    const fromDb = dbSpecializations
+      .map((row) => (row.specializations == null ? '' : String(row.specializations).trim()))
+      .filter(Boolean);
+    const fromTechnicians = technicians.flatMap((tech) =>
+      (tech.specializations || []).map((s) => (s == null ? '' : String(s).trim())).filter(Boolean)
+    );
+    return [...new Set([...fromDb, ...fromTechnicians])].sort((a, b) => a.localeCompare(b));
   }, [technicians, dbSpecializations]);
 
   const createSpecializationMutation = useMutation({
@@ -202,34 +280,69 @@ export default function Technicians() {
 
   const handleAddSpecialization = async () => {
     const specializationName = newSpecialization.trim();
-    if (specializationName && !availableSpecializations.includes(specializationName)) {
-      // Check if it already exists in database
-      try {
-        const existing = await specializationsService.getByName(specializationName);
-        if (existing) {
-          toast.error('This specialization already exists');
-          return;
-        }
-      } catch (error) {
-        // If error is not "not found", rethrow it
-        if (error.code !== 'PGRST116') {
-          throw error;
-        }
-      }
+    if (!specializationName) return;
 
-      // Create new specialization in database
-      await createSpecializationMutation.mutateAsync({
-        specializations: specializationName
+    try {
+      const existing = await specializationsService.getByName(specializationName);
+      if (existing) {
+        toast.error('This specialization already exists');
+        return;
+      }
+    } catch (error) {
+      if (error.code !== 'PGRST116') {
+        throw error;
+      }
+    }
+
+    await createSpecializationMutation.mutateAsync({
+      specializations: specializationName
+    });
+  };
+
+  const patchTechnicianInListCache = (row) => {
+    if (!row?.id) return;
+    queryClient.setQueriesData({ queryKey: ['technicians', 'paged'] }, (old) => {
+      if (!old?.data) return old;
+      const idx = old.data.findIndex((t) => t.id === row.id);
+      if (idx === -1) return old;
+      const next = [...old.data];
+      next[idx] = { ...next[idx], ...row };
+      return { ...old, data: next };
+    });
+  };
+
+  const scheduleTechniciansRefetch = (opts = {}) => {
+    const { refreshIdentifiers = false, refreshAppUsers = false } = opts;
+    queryClient.invalidateQueries({
+      queryKey: ['technicians'],
+      refetchType: 'active'
+    });
+    if (refreshIdentifiers) {
+      queryClient.invalidateQueries({
+        queryKey: ['technicians', 'usedIdentifiers'],
+        refetchType: 'active'
+      });
+    }
+    if (refreshAppUsers) {
+      queryClient.invalidateQueries({
+        queryKey: ['appUsers'],
+        refetchType: 'active'
       });
     }
   };
 
   const createMutation = useMutation({
     mutationFn: (data) => technicianService.create(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['technicians'] });
+    onSuccess: (created) => {
       resetForm();
-      toast.success('Technician added successfully');
+      toast.success(
+        `Technician and sign-in account created (default password: ${TECHNICIAN_DEFAULT_PASSWORD})`
+      );
+      if (created) patchTechnicianInListCache(created);
+      scheduleTechniciansRefetch({
+        refreshIdentifiers: true,
+        refreshAppUsers: true
+      });
     },
     onError: (error) => {
       toast.error('Failed to add technician: ' + error.message);
@@ -238,35 +351,121 @@ export default function Technicians() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }) => technicianService.update(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['technicians'] });
+    onSuccess: (updated) => {
       resetForm();
       toast.success('Technician updated successfully');
+      if (updated) patchTechnicianInListCache(updated);
+      scheduleTechniciansRefetch();
     },
     onError: (error) => {
       toast.error('Failed to update technician: ' + error.message);
     }
   });
 
+  const isSavingTechnician =
+    createMutation.isPending ||
+    updateMutation.isPending ||
+    isProvisioningUser;
+
+  const emptyFormState = () => ({
+    name: '',
+    first_name: '',
+    middle_name: '',
+    last_name: '',
+    username: '',
+    phone: '',
+    email: '',
+    employee_id: '',
+    specializations: [],
+    status: 'active',
+    latitude: '',
+    longitude: '',
+    address: '',
+    city: '',
+    state: '',
+    zipcode: '',
+    country: '',
+    app_visible: true
+  });
+
+  const closeUpdateUserModal = () => {
+    setShowUpdateUserModal(false);
+    setUpdateUserPassword('');
+    setShowUpdateUserPassword(false);
+    setAuthUserIdForUpdate(null);
+  };
+
+  const openUpdateUserModal = async () => {
+    const username =
+      generatedDisplay.username?.trim() || selectedTech?.username?.trim();
+    if (!username) {
+      toast.error('No sign-in username is available for this technician');
+      return;
+    }
+
+    setUpdateUserPassword('');
+    setShowUpdateUserPassword(false);
+    setShowUpdateUserModal(true);
+    setAuthUserIdForUpdate(null);
+    setIsResolvingAuthUser(true);
+
+    try {
+      const userId = await userService.resolveAuthUserIdForTechnician(
+        selectedTech,
+        username
+      );
+      if (!userId) {
+        toast.error('No sign-in account found for this username');
+        setShowUpdateUserModal(false);
+        return;
+      }
+      setAuthUserIdForUpdate(userId);
+    } catch (error) {
+      toast.error(error.message || 'Failed to load sign-in account');
+      setShowUpdateUserModal(false);
+    } finally {
+      setIsResolvingAuthUser(false);
+    }
+  };
+
+  const handleUpdateUserPassword = async (e) => {
+    e.preventDefault();
+    if (!authUserIdForUpdate) return;
+
+    if (!updateUserPassword) {
+      toast.error('Please enter a new password');
+      return;
+    }
+    if (updateUserPassword.length < 6) {
+      toast.error('Password must be at least 6 characters long');
+      return;
+    }
+
+    setIsUpdatingUserPassword(true);
+    try {
+      await userService.updatePassword(authUserIdForUpdate, updateUserPassword);
+      toast.success('Password updated successfully');
+      closeUpdateUserModal();
+    } catch (error) {
+      toast.error(error.message || 'Failed to update password. Please try again.');
+    } finally {
+      setIsUpdatingUserPassword(false);
+    }
+  };
+
   const resetForm = () => {
     setShowForm(false);
     setSelectedTech(null);
     setInactiveDateTime(null);
-    setFormData({
-      name: '',
-      phone: '',
-      email: '',
-      employee_id: '',
-      specializations: [],
-      status: 'active',
-      latitude: '',
-      longitude: '',
-      address: '',
-      city: '',
-      state: '',
-      zipcode: '',
-      country: ''
-    });
+    closeUpdateUserModal();
+    setFormData(emptyFormState());
+  };
+
+  const openCreateForm = () => {
+    setSelectedTech(null);
+    setInactiveDateTime(null);
+    setFormData(emptyFormState());
+    setShowForm(true);
   };
 
   const handleEdit = (tech) => {
@@ -279,6 +478,10 @@ export default function Technicians() {
     }
     setFormData({
       name: tech.name || '',
+      first_name: tech.first_name || '',
+      middle_name: tech.middle_name || '',
+      last_name: tech.last_name || '',
+      username: tech.username || '',
       phone: tech.phone || '',
       email: tech.email || '',
       employee_id: tech.employee_id || '',
@@ -290,64 +493,164 @@ export default function Technicians() {
       city: tech.city || '',
       state: tech.state || '',
       zipcode: tech.zipcode || '',
-      country: tech.country || ''
+      country: tech.country || '',
+      app_visible: tech.app_visible !== false
     });
     setShowForm(true);
   };
 
-  const handleGeocode = async () => {
-  const address = `${formData.address} ${formData.city} ${formData.state} ${formData.zipcode}`;
-  console.log('Address:', address);
-  const response = await fetch(
-    `https://nominatim.openstreetmap.org/search?format=json&q=${address}`
-  );
-
-  const data = await response.json();
-  console.log('Geocoding data:', data);
-
-  return data;
-};
-
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    const firstName = formData.first_name?.trim() ?? '';
+    const middleName = formData.middle_name?.trim() ?? '';
+    const lastName = formData.last_name?.trim() ?? '';
+
+    if (!firstName) {
+      toast.error('First name is required');
+      return;
+    }
+    if (!lastName) {
+      toast.error('Last name is required');
+      return;
+    }
+
     if (formData.status === 'inactive' && !inactiveDateTime) {
       toast.error('Inactive date and time are required when status is inactive');
       return;
     }
-    let lat = null;
-    let lng = null;
-    console.log('Form data:', formData);
-
-  if (formData.latitude && formData.longitude) {
-    lat = parseOptionalNumber(formData.latitude);
-    lng = parseOptionalNumber(formData.longitude);
-  } else {
-    const data = await handleGeocode();
-    console.log('Geocoding data:', data);
-    if (data && data.length > 0) {
-      lat = parseOptionalNumber(data[0].lat);
-      lng = parseOptionalNumber(data[0].lon);
-    } else {
-      alert("Address not found");
-      return;
-    }
-  }
+    const lat = parseOptionalNumber(formData.latitude);
+    const lng = parseOptionalNumber(formData.longitude);
     const inactiveIso =
       formData.status === 'inactive' && inactiveDateTime
         ? inactiveDateTime.toISOString()
         : null;
+
+    const fullName = buildTechnicianFullName({
+      first_name: firstName,
+      middle_name: middleName,
+      last_name: lastName
+    });
+
+    const username = generatedDisplay.username?.trim() || null;
+    const employee_id = generatedDisplay.employee_id?.trim() || null;
+
+    const needsFreshIds =
+      !selectedTech ||
+      !shouldPreserveTechnicianIdentifiers(
+        selectedTech,
+        firstName,
+        lastName
+      );
+    if (needsFreshIds && identifiersLoading) {
+      toast.error('Please wait while IDs are being prepared');
+      return;
+    }
+    if (!employee_id) {
+      toast.error('Employee ID is required');
+      return;
+    }
+
     const submitData = {
       ...formData,
-      employee_id: formData.employee_id?.trim() || null,
+      name: fullName || formData.name?.trim() || null,
+      first_name: firstName || null,
+      middle_name: middleName || null,
+      last_name: lastName || null,
+      username,
+      employee_id,
       latitude: lat,
       longitude: lng,
-      inactivedate: inactiveIso
+      inactivedate: inactiveIso,
+      app_visible: formData.app_visible !== false
     };
 
     if (selectedTech) {
-      await updateMutation.mutateAsync({ id: selectedTech.id, data: submitData });
-    } else {
-      await createMutation.mutateAsync(submitData);
+      const prevStatus = selectedTech.status || 'active';
+      const nextStatus = formData.status || 'active';
+      const statusChanged = prevStatus !== nextStatus;
+      const authUserId = selectedTech.user_id?.trim() || null;
+
+      const updatePromise = updateMutation.mutateAsync({
+        id: selectedTech.id,
+        data: submitData
+      });
+
+      if (
+        statusChanged &&
+        (nextStatus === 'active' || nextStatus === 'inactive')
+      ) {
+        try {
+          const loginAccessPromise = userService.syncTechnicianLoginAccess({
+            technician: selectedTech,
+            username,
+            status: nextStatus,
+            authUserId
+          });
+
+          const [{ synced }] = await Promise.all([
+            loginAccessPromise,
+            updatePromise
+          ]);
+
+          if (!synced) {
+            toast.warning(
+              'No sign-in account found to update login access. Technician record was saved.'
+            );
+          }
+        } catch (error) {
+          toast.error(
+            error.message ||
+              'Failed to update sign-in access for this technician'
+          );
+        }
+      } else {
+        await updatePromise;
+      }
+      return;
+    }
+
+    setIsProvisioningUser(true);
+    let authUserId;
+    try {
+      const authData = await createUser(username, TECHNICIAN_DEFAULT_PASSWORD, {
+        user_role: 'technician',
+        full_name: fullName || toDisplayUsername(username)
+      });
+      authUserId = authData?.user?.id;
+      if (!authUserId) {
+        throw new Error('Sign-in account was created but user id was missing');
+      }
+    } catch (error) {
+      toast.error(
+        error.message || 'Failed to create technician sign-in account'
+      );
+      setIsProvisioningUser(false);
+      return;
+    }
+
+    try {
+      const createPromise = createMutation.mutateAsync({
+        ...submitData,
+        user_id: authUserId
+      });
+
+      if (submitData.status === 'inactive') {
+        const [, banResult] = await Promise.allSettled([
+          createPromise,
+          userService.setLoginAccess(authUserId, false)
+        ]);
+        if (banResult.status === 'rejected') {
+          toast.warning(
+            banResult.reason?.message ||
+              'Technician created, but sign-in access could not be disabled.'
+          );
+        }
+      } else {
+        await createPromise;
+      }
+    } finally {
+      setIsProvisioningUser(false);
     }
   };
 
@@ -362,7 +665,7 @@ export default function Technicians() {
             ? `${total.toLocaleString()} field technicians`
             : 'Field technicians'
         }
-        action={() => setShowForm(true)}
+        action={openCreateForm}
         actionLabel="Add Technician"
         actionIcon={Plus} />
 
@@ -370,7 +673,7 @@ export default function Technicians() {
           <div data-source-location="pages/Technicians:160:8" data-dynamic-content="true" className="relative flex-1">
             <Search data-source-location="pages/Technicians:161:10" data-dynamic-content="false" className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <Input data-source-location="pages/Technicians:162:10" data-dynamic-content="false"
-            placeholder="Search by name, ID, or phone..."
+            placeholder="Search by name, username, employee ID, or phone..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-10" />
@@ -400,7 +703,7 @@ export default function Technicians() {
             ? 'Try different search terms or filters'
             : 'Add your first field technician'
         }
-        action={debouncedSearch || statusFilter !== 'all' ? undefined : () => setShowForm(true)}
+        action={debouncedSearch || statusFilter !== 'all' ? undefined : openCreateForm}
         actionLabel={debouncedSearch || statusFilter !== 'all' ? undefined : 'Add Technician'} />
       </div>
       ) : (
@@ -422,61 +725,73 @@ export default function Technicians() {
             {technicians.map((tech) =>
           <motion.div data-source-location="pages/Technicians:194:14" data-dynamic-content="true"
           key={tech.id}
+          className="h-full min-h-0"
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.95 }}>
 
-                <Card data-source-location="pages/Technicians:200:16" data-dynamic-content="true" className="hover:shadow-lg transition-all cursor-pointer group">
-                  <CardContent data-source-location="pages/Technicians:201:18" data-dynamic-content="true" className="p-5">
-                    <div data-source-location="pages/Technicians:202:20" data-dynamic-content="true" className="flex items-start justify-between mb-4">
-                      <div data-source-location="pages/Technicians:203:22" data-dynamic-content="true" className="flex items-center gap-3">
-                        <Avatar data-source-location="pages/Technicians:204:24" data-dynamic-content="true" className="h-12 w-12">
+                <Card
+                  data-source-location="pages/Technicians:200:16"
+                  data-dynamic-content="true"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleEdit(tech)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleEdit(tech);
+                    }
+                  }}
+                  className="h-full flex flex-col min-h-0 cursor-pointer transition-all hover:shadow-lg hover:shadow-[0_12px_40px_-12px_hsl(var(--primary)_/_0.35)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                >
+                  <CardContent data-source-location="pages/Technicians:201:18" data-dynamic-content="true" className="p-5 flex flex-col flex-1 h-full min-h-0">
+                    <div data-source-location="pages/Technicians:202:20" data-dynamic-content="true" className="flex items-start mb-4 shrink-0">
+                      <div data-source-location="pages/Technicians:203:22" data-dynamic-content="true" className="flex items-center gap-3 min-w-0 flex-1">
+                        <Avatar data-source-location="pages/Technicians:204:24" data-dynamic-content="true" className="h-12 w-12 shrink-0">
                           <AvatarImage data-source-location="pages/Technicians:205:26" data-dynamic-content="false" src={tech.avatar_url} />
                           <AvatarFallback data-source-location="pages/Technicians:206:26" data-dynamic-content="true" className="bg-gradient-to-br from-emerald-100 to-blue-100 text-emerald-700 text-lg">
                             {tech.name?.split(' ').map((n) => n[0]).join('')}
                           </AvatarFallback>
                         </Avatar>
-                        <div data-source-location="pages/Technicians:210:24" data-dynamic-content="true">
+                        <div data-source-location="pages/Technicians:210:24" data-dynamic-content="true" className="min-w-0">
                           <h3 data-source-location="pages/Technicians:211:26" data-dynamic-content="true" className="font-semibold text-gray-900">{tech.name}</h3>
                           <p data-source-location="pages/Technicians:212:26" data-dynamic-content="true" className="text-sm text-gray-500">{tech.employee_id}</p>
                         </div>
                       </div>
-                      <DropdownMenu data-source-location="pages/Technicians:215:22" data-dynamic-content="true">
-                        <DropdownMenuTrigger data-source-location="pages/Technicians:216:24" data-dynamic-content="false" asChild>
-                          <Button data-source-location="pages/Technicians:217:26" data-dynamic-content="false" variant="ghost" size="icon" className="opacity-0 group-hover:opacity-100">
-                            <MoreVertical data-source-location="pages/Technicians:218:28" data-dynamic-content="false" className="w-4 h-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent data-source-location="pages/Technicians:221:24" data-dynamic-content="true" align="end">
-                          <DropdownMenuItem data-source-location="pages/Technicians:222:26" data-dynamic-content="false" onClick={() => handleEdit(tech)}>
-                            <Edit data-source-location="pages/Technicians:223:28" data-dynamic-content="false" className="w-4 h-4 mr-2" />
-                            Edit
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
                     </div>
 
-                    <div data-source-location="pages/Technicians:230:20" data-dynamic-content="true" className="space-y-2 mb-4">
+                    <div data-source-location="pages/Technicians:230:20" data-dynamic-content="true" className="space-y-2 mb-4 flex-1 min-h-0 flex flex-col justify-start">
                       {tech.phone &&
                   <div data-source-location="pages/Technicians:232:24" data-dynamic-content="true" className="flex items-center gap-2 text-sm text-gray-600">
-                          <Phone data-source-location="pages/Technicians:233:26" data-dynamic-content="false" className="w-4 h-4 text-gray-400" />
-                          {tech.phone}
+                          <Phone data-source-location="pages/Technicians:233:26" data-dynamic-content="false" className="w-4 h-4 shrink-0 text-gray-400" />
+                          <span className="truncate">{tech.phone}</span>
                         </div>
                   }
                       {tech.email &&
                   <div data-source-location="pages/Technicians:238:24" data-dynamic-content="true" className="flex items-center gap-2 text-sm text-gray-600">
-                          <Mail data-source-location="pages/Technicians:239:26" data-dynamic-content="false" className="w-4 h-4 text-gray-400" />
-                          {tech.email}
+                          <Mail data-source-location="pages/Technicians:239:26" data-dynamic-content="false" className="w-4 h-4 shrink-0 text-gray-400" />
+                          <span className="truncate">{tech.email}</span>
                         </div>
                   }
+                      <div data-source-location="pages/Technicians:address-line" data-dynamic-content="true" className="flex items-start gap-2 text-sm text-gray-600">
+                        <MapPin className="w-4 h-4 shrink-0 text-gray-400 mt-0.5" />
+                        <span className="min-w-0 line-clamp-2 break-words">
+                          {formatTechnicianAddressLine(tech) || 'N/A'}
+                        </span>
+                      </div>
                     </div>
 
-                    <div data-source-location="pages/Technicians:245:20" data-dynamic-content="true" className="flex items-center justify-between mb-3">
+                    <div data-source-location="pages/Technicians:245:20" data-dynamic-content="true" className="flex items-center justify-between mb-3 shrink-0">
                       <StatusBadge data-source-location="pages/Technicians:246:22" data-dynamic-content="false" status={tech.availability_status || 'offline'} size="sm" />
                       <StatusBadge data-source-location="pages/Technicians:247:22" data-dynamic-content="false" status={tech.status} size="sm" />
+                      {tech.app_visible === false && (
+                        <Badge className="text-xs bg-red-100 text-red-600 border-red-200 hover:bg-red-100">
+                          Hidden from app
+                        </Badge>
+                      )}
                     </div>
 
-                    <div data-source-location="pages/Technicians:250:20" data-dynamic-content="true" className="flex items-center justify-between pt-3 border-t">
+                    <div data-source-location="pages/Technicians:250:20" data-dynamic-content="true" className="flex items-center justify-between pt-3 border-t shrink-0">
                       <div data-source-location="pages/Technicians:251:22" data-dynamic-content="true" className="flex items-center gap-1 text-sm">
                         <Star data-source-location="pages/Technicians:252:24" data-dynamic-content="false" className="w-4 h-4 text-yellow-500 fill-yellow-500" />
                         <span data-source-location="pages/Technicians:253:24" data-dynamic-content="true" className="font-medium">{tech.rating?.toFixed(1) || 'N/A'}</span>
@@ -487,7 +802,7 @@ export default function Technicians() {
                     </div>
 
                     {tech.specializations?.length > 0 &&
-                <div data-source-location="pages/Technicians:261:22" data-dynamic-content="true" className="flex flex-wrap gap-1 mt-3">
+                <div data-source-location="pages/Technicians:261:22" data-dynamic-content="true" className="flex flex-wrap gap-1 mt-3 shrink-0">
                         {tech.specializations.slice(0, 3).map((spec, idx) =>
                   <Badge data-source-location="pages/Technicians:263:26" data-dynamic-content="true" key={idx} className="bg-primary text-primary-foreground text-xs">
                             {spec}
@@ -541,7 +856,7 @@ export default function Technicians() {
                   variant="outline"
                   size="icon"
                   className="h-9 w-9"
-                  disabled={page <= 1 || isFetching}
+                  disabled={page <= 1 || techniciansFetching}
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   aria-label="Previous page"
                 >
@@ -555,7 +870,7 @@ export default function Technicians() {
                   variant="outline"
                   size="icon"
                   className="h-9 w-9"
-                  disabled={page >= totalPages || isFetching}
+                  disabled={page >= totalPages || techniciansFetching}
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                   aria-label="Next page"
                 >
@@ -585,24 +900,73 @@ export default function Technicians() {
             <div data-source-location="pages/Technicians:295:12" data-dynamic-content="true" className="grid grid-cols-2 gap-4">
               {/* Left Column */}
               <div data-source-location="pages/Technicians:295:12" data-dynamic-content="true" className="space-y-4">
-                <div data-source-location="pages/Technicians:295:12" data-dynamic-content="true">
-                  <Label data-source-location="pages/Technicians:296:14" data-dynamic-content="false">
-                    Full Name
-                    <RequiredMark />
-                  </Label>
-                  <Input data-source-location="pages/Technicians:297:14" data-dynamic-content="false"
-                  value={formData.name}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
-                  placeholder="John Smith"
-                  required />
+                <div className="sr-only" aria-hidden="true">
+                  <Label>Full Name</Label>
+                  <Input
+                    value={formData.name}
+                    readOnly
+                    tabIndex={-1}
+                  />
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <Label>
+                      First Name
+                      <RequiredMark />
+                    </Label>
+                    <Input
+                      value={formData.first_name}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, first_name: e.target.value }))}
+                      placeholder="Enter first name"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label>Middle Name</Label>
+                    <Input
+                      value={formData.middle_name}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, middle_name: e.target.value }))}
+                      placeholder="Enter middle name"
+                    />
+                  </div>
+                  <div>
+                    <Label>
+                      Last Name
+                      <RequiredMark />
+                    </Label>
+                    <Input
+                      value={formData.last_name}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, last_name: e.target.value }))}
+                      placeholder="Enter last name"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="sr-only" aria-hidden="true">
+                  <Label>Username</Label>
+                  <Input
+                    className={readonlyGeneratedFieldClass}
+                    value={generatedDisplay.username}
+                    readOnly
+                    // tabIndex={-1}
+                  />
                 </div>
 
                 <div data-source-location="pages/Technicians:306:14" data-dynamic-content="true">
-                  <Label data-source-location="pages/Technicians:307:16" data-dynamic-content="false">Employee ID</Label>
-                  <Input data-source-location="pages/Technicians:308:16" data-dynamic-content="false"
-                  value={formData.employee_id}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, employee_id: e.target.value }))}
-                  placeholder="EMP-001" />
+                  <Label data-source-location="pages/Technicians:307:16" data-dynamic-content="false">
+                    Employee ID
+                    <RequiredMark />
+                  </Label>
+                  <Input
+                    className={readonlyGeneratedFieldClass}
+                    data-source-location="pages/Technicians:308:16"
+                    value={generatedDisplay.employee_id}
+                    readOnly
+                    required
+                    placeholder="Generated from first and last name"
+                  />
                 </div>
 
                 <div data-source-location="pages/Technicians:315:14" data-dynamic-content="true">
@@ -649,6 +1013,22 @@ export default function Technicians() {
                     onChange={(e) => setFormData((prev) => ({ ...prev, longitude: e.target.value }))}
                     placeholder="-115.1522" />
                   </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-4 rounded-lg border border-primary/20 bg-muted/30 px-4 py-3">
+                  <div className="space-y-0.5">
+                    <Label className="text-sm font-medium">Visible in application</Label>
+                    <p className="text-xs text-muted-foreground">
+                      When off, this technician is hidden from assignment and selection lists in the app.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={formData.app_visible !== false}
+                    onCheckedChange={(checked) =>
+                      setFormData((prev) => ({ ...prev, app_visible: checked }))
+                    }
+                    aria-label="Visible in application"
+                  />
                 </div>
               </div>
 
@@ -765,27 +1145,59 @@ export default function Technicians() {
                   }
                 </div>
 
-                <div data-source-location="pages/Technicians:377:12" data-dynamic-content="true">
-                  <Label data-source-location="pages/Technicians:378:14" data-dynamic-content="false">
-                    Status
-                    <RequiredMark />
-                  </Label>
-                  <Select data-source-location="pages/Technicians:379:14" data-dynamic-content="false"
-                  value={formData.status}
-                  required
-                  onValueChange={(v) => {
-                    if (v === 'active') setInactiveDateTime(null);
-                    setFormData((prev) => ({ ...prev, status: v }));
-                  }}>
-
-                    <SelectTrigger data-source-location="pages/Technicians:383:16" data-dynamic-content="false">
-                      <SelectValue data-source-location="pages/Technicians:384:18" data-dynamic-content="false" />
-                    </SelectTrigger>
-                    <SelectContent data-source-location="pages/Technicians:386:16" data-dynamic-content="false">
-                      <SelectItem data-source-location="pages/Technicians:387:18" data-dynamic-content="false" value="active">Active</SelectItem>
-                      <SelectItem data-source-location="pages/Technicians:388:18" data-dynamic-content="false" value="inactive">Inactive</SelectItem>
-                    </SelectContent>
-                  </Select>
+                <div
+                  data-source-location="pages/Technicians:377:12"
+                  data-dynamic-content="true"
+                  className="flex items-end gap-3"
+                >
+                  <div className="flex-1 min-w-0">
+                    <Label data-source-location="pages/Technicians:378:14" data-dynamic-content="false">
+                      Status
+                      <RequiredMark />
+                    </Label>
+                    <Select
+                      data-source-location="pages/Technicians:379:14"
+                      data-dynamic-content="false"
+                      value={formData.status}
+                      required
+                      onValueChange={(v) => {
+                        if (v === 'active') setInactiveDateTime(null);
+                        setFormData((prev) => ({ ...prev, status: v }));
+                      }}
+                    >
+                      <SelectTrigger data-source-location="pages/Technicians:383:16" data-dynamic-content="false">
+                        <SelectValue data-source-location="pages/Technicians:384:18" data-dynamic-content="false" />
+                      </SelectTrigger>
+                      <SelectContent data-source-location="pages/Technicians:386:16" data-dynamic-content="false">
+                        <SelectItem data-source-location="pages/Technicians:387:18" data-dynamic-content="false" value="active">Active</SelectItem>
+                        <SelectItem data-source-location="pages/Technicians:388:18" data-dynamic-content="false" value="inactive">Inactive</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {selectedTech && (
+                    <Button
+                      type="button"
+                      className="shrink-0 bg-primary hover:bg-primary/90 text-white"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        openUpdateUserModal();
+                      }}
+                      disabled={
+                        isResolvingAuthUser ||
+                        !(
+                          generatedDisplay.username?.trim() ||
+                          selectedTech?.username?.trim()
+                        )
+                      }
+                    >
+                      {isResolvingAuthUser ? (
+                        <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <UserCog className="w-4 h-4" aria-hidden="true" />
+                      )}
+                      Update User
+                    </Button>
+                  )}
                 </div>
 
                 {formData.status === 'inactive' && (
@@ -806,15 +1218,141 @@ export default function Technicians() {
             </div>
 
             <div data-source-location="pages/Technicians:393:12" data-dynamic-content="true" className="flex gap-3 pt-4">
-              <Button data-source-location="pages/Technicians:394:14" data-dynamic-content="false" type="button" variant="outline" className="flex-1" onClick={resetForm}>
+              <Button
+                data-source-location="pages/Technicians:394:14"
+                data-dynamic-content="false"
+                type="button"
+                variant="outline"
+                className="flex-1"
+                onClick={resetForm}
+                disabled={isSavingTechnician}
+              >
                 Cancel
               </Button>
-              <Button data-source-location="pages/Technicians:397:14" data-dynamic-content="true"
-              type="submit"
-              className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground"
-              disabled={createMutation.isPending || updateMutation.isPending}>
+              <Button
+                data-source-location="pages/Technicians:397:14"
+                data-dynamic-content="true"
+                type="submit"
+                className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground"
+                disabled={
+                  isSavingTechnician ||
+                  (identifiersLoading &&
+                    (!selectedTech ||
+                      !shouldPreserveTechnicianIdentifiers(
+                        selectedTech,
+                        formData.first_name,
+                        formData.last_name
+                      )))
+                }
+                aria-busy={isSavingTechnician}
+              >
+                {isSavingTechnician ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                    {selectedTech ? 'Updating technician…' : 'Saving technician…'}
+                  </>
+                ) : (
+                  `${selectedTech ? 'Update' : 'Add'} Technician`
+                )}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
-                {selectedTech ? 'Update' : 'Add'} Technician
+      <Dialog
+        open={showUpdateUserModal}
+        onOpenChange={(open) => {
+          if (!open) closeUpdateUserModal();
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Update User</DialogTitle>
+            <DialogDescription>
+              Set a new sign-in password for this technician&apos;s account.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleUpdateUserPassword} className="space-y-4">
+            {/* <div className="space-y-2">
+              <Label htmlFor="tech-update-username">Username</Label>
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Input
+                  id="tech-update-username"
+                  type="text"
+                  className={`pl-10 ${readonlyGeneratedFieldClass}`}
+                  value={toDisplayUsername(
+                    generatedDisplay.username || selectedTech?.username || ''
+                  )}
+                  readOnly
+                  tabIndex={-1}
+                />
+              </div>
+            </div> */}
+
+            <div className="space-y-2">
+              <Label htmlFor="tech-update-password">
+                New Password
+                <RequiredMark />
+              </Label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Input
+                  id="tech-update-password"
+                  type={showUpdateUserPassword ? 'text' : 'password'}
+                  placeholder="••••••••"
+                  className="pl-10 pr-10"
+                  value={updateUserPassword}
+                  onChange={(e) => setUpdateUserPassword(e.target.value)}
+                  required
+                  disabled={isUpdatingUserPassword || isResolvingAuthUser || !authUserIdForUpdate}
+                  minLength={6}
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowUpdateUserPassword(!showUpdateUserPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  tabIndex={-1}
+                >
+                  {showUpdateUserPassword ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isUpdatingUserPassword}
+                onClick={closeUpdateUserModal}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                className="bg-primary hover:bg-primary/90"
+                disabled={
+                  isUpdatingUserPassword ||
+                  isResolvingAuthUser ||
+                  !authUserIdForUpdate ||
+                  !updateUserPassword
+                }
+              >
+                {isUpdatingUserPassword || isResolvingAuthUser ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    {isResolvingAuthUser ? 'Loading…' : 'Saving…'}
+                  </>
+                ) : (
+                  'Save password'
+                )}
               </Button>
             </div>
           </form>
@@ -862,7 +1400,14 @@ export default function Technicians() {
                 type="button"
                 className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground"
                 onClick={handleAddSpecialization}
-                disabled={!newSpecialization.trim() || availableSpecializations.includes(newSpecialization.trim()) || createSpecializationMutation.isPending}
+                disabled={
+                  !newSpecialization.trim() ||
+                  createSpecializationMutation.isPending ||
+                  dbSpecializations.some(
+                    (row) =>
+                      (row.specializations || '').trim().toLowerCase() === newSpecialization.trim().toLowerCase()
+                  )
+                }
               >
                 {createSpecializationMutation.isPending ? 'Adding...' : 'Add Specialization'}
               </Button>

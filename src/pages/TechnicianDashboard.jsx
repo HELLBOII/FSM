@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { technicianService, serviceRequestService, workReportService, technicianGoalService } from '@/services';
 import { useAuth } from '@/lib/AuthContext';
+import { toDisplayUsername } from '@/lib/userEmail';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -145,6 +147,12 @@ export default function TechnicianDashboard() {
     return { skill, count };
   }) || [];
 
+  const displayName =
+    user?.user_metadata?.full_name?.split(' ')[0] ||
+    technician?.name?.split(' ')[0] ||
+    toDisplayUsername(user?.email) ||
+    'Technician';
+
   // Show loading while any data is loading
   if (isLoadingTechnician || isLoadingJobs || isLoadingReports || isLoadingGoals || !user?.id) {
     return (
@@ -166,6 +174,19 @@ export default function TechnicianDashboard() {
 
   return (
     <div data-source-location="pages/TechnicianDashboard:114:4" data-dynamic-content="true" className="p-4 space-y-4 pb-24">
+      <div className="flex items-center gap-4">
+        <Avatar className="h-14 w-14">
+          <AvatarImage src={user?.user_metadata?.avatar_url} />
+          <AvatarFallback className="bg-gradient-to-br from-emerald-100 to-blue-100 text-emerald-700 text-lg">
+            {displayName?.charAt(0).toUpperCase() || 'T'}
+          </AvatarFallback>
+        </Avatar>
+        <div>
+          <p className="text-gray-500 text-sm">Hello,</p>
+          <h1 className="text-xl font-bold text-gray-900">{displayName}</h1>
+        </div>
+      </div>
+
       {/* Header */}
       <div data-source-location="pages/TechnicianDashboard:116:6" data-dynamic-content="true" className="flex items-center justify-between">
         <div data-source-location="pages/TechnicianDashboard:117:8" data-dynamic-content="false">
