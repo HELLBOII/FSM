@@ -944,29 +944,31 @@ export default function Technicians() {
                   </div>
                 </div>
 
-                <div className="sr-only" aria-hidden="true">
-                  <Label>Username</Label>
-                  <Input
-                    className={readonlyGeneratedFieldClass}
-                    value={generatedDisplay.username}
-                    readOnly
-                    // tabIndex={-1}
-                  />
-                </div>
-
-                <div data-source-location="pages/Technicians:306:14" data-dynamic-content="true">
-                  <Label data-source-location="pages/Technicians:307:16" data-dynamic-content="false">
-                    Employee ID
-                    <RequiredMark />
-                  </Label>
-                  <Input
-                    className={readonlyGeneratedFieldClass}
-                    data-source-location="pages/Technicians:308:16"
-                    value={generatedDisplay.employee_id}
-                    readOnly
-                    required
-                    placeholder="Generated from first and last name"
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label>Username</Label>
+                    <Input
+                      className={readonlyGeneratedFieldClass}
+                      value={(generatedDisplay.username)}
+                      readOnly
+                      tabIndex={-1}
+                    />
+                  </div>
+                  <div data-source-location="pages/Technicians:306:14" data-dynamic-content="true">
+                    <Label data-source-location="pages/Technicians:307:16" data-dynamic-content="false">
+                      Employee ID
+                      <RequiredMark />
+                    </Label>
+                    <Input
+                      className={readonlyGeneratedFieldClass}
+                      data-source-location="pages/Technicians:308:16"
+                      value={generatedDisplay.employee_id}
+                      readOnly
+                      required
+                      placeholder="Generated from first and last name"
+                      tabIndex={-1}
+                    />
+                  </div>
                 </div>
 
                 <div data-source-location="pages/Technicians:315:14" data-dynamic-content="true">
@@ -1195,7 +1197,7 @@ export default function Technicians() {
                       ) : (
                         <UserCog className="w-4 h-4" aria-hidden="true" />
                       )}
-                      Update User
+                      Credentials
                     </Button>
                   )}
                 </div>
@@ -1268,14 +1270,14 @@ export default function Technicians() {
       >
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Update User</DialogTitle>
+            <DialogTitle>Credentials</DialogTitle>
             <DialogDescription>
-              Set a new sign-in password for this technician&apos;s account.
+              View sign-in details and set a new password for this technician&apos;s account.
             </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleUpdateUserPassword} className="space-y-4">
-            {/* <div className="space-y-2">
+            <div className="space-y-2">
               <Label htmlFor="tech-update-username">Username</Label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -1290,7 +1292,22 @@ export default function Technicians() {
                   tabIndex={-1}
                 />
               </div>
-            </div> */}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="tech-update-current-password">Current Password</Label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Input
+                  id="tech-update-current-password"
+                  type="text"
+                  className={`pl-10 ${readonlyGeneratedFieldClass}`}
+                  value={TECHNICIAN_DEFAULT_PASSWORD}
+                  readOnly
+                  tabIndex={-1}
+                />
+              </div>
+            </div>
 
             <div className="space-y-2">
               <Label htmlFor="tech-update-password">
