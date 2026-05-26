@@ -8,8 +8,9 @@ export const USER_EMAIL_DOMAIN = '@robertsqifsm.com';
 export function toAuthEmail(identifier) {
   const trimmed = identifier?.trim() ?? '';
   if (!trimmed) return '';
-  const localPart = trimmed.includes('@') ? trimmed.split('@')[0] : trimmed;
-  return `${localPart}${USER_EMAIL_DOMAIN}`;
+  // const localPart = trimmed.includes('@') ? trimmed.split('@')[0] : trimmed;
+  // return `${localPart}${USER_EMAIL_DOMAIN}`;
+  return `${trimmed}${USER_EMAIL_DOMAIN}`;
 }
 
 /**

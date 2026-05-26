@@ -223,7 +223,8 @@ export default function AdminDashboard() {
 
   const { data: clients = [] } = useQuery({
     queryKey: ['clients'],
-    queryFn: () => clientService.list()
+    // Dashboard "Clients in view" + map markers should respect app_visibility.
+    queryFn: () => clientService.listForSelection()
   });
 
   const createRequestMutation = useMutation({
