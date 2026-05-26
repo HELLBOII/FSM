@@ -949,7 +949,7 @@ export default function Technicians() {
                     <Label>Username</Label>
                     <Input
                       className={readonlyGeneratedFieldClass}
-                      value={(generatedDisplay.username)}
+                      value={toDisplayUsername(generatedDisplay.username)}
                       readOnly
                       tabIndex={-1}
                     />
