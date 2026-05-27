@@ -232,7 +232,8 @@ export const AuthProvider = ({ children }) => {
         throw error;
       }
 
-      const email = toAuthEmail(username);
+      // const email = toAuthEmail(username);
+      const email = username;
       const displayName = toDisplayUsername(email);
 
       preservingAdminUserIdRef.current = adminUserId;
