@@ -949,7 +949,7 @@ export default function Technicians() {
                     <Label>Username</Label>
                     <Input
                       className={readonlyGeneratedFieldClass}
-                      value={toDisplayUsername(generatedDisplay.username)}
+                      value={(generatedDisplay.username)}
                       readOnly
                       tabIndex={-1}
                     />
@@ -1285,7 +1285,7 @@ export default function Technicians() {
                   id="tech-update-username"
                   type="text"
                   className={`pl-10 ${readonlyGeneratedFieldClass}`}
-                  value={toDisplayUsername(
+                  value={(
                     generatedDisplay.username || selectedTech?.username || ''
                   )}
                   readOnly
