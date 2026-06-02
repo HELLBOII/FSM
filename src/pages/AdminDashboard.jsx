@@ -542,9 +542,8 @@ export default function AdminDashboard() {
                     Spring startup status
                   </div>
                   {[
-                    { key: 'unscheduled', label: 'Unscheduled', dot: 'bg-[#EF9F27]' },
                     { key: 'scheduled', label: 'Scheduled', dot: 'bg-[#534AB7]' },
-                    { key: 'overdue', label: 'Overdue', dot: 'bg-[#E24B4A]' },
+                    { key: 'in_progress', label: 'In Progress', dot: 'bg-[#185FA5]' },
                     { key: 'completed', label: 'Completed', dot: 'bg-[#1D9E75]' },
                   ].map((row) => (
                     <div key={row.key} className="mb-1 flex items-center gap-2 text-[11px] text-gray-600 last:mb-0">

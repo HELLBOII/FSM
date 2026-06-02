@@ -379,7 +379,7 @@ export default function Calendar() {
         setShowFormDialog(open);
         if (!open) setSelectedDate(null);
       }}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-6xl w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0">
           <DialogHeader>
             <DialogTitle>New Service Request</DialogTitle>
             <DialogDescription>
@@ -413,12 +413,12 @@ export default function Calendar() {
           <span className="text-[11px] text-[#6f6f68]">Scheduled</span>
         </div>
         <div className="flex items-center gap-2 rounded-md border border-black/10 bg-white px-2.5 py-1">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#1D9E75]" />
-          <span className="text-[11px] text-[#6f6f68]">Completed</span>
+          <span className="h-2.5 w-2.5 rounded-full bg-[#185FA5]" />
+          <span className="text-[11px] text-[#6f6f68]">In Progress</span>
         </div>
         <div className="flex items-center gap-2 rounded-md border border-black/10 bg-white px-2.5 py-1">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#E24B4A]" />
-          <span className="text-[11px] text-[#6f6f68]">Overdue</span>
+          <span className="h-2.5 w-2.5 rounded-full bg-[#1D9E75]" />
+          <span className="text-[11px] text-[#6f6f68]">Completed</span>
         </div>
       </div>
     </div>);

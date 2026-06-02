@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { serviceRequestService, clientService, technicianService, emailService } from '@/services';
+import { serviceRequestService, clientService, technicianService, emailService, workReportService } from '@/services';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, RefreshCw, FileText, AlertTriangle, CheckCircle, Clock3, Pencil, Ban, UserRoundCog, CalendarClock, ChevronLeft, ChevronRight, X, Eye } from 'lucide-react';
+import { Plus, RefreshCw, FileText, AlertTriangle, CheckCircle, Clock3, Pencil, Ban, UserRoundCog, CalendarClock, ChevronLeft, ChevronRight, X, Eye, Image, Check, Droplets } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Card, CardContent } from "@/components/ui/card";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Dialog,
   DialogContent,
@@ -36,7 +38,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toast } from 'sonner';
-import { endOfDay, format, isBefore, startOfDay, startOfToday } from 'date-fns';
+import { endOfDay, format, isBefore, startOfDay } from 'date-fns';
 import { useAuth } from '@/lib/AuthContext';
 import { mergeServiceRequestUpdateAudit, canCancelServiceRequestRow } from '@/utils/serviceRequestAudit';
 import {
@@ -59,61 +61,101 @@ function formatIssueCategoryDisplay(request) {
   return String(raw).replace(/_/g, ' ');
 }
 
-const TABLE_DATE_DISPLAY_FORMAT = 'MMM d • h:mm a';
+function toInitCapWords(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '—';
+  return text
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+const TABLE_DATE_DISPLAY_FORMAT = 'd MMM yyyy • h:mm a';
 
 const CLOSED_STATUSES = ['completed', 'approved', 'closed'];
 
-/** Same due rule as table styling; mirrors AdminTechnicianJobs-style client filtering. */
-function isRequestOverdue(request) {
-  if (CLOSED_STATUSES.includes(request.status)) return false;
-  const dateRef = request.scheduled_end_time || request.scheduled_date;
-  if (!dateRef) return false;
-  const d = new Date(dateRef);
-  return isBefore(d, startOfToday());
+function isRequestStateOverdue(request) {
+  return String(request?.state || '').trim().toLowerCase() === 'overdue';
 }
 
 /** Same reference logic as the scheduled column; used only for schedule date range filtering. */
 function getScheduledInstantForDateRangeFilter(request) {
-  const ref = isRequestOverdue(request)
-    ? (request.scheduled_end_time || request.scheduled_start_time || null)
-    : (request.scheduled_start_time || null);
+  const ref = request.scheduled_start_time || request.scheduled_end_time || request.scheduled_date || null;
   if (!ref) return null;
   const d = new Date(ref);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
 function getRequestStatusFilterBucket(request) {
-  if (String(request?.is_cancelled || '').toUpperCase() === 'T' || String(request?.status || '').toLowerCase() === 'cancelled') {
+  const status = String(request?.status || '').toLowerCase();
+  if (String(request?.is_cancelled || '').toUpperCase() === 'T' || status === 'cancelled') {
     return 'cancelled';
   }
-  if (String(request?.status || '').toLowerCase() === 'completed') {
+  if (status === 'completed' || status === 'approved' || status === 'closed') {
     return 'completed';
   }
-  if (isRequestOverdue(request) || String(request?.status || '').toLowerCase() === 'pending') {
-    return 'overdue';
+  if (status === 'in_progress') {
+    return 'in_progress';
   }
   return 'scheduled';
 }
 
 function getRequestStatusBadgeMeta(request) {
-  const bucket = getRequestStatusFilterBucket(request);
-  if (bucket === 'cancelled') return { label: 'Cancelled', className: 'bg-stone-100 text-stone-700 border-stone-300' };
-  if (bucket === 'completed') return { label: 'Completed', className: 'bg-emerald-100 text-emerald-700 border-emerald-300' };
-  if (bucket === 'overdue') return { label: 'Overdue', className: 'bg-rose-100 text-rose-700 border-rose-300' };
-  return { label: 'Scheduled', className: 'bg-violet-100 text-violet-700 border-violet-300' };
+  const status = String(request?.status || '').toLowerCase();
+  const label = toInitCapWords(status);
+
+  if (isRequestStateOverdue(request)) {
+    return { label, className: 'bg-rose-100 text-rose-700 border-rose-300' };
+  }
+  if (status === 'cancelled' || String(request?.is_cancelled || '').toUpperCase() === 'T') {
+    return { label, className: 'bg-stone-100 text-stone-700 border-stone-300' };
+  }
+  if (status === 'completed' || status === 'approved' || status === 'closed') {
+    return { label, className: 'bg-emerald-100 text-emerald-700 border-emerald-300' };
+  }
+  if (status === 'scheduled' || status === 'assigned') {
+    return { label, className: 'bg-violet-100 text-violet-700 border-violet-300' };
+  }
+  if (status === 'in_progress') {
+    return { label, className: 'bg-blue-100 text-blue-700 border-blue-300' };
+  }
+  return { label, className: 'bg-amber-100 text-amber-700 border-amber-300' };
 }
 
 const REQUEST_TABLE_COLGROUP = (
   <colgroup>
-    <col className="w-[16%]" />
     <col className="w-[15%]" />
-    <col className="w-[10%]" />
-    <col className="w-[16%]" />
-    <col className="w-[12%]" />
     <col className="w-[14%]" />
-    <col className="w-[13%]" />
+    <col className="w-[9%]" />
+    <col className="w-[14%]" />
+    <col className="w-[12%]" />
+    <col className="w-[11%]" />
+    <col className="w-[10%]" />
+    <col className="w-[15%]" />
   </colgroup>
 );
+
+function formatStateLabel(request) {
+  const raw = request?.state;
+  if (raw == null || String(raw).trim() === '') return '—';
+  return String(raw).replace(/_/g, ' ');
+}
+
+function getStateBadgeClass(request) {
+  if (isRequestStateOverdue(request)) return 'bg-rose-100 text-rose-700 border-rose-300';
+  return 'bg-slate-100 text-slate-700 border-slate-300';
+}
+
+function getScheduledSortTimeMs(request) {
+  const ref =
+    request?.scheduled_start_time ||
+    request?.scheduled_end_time ||
+    request?.scheduled_date ||
+    request?.created_at;
+  if (!ref) return 0;
+  const ms = new Date(ref).getTime();
+  return Number.isNaN(ms) ? 0 : ms;
+}
 
 const ICON_ACTION_PRIMARY_CLASS =
   'h-8 w-8 shrink-0 rounded-md bg-primary p-0 text-primary-foreground shadow-sm hover:bg-primary/90 hover:text-primary-foreground';
@@ -281,7 +323,9 @@ export default function ServiceRequests() {
   const [filterScheduledStartDate, setFilterScheduledStartDate] = useState(null);
   const [filterScheduledEndDate, setFilterScheduledEndDate] = useState(null);
   const [filterTechnicianIds, setFilterTechnicianIds] = useState([]);
+  const [filterClientIds, setFilterClientIds] = useState([]);
   const [filterStatuses, setFilterStatuses] = useState([]);
+  const [workReportRequest, setWorkReportRequest] = useState(null);
 
   // Check URL params for actions
   useEffect(() => {
@@ -349,7 +393,7 @@ export default function ServiceRequests() {
   const overdueListBase = useMemo(
     () =>
       [...requests]
-        .filter((r) => isRequestOverdue(r) || r.status === 'pending')
+        .filter((r) => isRequestStateOverdue(r))
         .sort(sortRequestsByDateAsc),
     [requests]
   );
@@ -357,7 +401,7 @@ export default function ServiceRequests() {
   const openListBase = useMemo(
     () =>
       [...requests]
-        .filter((r) => !CLOSED_STATUSES.includes(r.status) && !isRequestOverdue(r))
+        .filter((r) => !CLOSED_STATUSES.includes(r.status) && !isRequestStateOverdue(r))
         .sort(sortRequestsByDateAsc),
     [requests]
   );
@@ -399,6 +443,10 @@ export default function ServiceRequests() {
           return filterTechnicianIds.includes(String(r.assigned_technician_id));
         })
         .filter((r) => {
+          if (filterClientIds.length === 0) return true;
+          return filterClientIds.includes(String(r.client_id));
+        })
+        .filter((r) => {
           if (filterStatuses.length === 0) return true;
           return filterStatuses.includes(getRequestStatusFilterBucket(r));
         })
@@ -415,9 +463,11 @@ export default function ServiceRequests() {
           }
           if (filterScheduledStartDate) return d >= startOfDay(filterScheduledStartDate);
           return d <= endOfDay(filterScheduledEndDate);
-        }),
+        })
+        .sort((a, b) => getScheduledSortTimeMs(b) - getScheduledSortTimeMs(a)),
     [
       allActiveCombinedList,
+      filterClientIds,
       filterSeasons,
       filterScheduledEndDate,
       filterScheduledStartDate,
@@ -445,7 +495,7 @@ export default function ServiceRequests() {
 
   useEffect(() => {
     setUnifiedPage(1);
-  }, [filterServiceTypes, filterSeasons, filterScheduledStartDate, filterScheduledEndDate, filterTechnicianIds, filterStatuses]);
+  }, [filterServiceTypes, filterSeasons, filterScheduledStartDate, filterScheduledEndDate, filterTechnicianIds, filterClientIds, filterStatuses]);
 
   const toggleTechnicianInFilter = (setIds, techId) => {
     setIds((prev) => (prev.includes(techId) ? prev.filter((id) => id !== techId) : [...prev, techId]));
@@ -454,6 +504,29 @@ export default function ServiceRequests() {
   const toggleValueInFilter = (setValues, value) => {
     setValues((prev) => (prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]));
   };
+
+  const clientFilterOptions = useMemo(() => {
+    const map = new Map();
+    allActiveCombinedList.forEach((r) => {
+      const id = r?.client_id;
+      if (!id) return;
+      const key = String(id);
+      if (!map.has(key)) {
+        map.set(key, {
+          id: key,
+          label: r?.client_name?.trim() || `Client ${key}`,
+        });
+      }
+    });
+    return [...map.values()].sort((a, b) => a.label.localeCompare(b.label));
+  }, [allActiveCombinedList]);
+
+  const { data: workReportsForRequest = [], isLoading: isLoadingWorkReportsForRequest } = useQuery({
+    queryKey: ['workReports', 'byServiceRequest', workReportRequest?.id ?? null],
+    queryFn: () => workReportService.getByServiceRequestId(workReportRequest.id),
+    enabled: !!workReportRequest?.id,
+  });
+  const selectedWorkReport = workReportsForRequest[0] ?? null;
 
   const unifiedRangeStart = unifiedTotal === 0 ? 0 : (unifiedPage - 1) * unifiedPageSize + 1;
   const unifiedRangeEnd = Math.min(unifiedPage * unifiedPageSize, unifiedTotal);
@@ -510,6 +583,10 @@ export default function ServiceRequests() {
     if (openingTimerRef.current) clearTimeout(openingTimerRef.current);
     if (viewDelayTimerRef.current) clearTimeout(viewDelayTimerRef.current);
     const statusKey = String(request?.status || '').toLowerCase();
+    if (statusKey === 'completed') {
+      setWorkReportRequest(request);
+      return;
+    }
     const isCancelled = statusKey === 'cancelled' || String(request?.is_cancelled || '').toUpperCase() === 'T';
     const isViewOnly = statusKey === 'completed' || isCancelled;
     setFormMode(isViewOnly ? 'view' : 'edit');
@@ -673,22 +750,15 @@ export default function ServiceRequests() {
     }
   });
 
-  const isOverdue = (request) => isRequestOverdue(request);
-
-  const getDueDateRef = (request) =>
-    request.scheduled_end_time || request.scheduled_date || request.scheduled_start_time || null;
-
   const getScheduledDateRef = (request) =>
-    isRequestOverdue(request)
-      ? (request.scheduled_end_time || request.scheduled_start_time || null)
-      : (request.scheduled_start_time || null);
+    request.scheduled_start_time || request.scheduled_end_time || request.scheduled_date || null;
 
   const canShowAssignTechnician = (request) =>
     !CLOSED_STATUSES.includes(request.status) && !request.assigned_technician_id;
 
   const getDateTimeTone = (request) => {
     const closed = ['completed', 'approved', 'closed'].includes(request.status);
-    if (isOverdue(request) || request.status === 'pending') return 'text-[#A32D2D]';
+    if (isRequestStateOverdue(request)) return 'text-[#A32D2D]';
     if (closed) return 'text-[#3B6D11]';
     if (request.status === 'scheduled' || request.status === 'assigned') return 'text-[#534AB7]';
     if (request.status === 'in_progress') return 'text-[#185FA5]';
@@ -776,28 +846,28 @@ export default function ServiceRequests() {
           <div className="flex min-h-0 flex-col gap-4">
             <div className="shrink-0 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
               <div className="flex flex-col rounded-md border border-black/10 bg-white px-2.5 py-1.5">
-              <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-[#888780]">
+              <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
                 <span>Open requests</span>
                 <FileText className="h-3 w-3 text-[#534AB7]" />
               </div>
               <div className="text-[19px] font-medium text-[#534AB7]">{metrics.open}</div>
             </div>
             <div className="flex flex-col rounded-md border border-black/10 bg-white px-2.5 py-1.5">
-              <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-[#888780]">
+              <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
                 <span>Overdue / pending</span>
                 <AlertTriangle className="h-3 w-3 text-[#A32D2D]" />
               </div>
               <div className="text-[19px] font-medium text-[#A32D2D]">{metrics.overduePending}</div>
             </div>
             <div className="flex flex-col rounded-md border border-black/10 bg-white px-2.5 py-1.5">
-              <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-[#888780]">
+              <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
                 <span>Completed</span>
                 <CheckCircle className="h-3 w-3 text-[#1D9E75]" />
               </div>
               <div className="text-[19px] font-medium text-[#0F6E56]">{completedCountTotal}</div>
             </div>
             <div className="flex flex-col rounded-md border border-black/10 bg-white px-2.5 py-1.5">
-              <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-[#888780]">
+              <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
                 <span>Unscheduled</span>
                 <Clock3 className="h-3 w-3 text-[#BA7517]" />
               </div>
@@ -806,7 +876,7 @@ export default function ServiceRequests() {
               </div>
             </div>
             <div className="flex flex-col rounded-md border border-black/10 bg-white px-2.5 py-1.5">
-              <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-[#888780]">
+              <div className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[#888780]">
                 <span>Cancelled requests</span>
                 <Ban className="h-3 w-3 text-[#78716C]" />
               </div>
@@ -827,13 +897,14 @@ export default function ServiceRequests() {
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Scheduled date</th>
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Technician</th>
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Status</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">State</th>
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {unifiedTotal === 0 ? (
                       <tr>
-                        <td colSpan={7} className="h-[320px] px-3.5 py-6 align-middle text-center text-xs text-[#888780]">No matching requests.</td>
+                        <td colSpan={8} className="h-[320px] px-3.5 py-6 align-middle text-center text-xs text-[#888780]">No matching requests.</td>
                       </tr>
                     ) : unifiedRequests.map((request) => (
                       <tr key={request.id} className="border-b border-black/10 last:border-b-0">
@@ -858,6 +929,16 @@ export default function ServiceRequests() {
                               </span>
                             );
                           })()}
+                        </td>
+                        <td className="px-2 py-2 sm:px-3.5">
+                          <span
+                            className={cn(
+                              'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium',
+                              getStateBadgeClass(request)
+                            )}
+                          >
+                            {formatStateLabel(request)}
+                          </span>
                         </td>
                         <td className="px-2 py-2 text-left sm:px-3.5">
                           <ServiceRequestRowActions
@@ -1007,6 +1088,35 @@ export default function ServiceRequests() {
                 </div>
 
                 <div className="space-y-1">
+                  <Label className="text-xs font-medium text-[#888780]">Client</Label>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button type="button" variant="outline" className="h-8 w-full justify-between border-primary/30 text-sm">
+                        <span className="truncate">{filterClientIds.length > 0 ? `${filterClientIds.length} selected` : 'All clients'}</span>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-64">
+                      <DropdownMenuLabel>Filter clients</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      {clientFilterOptions.length === 0 ? (
+                        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">No clients</DropdownMenuLabel>
+                      ) : (
+                        clientFilterOptions.map((client) => (
+                          <DropdownMenuCheckboxItem
+                            key={client.id}
+                            checked={filterClientIds.includes(client.id)}
+                            onCheckedChange={() => toggleValueInFilter(setFilterClientIds, client.id)}
+                            onSelect={(e) => e.preventDefault()}
+                          >
+                            {client.label}
+                          </DropdownMenuCheckboxItem>
+                        ))
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+
+                <div className="space-y-1">
                   <Label className="text-xs font-medium text-[#888780]">Technician</Label>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -1065,11 +1175,11 @@ export default function ServiceRequests() {
                         Scheduled
                       </DropdownMenuCheckboxItem>
                       <DropdownMenuCheckboxItem
-                        checked={filterStatuses.includes('overdue')}
-                        onCheckedChange={() => toggleValueInFilter(setFilterStatuses, 'overdue')}
+                        checked={filterStatuses.includes('in_progress')}
+                        onCheckedChange={() => toggleValueInFilter(setFilterStatuses, 'in_progress')}
                         onSelect={(e) => e.preventDefault()}
                       >
-                        Overdue
+                        In Progress
                       </DropdownMenuCheckboxItem>
                       <DropdownMenuCheckboxItem
                         checked={filterStatuses.includes('completed')}
@@ -1324,6 +1434,209 @@ export default function ServiceRequests() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!workReportRequest}
+        onOpenChange={(open) => {
+          if (!open) setWorkReportRequest(null);
+        }}
+      >
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          {isLoadingWorkReportsForRequest ? (
+            <div className="py-8">
+              <LoadingSpinner size="md" text="Loading work reports..." />
+            </div>
+          ) : !selectedWorkReport ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>
+                  Work Report #{workReportRequest?.request_number || workReportRequest?.id}
+                </DialogTitle>
+                <DialogDescription>
+                  {workReportRequest?.client_name || 'Client'} • No report available
+                </DialogDescription>
+              </DialogHeader>
+              <div className="rounded-md border border-black/10 bg-[#fafaf9] p-4 text-sm text-[#6f6f68]">
+                No work reports found for this completed request.
+              </div>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle className="text-xl">
+                  Work Report #{selectedWorkReport.request_number || workReportRequest?.request_number || workReportRequest?.id}
+                </DialogTitle>
+                <DialogDescription>
+                  {selectedWorkReport.client_name || workReportRequest?.client_name || 'Client'} • {selectedWorkReport.farm_name || '—'}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <Card>
+                    <CardContent className="p-4 text-sm">
+                      <p className="text-gray-500">Check-in</p>
+                      <p className="font-medium">
+                        {selectedWorkReport.check_in_time
+                          ? format(new Date(selectedWorkReport.check_in_time), 'd MMM yyyy • h:mm a')
+                          : '-'}
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="p-4 text-sm">
+                      <p className="text-gray-500">Check-out</p>
+                      <p className="font-medium">
+                        {selectedWorkReport.check_out_time
+                          ? format(new Date(selectedWorkReport.check_out_time), 'd MMM yyyy • h:mm a')
+                          : '-'}
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div>
+                    <h4 className="mb-2 flex items-center gap-2 font-medium text-gray-900">
+                      <Image className="h-4 w-4" />
+                      Before Photos
+                    </h4>
+                    <div className="grid grid-cols-2 gap-2">
+                      {selectedWorkReport.before_photos?.length > 0 ? (
+                        selectedWorkReport.before_photos.map((photo, idx) => (
+                          <img
+                            key={idx}
+                            src={photo}
+                            alt={`Before ${idx + 1}`}
+                            className="h-32 w-full rounded-lg border object-cover"
+                          />
+                        ))
+                      ) : (
+                        <p className="col-span-2 text-sm text-gray-500">No before photos</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="mb-2 flex items-center gap-2 font-medium text-gray-900">
+                      <Image className="h-4 w-4" />
+                      After Photos
+                    </h4>
+                    <div className="grid grid-cols-2 gap-2">
+                      {selectedWorkReport.after_photos?.length > 0 ? (
+                        selectedWorkReport.after_photos.map((photo, idx) => (
+                          <img
+                            key={idx}
+                            src={photo}
+                            alt={`After ${idx + 1}`}
+                            className="h-32 w-full rounded-lg border object-cover"
+                          />
+                        ))
+                      ) : (
+                        <p className="col-span-2 text-sm text-gray-500">No after photos</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {selectedWorkReport.tasks_completed?.length > 0 ? (
+                  <div>
+                    <h4 className="mb-2 font-medium text-gray-900">Tasks Completed</h4>
+                    <div className="space-y-2">
+                      {selectedWorkReport.tasks_completed.map((task, idx) => (
+                        <div
+                          key={idx}
+                          className={`flex items-center gap-3 rounded-lg p-3 ${
+                            task.completed ? 'bg-green-50' : 'bg-gray-50'
+                          }`}
+                        >
+                          <div
+                            className={`flex h-5 w-5 items-center justify-center rounded-full ${
+                              task.completed ? 'bg-green-500' : 'bg-gray-300'
+                            }`}
+                          >
+                            {task.completed ? <Check className="h-3 w-3 text-white" /> : null}
+                          </div>
+                          <div className="flex-1">
+                            <p className="font-medium text-gray-900">{task.task}</p>
+                            {task.notes ? <p className="text-sm text-gray-500">{task.notes}</p> : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {selectedWorkReport.equipment_used?.length > 0 ? (
+                  <div>
+                    <h4 className="mb-2 font-medium text-gray-900">Equipment & Materials Used</h4>
+                    <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+                      {selectedWorkReport.equipment_used.map((item, idx) => (
+                        <div key={idx} className="rounded-lg bg-gray-50 p-3">
+                          <p className="font-medium text-gray-900">{item.name}</p>
+                          <p className="text-sm text-gray-500">{item.quantity} {item.unit}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {selectedWorkReport.water_flow_reading ? (
+                    <Card>
+                      <CardContent className="flex items-center gap-3 p-4">
+                        <Droplets className="h-8 w-8 text-blue-500" />
+                        <div>
+                          <p className="text-sm text-gray-500">Water Flow</p>
+                          <p className="text-xl font-bold text-gray-900">{selectedWorkReport.water_flow_reading} GPM</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ) : null}
+                  {selectedWorkReport.pressure_reading ? (
+                    <Card>
+                      <CardContent className="flex items-center gap-3 p-4">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-orange-100">
+                          <span className="text-sm font-bold text-orange-600">PSI</span>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-500">Pressure</p>
+                          <p className="text-xl font-bold text-gray-900">{selectedWorkReport.pressure_reading} PSI</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ) : null}
+                </div>
+
+                {selectedWorkReport.work_notes ? (
+                  <div>
+                    <h4 className="mb-2 font-medium text-gray-900">Work Notes</h4>
+                    <p className="rounded-lg bg-gray-50 p-3 text-gray-600">{selectedWorkReport.work_notes}</p>
+                  </div>
+                ) : null}
+
+                {selectedWorkReport.farmer_signature_url ? (
+                  <div>
+                    <h4 className="mb-2 font-medium text-gray-900">Farmer Signature</h4>
+                    <img
+                      src={selectedWorkReport.farmer_signature_url}
+                      alt="Signature"
+                      className="h-20 rounded-lg border bg-white p-2"
+                    />
+                  </div>
+                ) : null}
+
+                {selectedWorkReport.status === 'rejected' && selectedWorkReport.rejection_reason ? (
+                  <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+                    <h4 className="mb-1 font-medium text-red-800">Rejection Reason</h4>
+                    <p className="text-red-700">{selectedWorkReport.rejection_reason}</p>
+                  </div>
+                ) : null}
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 

@@ -1,9 +1,10 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { serviceRequestService, technicianService, clientService, emailService } from '@/services';
+import { serviceRequestService, technicianService, clientService, emailService, workReportService } from '@/services';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle, Calendar, Clock3, AlertTriangle, Pencil, UserRoundCog, ChevronLeft, ChevronRight, X, Search as SearchIcon } from 'lucide-react';
+import { CheckCircle, Calendar, Clock3, AlertTriangle, Pencil, UserRoundCog, ChevronLeft, ChevronRight, X, Eye, Search as SearchIcon, Image, Check, Droplets } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -31,12 +32,11 @@ import {
 import StatusBadge from '@/components/ui/StatusBadge';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
 import ServiceRequestForm from '@/components/forms/ServiceRequestForm';
-import { format, isBefore, startOfToday } from 'date-fns';
+import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { useAuth } from '@/lib/AuthContext';
 import { mergeServiceRequestUpdateAudit, canCancelServiceRequestRow } from '@/utils/serviceRequestAudit';
 import { Tooltip } from '@/components/ui/tooltip';
-import { formatRequestStatusLabel } from '@/utils/serviceRequestSeason';
 import { cn } from '@/lib/utils';
 import {
   SEASON_FILTER_OPTIONS,
@@ -61,15 +61,26 @@ const JOBS_TABLE_CLASS =
 
 const JOBS_TABLE_COLGROUP = (
   <colgroup>
-    <col className="w-[13%]" />
-    <col className="w-[24%]" />
+    <col className="w-[12%]" />
+    <col className="w-[22%]" />
     <col className="w-[12%]" />
     <col className="w-[10%]" />
-    <col className="w-[13%]" />
-    <col className="w-[13%]" />
-    <col className="w-[15%]" />
+    <col className="w-[12%]" />
+    <col className="w-[11%]" />
+    <col className="w-[9%]" />
+    <col className="w-[12%]" />
   </colgroup>
 );
+
+function isJobStateOverdue(job) {
+  return String(job?.state || '').trim().toLowerCase() === 'overdue';
+}
+
+function formatStateLabel(job) {
+  const raw = job?.state;
+  if (raw == null || String(raw).trim() === '') return '—';
+  return String(raw).replace(/_/g, ' ');
+}
 
 function formatClientFullAddress(client) {
   if (!client) return '—';
@@ -83,6 +94,15 @@ function formatIssueCategoryDisplay(job) {
   const raw = job?.issue_category;
   if (raw == null || String(raw).trim() === '') return '—';
   return String(raw).replace(/_/g, ' ');
+}
+
+function toInitCapWords(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '—';
+  return text
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
 function technicianJobAddressLine(job, clients) {
@@ -127,6 +147,7 @@ export default function AdminTechnicianJobs() {
   /** Per-technician section: filter rows in that table */
   const [jobTableSearchByTech, setJobTableSearchByTech] = useState({});
   const [cancelConfirmJob, setCancelConfirmJob] = useState(null);
+  const [workReportRequest, setWorkReportRequest] = useState(null);
   /** Per-technician table: service type filter (key = String(technician id)). */
   const [jobTableServiceTypeByTech, setJobTableServiceTypeByTech] = useState({});
   const [jobTableSeasonByTech, setJobTableSeasonByTech] = useState({});
@@ -148,6 +169,12 @@ export default function AdminTechnicianJobs() {
     queryKey: ['clients'],
     queryFn: () => clientService.list()
   });
+  const { data: workReportsForRequest = [], isLoading: isLoadingWorkReportsForRequest } = useQuery({
+    queryKey: ['workReports', 'byServiceRequest', workReportRequest?.id ?? null],
+    queryFn: () => workReportService.getByServiceRequestId(workReportRequest.id),
+    enabled: !!workReportRequest?.id,
+  });
+  const selectedWorkReport = workReportsForRequest[0] ?? null;
 
   const reassignMutation = useMutation({
     mutationFn: async ({ request, technician }) => {
@@ -236,6 +263,10 @@ export default function AdminTechnicianJobs() {
   });
 
   const openEditForm = (job) => {
+    if (String(job?.status || '').toLowerCase() === 'completed') {
+      setWorkReportRequest(job);
+      return;
+    }
     setEditRequest(job);
     setShowEditForm(true);
   };
@@ -251,18 +282,10 @@ export default function AdminTechnicianJobs() {
     return dt && !Number.isNaN(dt.getTime()) ? dt : null;
   };
 
-  const isOverdueJob = (job) => {
-    if (CLOSED_STATUSES.includes(job.status)) return false;
-    if (job.is_sla_breached) return true;
-    const date = parseJobDate(job);
-    if (!date) return false;
-    return isBefore(date, startOfToday());
-  };
-
   const formatDateTime = (job) => {
     const date = parseJobDate(job);
     if (!date) return 'Unscheduled';
-    return format(date, 'MMM d • h:mm a');
+    return format(date, 'd MMM yyyy • h:mm a');
   };
 
   const getClientAddress = (job) => technicianJobAddressLine(job, clients);
@@ -273,9 +296,6 @@ export default function AdminTechnicianJobs() {
   );
 
   const metrics = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
     const clientIdsWithScheduledOrCompleted = new Set(
       myJobs
         .filter((j) => ['scheduled', 'completed'].includes(j.status) && j.client_id != null)
@@ -285,11 +305,7 @@ export default function AdminTechnicianJobs() {
     const completed = jobsInView.filter((j) => CLOSED_STATUSES.includes(j.status)).length;
     const scheduled = jobsInView.filter((j) => {
       if (j.status !== 'scheduled') return false;
-      if (!j.scheduled_end_time) return true;
-      const endDate = new Date(j.scheduled_end_time);
-      if (Number.isNaN(endDate.getTime())) return true;
-      endDate.setHours(0, 0, 0, 0);
-      return endDate >= today;
+      return !isJobStateOverdue(j);
     }).length;
     const unscheduled = clients
       .filter((c) => {
@@ -299,14 +315,7 @@ export default function AdminTechnicianJobs() {
       })
       .filter((c) => !clientIdsWithScheduledOrCompleted.has(String(c.id))).length;
 
-    const overdue = jobsInView.filter((j) => {
-      if (j.status !== 'scheduled') return false;
-      if (!j.scheduled_end_time) return false;
-      const endDate = new Date(j.scheduled_end_time);
-      if (Number.isNaN(endDate.getTime())) return false;
-      endDate.setHours(0, 0, 0, 0);
-      return endDate < today;
-    }).length;
+    const overdue = jobsInView.filter((j) => isJobStateOverdue(j)).length;
     return { completed, scheduled, unscheduled, overdue };
   }, [jobsInView, myJobs, clients]);
 
@@ -337,7 +346,7 @@ export default function AdminTechnicianJobs() {
         if (!d) return false;
         return format(d, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
       }).length;
-      const overdueCount = sortedJobs.filter((j) => isOverdueJob(j)).length;
+      const overdueCount = sortedJobs.filter((j) => isJobStateOverdue(j)).length;
 
       return { ...group, jobs: sortedJobs, activeCount, todayCount, overdueCount };
     });
@@ -390,27 +399,24 @@ export default function AdminTechnicianJobs() {
       .slice(0, 2)
       .toUpperCase() || 'NA';
 
-  const statusTone = (job, overdue) => {
+  const statusTone = (job, isStateOverdue) => {
     const status = job.status;
     const closed = CLOSED_STATUSES.includes(status);
-    if (overdue) return 'bg-[#FCEBEB] text-[#A32D2D]';
-    if (status === 'pending') return 'bg-[#FCEBEB] text-[#A32D2D]';
+    if (isStateOverdue) return 'bg-[#FCEBEB] text-[#A32D2D]';
     if (closed) return 'bg-[#EAF3DE] text-[#3B6D11]';
     if (status === 'scheduled' || status === 'assigned') return 'bg-[#EEEDFE] text-[#534AB7]';
     if (status === 'in_progress') return 'bg-[#E6F1FB] text-[#185FA5]';
     return 'bg-[#FAEEDA] text-[#BA7517]';
   };
 
-  const statusLabel = (job, overdue) => {
-    if (overdue) return 'Overdue';
-    if (job.status === 'pending') return 'Pending';
-    return formatRequestStatusLabel(job.status);
+  const statusLabel = (job) => {
+    return toInitCapWords(job.status);
   };
 
-  const dateTimeTone = (job, overdue) => {
+  const dateTimeTone = (job, isStateOverdue) => {
     const status = job.status;
     const closed = CLOSED_STATUSES.includes(status);
-    if (overdue || status === 'pending') return 'text-[#A32D2D]';
+    if (isStateOverdue) return 'text-[#A32D2D]';
     if (closed) return 'text-[#3B6D11]';
     if (status === 'scheduled' || status === 'assigned') return 'text-[#534AB7]';
     if (status === 'in_progress') return 'text-[#185FA5]';
@@ -439,7 +445,7 @@ export default function AdminTechnicianJobs() {
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Technician Jobs</h1>
           <p className="mt-1 text-gray-500">Monitor technician assignments and upcoming jobs</p>
         </div>
-        <div className="text-xs text-[#888780]">Schedule date · earliest first · filters are per technician</div>
+        {/* <div className="text-xs text-[#888780]">Schedule date · earliest first · filters are per technician</div> */}
       </div>
 
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
@@ -594,26 +600,28 @@ export default function AdminTechnicianJobs() {
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Season</th>
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Date & Time</th>
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Status</th>
+                      <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">State</th>
                       <th className="border-b border-black/10 px-2 py-2 text-left text-xs font-medium text-[#888780] sm:px-3.5 sm:text-sm">Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {totalJobs === 0 ? (
                       <tr>
-                        <td colSpan={7} className="px-3.5 py-8 text-center text-xs text-muted-foreground">
+                        <td colSpan={8} className="px-3.5 py-8 text-center text-xs text-muted-foreground">
                           No jobs match this table&apos;s filters. Clear service type, season, or search.
                         </td>
                       </tr>
                     ) : null}
                     {pageJobs.map((job) => {
-                      const overdue = isOverdueJob(job);
+                      const stateOverdue = isJobStateOverdue(job);
                       const canReassign = ACTIVE_STATUSES.includes(job.status);
                       const canEdit = !CLOSED_STATUSES.includes(job.status);
+                      const isCompleted = String(job.status || '').toLowerCase() === 'completed';
                       const canCancelRow = canCancelServiceRequestRow(job);
                       return (
                         <tr
                           key={job.id}
-                          className={overdue ? 'border-b border-black/10 bg-[#FFF8F8] last:border-b-0' : 'border-b border-black/10 last:border-b-0'}
+                          className={stateOverdue ? 'border-b border-black/10 bg-[#FFF8F8] last:border-b-0' : 'border-b border-black/10 last:border-b-0'}
                         >
                           <td className="px-2 py-2.5 font-medium text-gray-900 sm:px-3.5">
                             {job.client_name || `#${job.request_number}`}
@@ -625,12 +633,12 @@ export default function AdminTechnicianJobs() {
                             {formatIssueCategoryDisplay(job)}
                           </td>
                           <td className="px-2 py-2.5 text-gray-800 sm:px-3.5">{job?.season}</td>
-                          <td className={`px-2 py-2.5 font-medium sm:px-3.5 ${dateTimeTone(job, overdue)}`}>
+                          <td className={`px-2 py-2.5 font-medium sm:px-3.5 ${dateTimeTone(job, stateOverdue)}`}>
                             {formatDateTime(job)}
                           </td>
                           <td className="px-2 py-2.5 sm:px-3.5">
-                            <span className={`inline-block rounded-[10px] px-2 py-0.5 text-xs font-medium ${statusTone(job, overdue)}`}>
-                              {statusLabel(job, overdue)}
+                            <span className={`inline-block rounded-[10px] px-2 py-0.5 text-xs font-medium ${statusTone(job, stateOverdue)}`}>
+                              {statusLabel(job)}
                             </span>
                             {job.priority === 'urgent' && (
                               <span className="ml-1.5 align-middle">
@@ -639,8 +647,18 @@ export default function AdminTechnicianJobs() {
                             )}
                           </td>
                           <td className="px-2 py-2.5 sm:px-3.5">
+                            <span
+                              className={cn(
+                                'inline-block rounded-[10px] border px-2 py-0.5 text-xs font-medium',
+                                stateOverdue ? 'bg-[#FCEBEB] text-[#A32D2D] border-rose-300' : 'bg-slate-100 text-slate-700 border-slate-300'
+                              )}
+                            >
+                              {formatStateLabel(job)}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2.5 sm:px-3.5">
                             <div className="flex flex-wrap items-center gap-1.5">
-                              {canEdit ? (
+                              {canEdit || isCompleted ? (
                                 <Tooltip.Root>
                                   <Tooltip.Trigger asChild>
                                     <Button
@@ -648,15 +666,19 @@ export default function AdminTechnicianJobs() {
                                       size="icon"
                                       variant="default"
                                       className={ICON_ACTION_PRIMARY_CLASS}
-                                      aria-label="Edit request"
+                                      aria-label={isCompleted ? 'View work report' : 'Edit request'}
                                       onClick={() => openEditForm(job)}
                                     >
-                                      <Pencil className="h-3.5 w-3.5 shrink-0" />
+                                      {isCompleted ? (
+                                        <Eye className="h-3.5 w-3.5 shrink-0" />
+                                      ) : (
+                                        <Pencil className="h-3.5 w-3.5 shrink-0" />
+                                      )}
                                     </Button>
                                   </Tooltip.Trigger>
                                   <Tooltip.Portal>
                                     <Tooltip.Content side="top" sideOffset={4}>
-                                      Edit request
+                                      {isCompleted ? 'View work report' : 'Edit request'}
                                       <Tooltip.Arrow />
                                     </Tooltip.Content>
                                   </Tooltip.Portal>
@@ -706,9 +728,6 @@ export default function AdminTechnicianJobs() {
                                     </Tooltip.Content>
                                   </Tooltip.Portal>
                                 </Tooltip.Root>
-                              ) : null}
-                              {!canEdit && !canReassign && !canCancelRow ? (
-                                <span className="text-xs text-[#888780]">—</span>
                               ) : null}
                             </div>
                           </td>
@@ -906,6 +925,209 @@ export default function AdminTechnicianJobs() {
                 setEditRequest(null);
               }}
             />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!workReportRequest}
+        onOpenChange={(open) => {
+          if (!open) setWorkReportRequest(null);
+        }}
+      >
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          {isLoadingWorkReportsForRequest ? (
+            <div className="py-8">
+              <LoadingSpinner size="md" text="Loading work reports..." />
+            </div>
+          ) : !selectedWorkReport ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>
+                  Work Report #{workReportRequest?.request_number || workReportRequest?.id}
+                </DialogTitle>
+                <DialogDescription>
+                  {workReportRequest?.client_name || 'Client'} • No report available
+                </DialogDescription>
+              </DialogHeader>
+              <div className="rounded-md border border-black/10 bg-[#fafaf9] p-4 text-sm text-[#6f6f68]">
+                No work reports found for this completed request.
+              </div>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle className="text-xl">
+                  Work Report #{selectedWorkReport.request_number || workReportRequest?.request_number || workReportRequest?.id}
+                </DialogTitle>
+                <DialogDescription>
+                  {selectedWorkReport.client_name || workReportRequest?.client_name || 'Client'} • {selectedWorkReport.farm_name || '—'}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <Card>
+                    <CardContent className="p-4 text-sm">
+                      <p className="text-gray-500">Check-in</p>
+                      <p className="font-medium">
+                        {selectedWorkReport.check_in_time
+                          ? format(new Date(selectedWorkReport.check_in_time), 'd MMM yyyy • h:mm a')
+                          : '-'}
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="p-4 text-sm">
+                      <p className="text-gray-500">Check-out</p>
+                      <p className="font-medium">
+                        {selectedWorkReport.check_out_time
+                          ? format(new Date(selectedWorkReport.check_out_time), 'd MMM yyyy • h:mm a')
+                          : '-'}
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div>
+                    <h4 className="mb-2 flex items-center gap-2 font-medium text-gray-900">
+                      <Image className="h-4 w-4" />
+                      Before Photos
+                    </h4>
+                    <div className="grid grid-cols-2 gap-2">
+                      {selectedWorkReport.before_photos?.length > 0 ? (
+                        selectedWorkReport.before_photos.map((photo, idx) => (
+                          <img
+                            key={idx}
+                            src={photo}
+                            alt={`Before ${idx + 1}`}
+                            className="h-32 w-full rounded-lg border object-cover"
+                          />
+                        ))
+                      ) : (
+                        <p className="col-span-2 text-sm text-gray-500">No before photos</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="mb-2 flex items-center gap-2 font-medium text-gray-900">
+                      <Image className="h-4 w-4" />
+                      After Photos
+                    </h4>
+                    <div className="grid grid-cols-2 gap-2">
+                      {selectedWorkReport.after_photos?.length > 0 ? (
+                        selectedWorkReport.after_photos.map((photo, idx) => (
+                          <img
+                            key={idx}
+                            src={photo}
+                            alt={`After ${idx + 1}`}
+                            className="h-32 w-full rounded-lg border object-cover"
+                          />
+                        ))
+                      ) : (
+                        <p className="col-span-2 text-sm text-gray-500">No after photos</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {selectedWorkReport.tasks_completed?.length > 0 ? (
+                  <div>
+                    <h4 className="mb-2 font-medium text-gray-900">Tasks Completed</h4>
+                    <div className="space-y-2">
+                      {selectedWorkReport.tasks_completed.map((task, idx) => (
+                        <div
+                          key={idx}
+                          className={`flex items-center gap-3 rounded-lg p-3 ${
+                            task.completed ? 'bg-green-50' : 'bg-gray-50'
+                          }`}
+                        >
+                          <div
+                            className={`flex h-5 w-5 items-center justify-center rounded-full ${
+                              task.completed ? 'bg-green-500' : 'bg-gray-300'
+                            }`}
+                          >
+                            {task.completed ? <Check className="h-3 w-3 text-white" /> : null}
+                          </div>
+                          <div className="flex-1">
+                            <p className="font-medium text-gray-900">{task.task}</p>
+                            {task.notes ? <p className="text-sm text-gray-500">{task.notes}</p> : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {selectedWorkReport.equipment_used?.length > 0 ? (
+                  <div>
+                    <h4 className="mb-2 font-medium text-gray-900">Equipment & Materials Used</h4>
+                    <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+                      {selectedWorkReport.equipment_used.map((item, idx) => (
+                        <div key={idx} className="rounded-lg bg-gray-50 p-3">
+                          <p className="font-medium text-gray-900">{item.name}</p>
+                          <p className="text-sm text-gray-500">{item.quantity} {item.unit}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {selectedWorkReport.water_flow_reading ? (
+                    <Card>
+                      <CardContent className="flex items-center gap-3 p-4">
+                        <Droplets className="h-8 w-8 text-blue-500" />
+                        <div>
+                          <p className="text-sm text-gray-500">Water Flow</p>
+                          <p className="text-xl font-bold text-gray-900">{selectedWorkReport.water_flow_reading} GPM</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ) : null}
+                  {selectedWorkReport.pressure_reading ? (
+                    <Card>
+                      <CardContent className="flex items-center gap-3 p-4">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-orange-100">
+                          <span className="text-sm font-bold text-orange-600">PSI</span>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-500">Pressure</p>
+                          <p className="text-xl font-bold text-gray-900">{selectedWorkReport.pressure_reading} PSI</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ) : null}
+                </div>
+
+                {selectedWorkReport.work_notes ? (
+                  <div>
+                    <h4 className="mb-2 font-medium text-gray-900">Work Notes</h4>
+                    <p className="rounded-lg bg-gray-50 p-3 text-gray-600">{selectedWorkReport.work_notes}</p>
+                  </div>
+                ) : null}
+
+                {selectedWorkReport.farmer_signature_url ? (
+                  <div>
+                    <h4 className="mb-2 font-medium text-gray-900">Farmer Signature</h4>
+                    <img
+                      src={selectedWorkReport.farmer_signature_url}
+                      alt="Signature"
+                      className="h-20 rounded-lg border bg-white p-2"
+                    />
+                  </div>
+                ) : null}
+
+                {selectedWorkReport.status === 'rejected' && selectedWorkReport.rejection_reason ? (
+                  <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+                    <h4 className="mb-1 font-medium text-red-800">Rejection Reason</h4>
+                    <p className="text-red-700">{selectedWorkReport.rejection_reason}</p>
+                  </div>
+                ) : null}
+              </div>
+            </>
           )}
         </DialogContent>
       </Dialog>

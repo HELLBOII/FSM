@@ -64,7 +64,7 @@ const webNavSections = [
 {
   label: 'Requests',
   items: [
-  { name: 'Open / Overdue', icon: FileText, page: 'ServiceRequests' },
+  { name: 'Service Requests', icon: FileText, page: 'ServiceRequests' },
   // { name: 'Overdue / Pending', icon: ClipboardCheck, page: 'Scheduling' },
   // { name: 'Unassigned', icon: Users, page: 'Unassigned' }
   ]
@@ -76,12 +76,12 @@ const webNavSections = [
   { name: 'Technicians', icon: Users, page: 'Technicians' },
   { name: 'Inventory / Equipment', icon: Package, page: 'EquipmentInventory' }]
 },
-{
-  label: 'Reports',
-  items: [
-  // { name: 'Reports', icon: FileText, page: 'Reports' },
-  { name: 'Work Reports', icon: ClipboardCheck, page: 'WorkReports' }]
-},
+// {
+//   label: 'Reports',
+//   items: [
+//   // { name: 'Reports', icon: FileText, page: 'Reports' },
+//   { name: 'Work Reports', icon: ClipboardCheck, page: 'WorkReports' }]
+// },
 // {
 //   label: 'Admin',
 //   items: [

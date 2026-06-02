@@ -41,7 +41,7 @@ export const serviceRequestService = {
    */
   async list(orderBy = 'created_at', orderDirection = 'desc', limit = null) {
     let query = activeRequestsOnly(
-      supabase.from('service_requests').select('*')
+      supabase.from('v_service_requests').select('*')
     ).order(orderBy, { ascending: orderDirection === 'asc' });
 
     if (limit) {
@@ -75,18 +75,18 @@ export const serviceRequestService = {
   async getTabCounts() {
     const head = () =>
       activeRequestsOnly(
-        supabase.from('service_requests').select('*', { count: 'exact', head: true })
+        supabase.from('v_service_requests').select('*', { count: 'exact', head: true })
       );
     const [allRes, activeRes, pendingRes, closedRes] = await Promise.all([
       head(),
       activeRequestsOnly(
-        supabase.from('service_requests').select('*', { count: 'exact', head: true })
+        supabase.from('v_service_requests').select('*', { count: 'exact', head: true })
       ).in('status', ['new', 'scheduled', 'assigned', 'in_progress']),
       activeRequestsOnly(
-        supabase.from('service_requests').select('*', { count: 'exact', head: true })
+        supabase.from('v_service_requests').select('*', { count: 'exact', head: true })
       ).eq('status', 'completed'),
       activeRequestsOnly(
-        supabase.from('service_requests').select('*', { count: 'exact', head: true })
+        supabase.from('v_service_requests').select('*', { count: 'exact', head: true })
       ).in('status', ['approved', 'closed'])
     ]);
 
@@ -130,7 +130,7 @@ export const serviceRequestService = {
     const toIdx = fromIdx + safeSize - 1;
 
     let query = activeRequestsOnly(
-      supabase.from('service_requests').select('*', { count: 'exact' })
+      supabase.from('v_service_requests').select('*', { count: 'exact' })
     );
 
     if (activeTab === 'active') {
@@ -213,7 +213,7 @@ export const serviceRequestService = {
     ].join(',');
 
     let query = activeRequestsOnly(
-      supabase.from('service_requests').select('*', { count: 'exact' })
+      supabase.from('v_service_requests').select('*', { count: 'exact' })
     )
       .not('status', 'in', '(completed,approved,closed)')
       .or(overdueOr);
@@ -251,7 +251,7 @@ export const serviceRequestService = {
   },
 
   /**
-   * Unassigned queue: `service_requests` where `assigned_technician_id` IS NULL and `is_cancelled` = 'F'
+   * Unassigned queue: `v_service_requests` where `assigned_technician_id` IS NULL and `is_cancelled` = 'F'
    * only. Paginated with the same search / service type / season filters as {@link #listOverduePendingPaged}.
    * @param {Object} opts
    * @param {number} [opts.page=1]
@@ -274,7 +274,7 @@ export const serviceRequestService = {
     const toIdx = fromIdx + safeSize - 1;
 
     let query = supabase
-      .from('service_requests')
+      .from('v_service_requests')
       .select('*', { count: 'exact' })
       .eq('is_cancelled', 'F')
       .is('assigned_technician_id', null);
@@ -310,7 +310,7 @@ export const serviceRequestService = {
    */
   async countCancelled() {
     const { count, error } = await supabase
-      .from('service_requests')
+      .from('v_service_requests')
       .select('*', { count: 'exact', head: true })
       .eq('is_cancelled', 'T');
 
@@ -324,7 +324,7 @@ export const serviceRequestService = {
    */
   async countCompleted() {
     const { count, error } = await activeRequestsOnly(
-      supabase.from('service_requests').select('*', { count: 'exact', head: true })
+      supabase.from('v_service_requests').select('*', { count: 'exact', head: true })
     ).eq('status', 'completed');
 
     if (error) throw error;
@@ -338,7 +338,7 @@ export const serviceRequestService = {
    */
   async listCancelled(limit = 500) {
     let query = supabase
-      .from('service_requests')
+      .from('v_service_requests')
       .select('*')
       .eq('is_cancelled', 'T')
       .order('created_at', { ascending: false });
@@ -354,7 +354,7 @@ export const serviceRequestService = {
    * @returns {Promise<Array>}
    */
   async listCompleted(limit = 500) {
-    let query = activeRequestsOnly(supabase.from('service_requests').select('*'))
+    let query = activeRequestsOnly(supabase.from('v_service_requests').select('*'))
       .eq('status', 'completed')
       .order('created_at', { ascending: false });
     if (limit) query = query.limit(limit);
@@ -371,7 +371,7 @@ export const serviceRequestService = {
    */
   async getById(id) {
     const { data, error } = await supabase
-      .from('service_requests')
+      .from('v_service_requests')
       .select('*')
       .eq('id', id)
       .single();
@@ -393,7 +393,7 @@ export const serviceRequestService = {
     }
 
     const { data, error } = await supabase
-      .from('service_requests')
+      .from('v_service_requests')
       .insert([requestData])
       .select()
       .single();
@@ -410,7 +410,7 @@ export const serviceRequestService = {
    */
   async update(id, requestData) {
     const { data, error } = await supabase
-      .from('service_requests')
+      .from('v_service_requests')
       .update(requestData)
       .eq('id', id)
       .select()
@@ -427,7 +427,7 @@ export const serviceRequestService = {
    */
   async delete(id) {
     const { error } = await supabase
-      .from('service_requests')
+      .from('v_service_requests')
       .delete()
       .eq('id', id);
 
@@ -441,7 +441,7 @@ export const serviceRequestService = {
    */
   async getByClientId(clientId) {
     const { data, error } = await activeRequestsOnly(
-      supabase.from('service_requests').select('*').eq('client_id', clientId)
+      supabase.from('v_service_requests').select('*').eq('client_id', clientId)
     ).order('created_at', { ascending: false });
 
     if (error) throw error;
@@ -455,7 +455,7 @@ export const serviceRequestService = {
    */
   async getByTechnicianId(technicianId) {
     const { data, error } = await activeRequestsOnly(
-      supabase.from('service_requests').select('*').eq('assigned_technician_id', technicianId)
+      supabase.from('v_service_requests').select('*').eq('assigned_technician_id', technicianId)
     ).order('created_at', { ascending: false });
 
     if (error) throw error;
@@ -469,7 +469,7 @@ export const serviceRequestService = {
    */
   async getByStatus(status) {
     const { data, error } = await activeRequestsOnly(
-      supabase.from('service_requests').select('*').eq('status', status)
+      supabase.from('v_service_requests').select('*').eq('status', status)
     ).order('created_at', { ascending: false });
 
     if (error) throw error;
@@ -482,7 +482,7 @@ export const serviceRequestService = {
    * @returns {Promise<Array>}
    */
   async filter(filters) {
-    let query = supabase.from('service_requests').select('*');
+    let query = supabase.from('v_service_requests').select('*');
 
     // Apply filters
     Object.keys(filters).forEach(key => {
