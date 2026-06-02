@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { technicianService, serviceRequestService, notificationService } from '@/services';
+import { technicianService, serviceRequestService } from '@/services';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,26 +33,11 @@ export default function AssignmentPanel({ serviceRequest, onClose }) {
   const assignMutation = useMutation({
     mutationFn: async (technicianId) => {
       const technician = technicians.find((t) => t.id === technicianId);
-      const updatedRequest = await serviceRequestService.update(serviceRequest.id, {
+      return serviceRequestService.update(serviceRequest.id, {
         assigned_technician_id: technicianId,
         assigned_technician_name: technician?.name,
         status: serviceRequest.status === 'new' ? 'assigned' : serviceRequest.status
       });
-
-      // Create notification for technician
-      if (technician?.user_id) {
-        await notificationService.create({
-          user_id: technician.user_id,
-          title: 'New Job Assigned',
-          message: `You have been assigned to SR #${serviceRequest.request_number} - ${serviceRequest.client_name}`,
-          type: 'job_assigned',
-          link: `/JobDetails?id=${serviceRequest.id}`,
-          related_id: serviceRequest.id,
-          read: false
-        });
-      }
-
-      return updatedRequest;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['serviceRequests'] });

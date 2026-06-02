@@ -27,7 +27,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import NotificationBell from '@/components/notifications/NotificationBell';
 import OfflineIndicator from '@/components/offline/OfflineIndicator';
 import {
   LayoutDashboard,
@@ -260,9 +259,6 @@ export default function Layout({ children, currentPageName }) {
             <img src="/images/logofull.png" alt="Roberts Quality Irrigation LLC" className="h-10 w-auto object-contain" />
           </Link>
           <div className="flex items-center justify-end gap-2 min-w-0 flex-shrink-0">
-            <span className="h-10 w-10 flex items-center justify-center rounded-full bg-primary/10 text-primary shrink-0">
-              <NotificationBell className="w-6 h-6" strokeWidth={3.5} />
-            </span>
             {profilePage ? (
               <Link
                 to={createPageUrl(profilePage)}
@@ -553,7 +549,6 @@ export default function Layout({ children, currentPageName }) {
           </Link>
 
           <div data-source-location="Layout:283:10" data-dynamic-content="true" className="flex-1 flex justify-end items-center gap-2 min-w-0">
-            <NotificationBell data-source-location="Layout:284:12" data-dynamic-content="false" />
             <DropdownMenu data-source-location="Layout:285:12" data-dynamic-content="true">
               <DropdownMenuTrigger data-source-location="Layout:286:14" data-dynamic-content="true" asChild>
                 <Button data-source-location="Layout:287:16" data-dynamic-content="true" variant="ghost" size="icon">

@@ -3,7 +3,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster as SonnerToaster } from "sonner";
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClientInstance } from '@/lib/query-client';
-import NavigationTracker from '@/lib/NavigationTracker';
 import { pagesConfig } from './pages.config';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
@@ -228,7 +227,6 @@ function App() {
       <QueryClientProvider data-source-location="App:71:6" data-dynamic-content="false" client={queryClientInstance}>
         <TooltipProvider delayDuration={300}>
           <Router data-source-location="App:72:8" data-dynamic-content="false">
-            <NavigationTracker data-source-location="App:73:10" data-dynamic-content="false" />
             <AuthenticatedApp data-source-location="App:74:10" data-dynamic-content="false" />
           </Router>
           <Toaster data-source-location="App:76:8" data-dynamic-content="false" />
