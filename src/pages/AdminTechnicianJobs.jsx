@@ -334,7 +334,7 @@ export default function AdminTechnicianJobs() {
       const sortedJobs = [...group.jobs].sort((a, b) => {
         const da = parseJobDate(a);
         const db = parseJobDate(b);
-        if (da && db) return da - db;
+        if (da && db) return db - da;
         if (da && !db) return -1;
         if (!da && db) return 1;
         return String(a.client_name || '').localeCompare(String(b.client_name || ''));
@@ -445,7 +445,7 @@ export default function AdminTechnicianJobs() {
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Technician Jobs</h1>
           <p className="mt-1 text-gray-500">Monitor technician assignments and upcoming jobs</p>
         </div>
-        {/* <div className="text-xs text-[#888780]">Schedule date · earliest first · filters are per technician</div> */}
+        {/* <div className="text-xs text-[#888780]">Schedule date · newest first · filters are per technician</div> */}
       </div>
 
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
