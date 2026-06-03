@@ -48,27 +48,8 @@ function canEditOrCancelHistoryRequest(r) {
   return true;
 }
 
-function isRequestOverdue(r) {
-  const st = (r.status || '').toLowerCase();
-  if (CLOSED_STATUSES.includes(st)) return false;
-  if (r.is_sla_breached) return true;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  if (['scheduled', 'assigned', 'in_progress'].includes(st)) {
-    const endRef = r.scheduled_end_time || r.scheduled_date;
-    if (!endRef) return false;
-    const endDate = new Date(endRef);
-    if (Number.isNaN(endDate.getTime())) return false;
-    endDate.setHours(0, 0, 0, 0);
-    return endDate < today;
-  }
-  if (r.scheduled_date && st === 'new') {
-    const d = new Date(r.scheduled_date);
-    d.setHours(0, 0, 0, 0);
-    return d < today;
-  }
-  return false;
+function isRequestStateOverdue(request) {
+  return String(request?.state || '').trim().toLowerCase() === 'overdue';
 }
 
 function parseTimeMs(v) {
@@ -216,15 +197,31 @@ export default function AdminDashboard() {
   const [historyEditRequest, setHistoryEditRequest] = useState(null);
   const [historyCancelRequest, setHistoryCancelRequest] = useState(null);
 
-  const { data: requests = [], isLoading: requestsLoading } = useQuery({
-    queryKey: ['serviceRequests'],
-    queryFn: () => serviceRequestService.list('created_at', 'desc', 100)
+  const {
+    data: requestsBundle,
+    isPending: isPendingRequestsPage,
+  } = useQuery({
+    queryKey: ['serviceRequests', 'listForRequestsPage', 500],
+    queryFn: () => serviceRequestService.listActiveWithCancelledCount(500),
   });
+  const requests = requestsBundle?.requests ?? [];
+  /** Total completed in DB (not limited to the 500-row active snapshot). */
+  const completedCountTotal = requestsBundle?.completedCount ?? 0;
 
   const { data: clients = [] } = useQuery({
     queryKey: ['clients'],
     // Dashboard "Clients in view" + map markers should respect app_visibility.
     queryFn: () => clientService.listForSelection()
+  });
+
+  /** Match ServiceRequests metric inputs to keep counts consistent across pages. */
+  const { data: metricRequests = [] } = useQuery({
+    queryKey: ['serviceRequests', 'metricsList100'],
+    queryFn: () => serviceRequestService.list('created_at', 'desc', 100),
+  });
+  const { data: metricClients = [], isPending: isPendingMetricClients } = useQuery({
+    queryKey: ['clients', 'metricsFullList'],
+    queryFn: () => clientService.list(),
   });
 
   const createRequestMutation = useMutation({
@@ -348,17 +345,14 @@ export default function AdminDashboard() {
 
   const mapMetrics = useMemo(() => {
     const year = new Date().getFullYear();
-    const completed = requests.filter((r) => r.status === 'completed').length;
-    const scheduled = requests.filter((r) => r.status === 'scheduled').length;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
 
     const clientIdsWithScheduledOrCompleted = new Set(
-      requests
+      metricRequests
         .filter((r) => ['scheduled', 'completed'].includes(r.status) && r.client_id != null)
         .map((r) => String(r.client_id))
     );
-    const unscheduled = clients
+
+    const unscheduled = metricClients
       .filter((c) => {
         const lat = c.location?.lat ?? c.latitude;
         const lng = c.location?.lng ?? c.longitude;
@@ -366,12 +360,21 @@ export default function AdminDashboard() {
       })
       .filter((c) => !clientIdsWithScheduledOrCompleted.has(String(c.id))).length;
 
-    const overdue = requests.filter((r) => {
-      if (!['scheduled', 'assigned', 'in_progress'].includes(r.status)) return false;
-      return isRequestOverdue(r);
+    const overdue = requests.filter((r) => isRequestStateOverdue(r)).length;
+
+    const scheduled = requests.filter((r) => {
+      const st = String(r.status || '').toLowerCase();
+      return ['scheduled', 'assigned'].includes(st) && !isRequestStateOverdue(r);
     }).length;
-    return { completed, scheduled, unscheduled, overdue, year };
-  }, [requests, clients]);
+
+    return {
+      completed: completedCountTotal,
+      scheduled,
+      unscheduled,
+      overdue,
+      year,
+    };
+  }, [metricRequests, metricClients, requests, completedCountTotal]);
 
   const selectedMapJob = useMemo(
     () => mapJobs.find((j) => String(j.id) === String(selectedMapJobId)),
@@ -420,7 +423,7 @@ export default function AdminDashboard() {
     closed: 'bg-[#EAF3DE] text-[#3B6D11]',
   };
 
-  if (requestsLoading) {
+  if (isPendingRequestsPage) {
     return (
       <div data-source-location="pages/AdminDashboard:125:6" data-dynamic-content="false" className="flex items-center justify-center min-h-[60vh]">
         <LoadingSpinner data-source-location="pages/AdminDashboard:126:8" data-dynamic-content="false" size="lg" text="Loading dashboard..." />
@@ -492,7 +495,9 @@ export default function AdminDashboard() {
                   <span>Unscheduled</span>
                   <Clock3 className="h-3.5 w-3.5 text-[#BA7517]" />
                 </div>
-                <div className="text-[22px] font-medium text-[#BA7517]">{mapMetrics.unscheduled}</div>
+                <div className="text-[22px] font-medium text-[#BA7517]">
+                  {isPendingMetricClients ? '—' : mapMetrics.unscheduled}
+                </div>
                 <div className="mt-0.5 text-[10px] text-[#888780]">need booking</div>
               </div>
               <div className="rounded-md border border-black/10 bg-white px-3 py-2.5">
