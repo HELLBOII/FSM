@@ -911,7 +911,7 @@ export default function AdminTechnicianJobs() {
           if (!open) setEditRequest(null);
         }}
       >
-        <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+        <DialogContent className="max-w-6xl w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0">
           <DialogHeader>
             <DialogTitle>Edit Service Request</DialogTitle>
             <DialogDescription>Update the service request details below</DialogDescription>

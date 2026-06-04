@@ -39,8 +39,14 @@ import { Loader2, MapPin, Upload, X, Calendar, Eye, History, Plus } from 'lucide
 import ClientNotesHistoryDialog from '@/components/clients/ClientNotesHistoryDialog';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { addDays, format, isBefore, startOfToday } from 'date-fns';
+import { addDays, format } from 'date-fns';
 import DashboardMap, { MAP_PIN_COLORS } from '@/components/map/DashboardMap';
+import {
+  CLOSED_STATUSES,
+  getServiceRequestPinColor,
+  getServiceRequestStatusLabel,
+  getServiceRequestStatusToneClass,
+} from '@/utils/serviceRequestStatusDisplay';
 
 /** Select options; values are persisted as chosen (same strings in DB). */
 const issueCategories = [
@@ -89,28 +95,6 @@ function normalizeIrrigationSystemsFromRequest(request) {
   return list;
 }
 
-const CLOSED_STATUSES = ['completed', 'approved', 'closed'];
-
-function isReactiveRequest(r) {
-  return (
-    r.priority === 'urgent' ||
-    ['leak_repair', 'pump_issue', 'pipe_repair', 'valve_replacement'].includes(r.issue_category)
-  );
-}
-
-function isRequestOverdue(r) {
-  if (CLOSED_STATUSES.includes(r.status)) return false;
-  if (r.is_sla_breached) return true;
-  if (r.scheduled_date) {
-    const d = new Date(r.scheduled_date);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    d.setHours(0, 0, 0, 0);
-    if (d < today && ['scheduled', 'assigned', 'new'].includes(r.status)) return true;
-  }
-  return false;
-}
-
 function formatRequestAppt(r) {
   if (r?.scheduled_start_time) {
     try {
@@ -128,69 +112,34 @@ function formatRequestAppt(r) {
   }
 }
 
-function deriveClientMapContext(sortedRequestsForClient) {
-  const list = sortedRequestsForClient;
+/** Map pins / client card: latest request `status` field (status-only styling). */
+function deriveClientMapContext(requestsForClient) {
+  const list = sortRequestsLatestServiceFirst(requestsForClient);
   if (!list.length) {
     return {
-      mapStatus: 'unscheduled',
       mapStatusLabel: 'Unscheduled',
+      statusToneClass: 'bg-[#FAEEDA] text-[#BA7517]',
       pinColor: MAP_PIN_COLORS.unscheduled,
       nextApptText: '—',
       primaryRequest: null,
     };
   }
-  const active = list.filter((r) => !CLOSED_STATUSES.includes(r.status));
-  const pickPrimary = (pred) => active.find(pred) || list[0];
-
-  if (active.some((r) => isRequestOverdue(r))) {
-    const r = pickPrimary((x) => isRequestOverdue(x));
-    return {
-      mapStatus: 'overdue',
-      mapStatusLabel: 'Overdue',
-      pinColor: MAP_PIN_COLORS.overdue,
-      nextApptText: formatRequestAppt(r),
-      primaryRequest: r,
-    };
+  const r = list[0];
+  let nextApptText = formatRequestAppt(r);
+  const st = String(r.status || '').toLowerCase();
+  if (CLOSED_STATUSES.includes(st) && r?.actual_end_time) {
+    try {
+      nextApptText = format(new Date(r.actual_end_time), 'MMM d');
+    } catch {
+      // keep formatRequestAppt
+    }
   }
-  if (active.some((r) => r.status === 'new' && !r.scheduled_date)) {
-    const r = pickPrimary((x) => x.status === 'new' && !x.scheduled_date);
-    return {
-      mapStatus: 'unscheduled',
-      mapStatusLabel: 'Unscheduled',
-      pinColor: MAP_PIN_COLORS.unscheduled,
-      nextApptText: '—',
-      primaryRequest: r,
-    };
-  }
-  if (active.some((r) => r.status === 'in_progress' && isReactiveRequest(r))) {
-    const r = pickPrimary((x) => x.status === 'in_progress' && isReactiveRequest(x));
-    return {
-      mapStatus: 'reactive',
-      mapStatusLabel: 'Reactive / Repair',
-      pinColor: MAP_PIN_COLORS.reactive,
-      nextApptText: formatRequestAppt(r),
-      primaryRequest: r,
-    };
-  }
-  if (active.some((r) => ['scheduled', 'assigned', 'in_progress'].includes(r.status))) {
-    const r = pickPrimary((x) => ['scheduled', 'assigned', 'in_progress'].includes(x.status));
-    return {
-      mapStatus: 'scheduled',
-      mapStatusLabel: 'Scheduled',
-      pinColor: MAP_PIN_COLORS.scheduled,
-      nextApptText: formatRequestAppt(r),
-      primaryRequest: r,
-    };
-  }
-  const lastDone = list.find((r) => r.status === 'completed') || list[0];
   return {
-    mapStatus: 'completed',
-    mapStatusLabel: 'Completed',
-    pinColor: MAP_PIN_COLORS.completed,
-    nextApptText: lastDone?.actual_end_time
-      ? format(new Date(lastDone.actual_end_time), 'MMM d')
-      : formatRequestAppt(lastDone),
-    primaryRequest: lastDone,
+    mapStatusLabel: getServiceRequestStatusLabel(r),
+    statusToneClass: getServiceRequestStatusToneClass(r),
+    pinColor: getServiceRequestPinColor(r),
+    nextApptText,
+    primaryRequest: r,
   };
 }
 
@@ -220,48 +169,6 @@ function getRequestServiceSortTimeMs(r) {
 function sortRequestsLatestServiceFirst(arr) {
   return [...arr].sort((a, b) => getRequestServiceSortTimeMs(b) - getRequestServiceSortTimeMs(a));
 }
-
-function getClientCardHistoryBucket(r) {
-  const st = (r.status || '').toLowerCase();
-  if (['completed', 'approved', 'closed'].includes(st)) {
-    return { bucket: 'completed', label: 'Completed' };
-  }
-  if (st === 'pending') {
-    return { bucket: 'overdue', label: 'Overdue' };
-  }
-  if (st === 'new' && !r.scheduled_date) {
-    return { bucket: 'unscheduled', label: 'Unscheduled' };
-  }
-  if (['scheduled', 'in_progress', 'assigned'].includes(st)) {
-    const endRef = r.scheduled_end_time || r.scheduled_date;
-    if (endRef && isBefore(new Date(endRef), startOfToday())) {
-      return { bucket: 'overdue', label: 'Overdue' };
-    }
-    return { bucket: 'scheduled', label: 'Scheduled' };
-  }
-  if (st === 'new' && r.scheduled_date) {
-    if (isBefore(new Date(r.scheduled_date), startOfToday())) {
-      return { bucket: 'overdue', label: 'Overdue' };
-    }
-    return { bucket: 'scheduled', label: 'Scheduled' };
-  }
-  return { bucket: 'unscheduled', label: 'Unscheduled' };
-}
-
-const CLIENT_CARD_BUCKET_PILL_CLASS = {
-  unscheduled: 'bg-[#FAEEDA] text-[#BA7517]',
-  scheduled: 'bg-[#EEEDFE] text-[#534AB7]',
-  overdue: 'bg-[#FCEBEB] text-[#A32D2D]',
-  completed: 'bg-[#EAF3DE] text-[#3B6D11]',
-};
-
-const MAP_CLIENT_CARD_STATUS_PILL = {
-  scheduled: 'bg-[#EEEDFE] text-[#534AB7]',
-  unscheduled: 'bg-[#FAEEDA] text-[#BA7517]',
-  overdue: 'bg-[#FCEBEB] text-[#A32D2D]',
-  completed: 'bg-[#EAF3DE] text-[#3B6D11]',
-  reactive: 'bg-[#E6F1FB] text-[#185FA5]',
-};
 
 function concatClientAddress(client) {
   if (!client) return '—';
@@ -493,8 +400,8 @@ export default function ServiceRequestForm({
               lng,
               address: client.address || '',
             },
-            mapStatus: ctx.mapStatus,
             mapStatusLabel: ctx.mapStatusLabel,
+            statusToneClass: ctx.statusToneClass,
             pinColor: ctx.pinColor,
             nextApptText: ctx.nextApptText,
             primaryRequest: ctx.primaryRequest,
@@ -1567,8 +1474,7 @@ export default function ServiceRequestForm({
                       <span
                         className={cn(
                           'rounded-[10px] px-2 py-0.5 text-[10px] font-medium',
-                          MAP_CLIENT_CARD_STATUS_PILL[sheetMapJob.mapStatus] ||
-                            MAP_CLIENT_CARD_STATUS_PILL.unscheduled
+                          sheetMapJob.statusToneClass
                         )}
                       >
                         {sheetMapJob.mapStatusLabel}
@@ -1588,7 +1494,6 @@ export default function ServiceRequestForm({
                   </p>
                   <div className="space-y-2">
                     {sheetClientRequests.slice(0, 5).map((r) => {
-                      const hist = getClientCardHistoryBucket(r);
                       return (
                         <div
                           key={r.id}
@@ -1604,11 +1509,10 @@ export default function ServiceRequestForm({
                               <span
                                 className={cn(
                                   'inline-block rounded-[10px] px-2 py-0.5 text-[10px] font-medium',
-                                  CLIENT_CARD_BUCKET_PILL_CLASS[hist.bucket] ||
-                                    CLIENT_CARD_BUCKET_PILL_CLASS.unscheduled
+                                  getServiceRequestStatusToneClass(r)
                                 )}
                               >
-                                {hist.label}
+                                {getServiceRequestStatusLabel(r)}
                               </span>
                             </div>
                             <div className="mt-0.5 text-[10px] text-muted-foreground">
