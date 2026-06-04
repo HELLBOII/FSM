@@ -21,6 +21,31 @@ import { toast } from 'sonner';
 
 const VIEWS = { month: 'month', week: 'week', day: 'day' };
 
+function parseIrrigationSystemsList(raw) {
+  if (raw == null) return [];
+  if (Array.isArray(raw)) {
+    return raw.map((s) => String(s).trim()).filter(Boolean);
+  }
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    if (!t) return [];
+    try {
+      const p = JSON.parse(t);
+      if (Array.isArray(p)) return p.map((s) => String(s).trim()).filter(Boolean);
+      return [String(p).trim()].filter(Boolean);
+    } catch {
+      return t.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+    }
+  }
+  return [];
+}
+
+function formatIrrigationSystemsDisplay(appointment) {
+  let list = parseIrrigationSystemsList(appointment?.irrigation_systems);
+  if (!list.length) list = parseIrrigationSystemsList(appointment?.irrigation_type);
+  return list.length ? list.join(', ') : '—';
+}
+
 export default function Calendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [view, setView] = useState(VIEWS.month);
@@ -313,12 +338,12 @@ export default function Calendar() {
                   <h3 className="font-semibold text-gray-900">Service Details</h3>
                   <div className="grid grid-cols-3 gap-4">
                     <div>
-                      <p className="text-sm text-gray-600">Irrigation Type</p>
-                      <p className="font-medium capitalize">{selectedAppointment.irrigation_type?.replace(/_/g, ' ')}</p>
+                      <p className="text-sm text-gray-600">Issue Category</p>
+                      <p className="font-medium capitalize">{selectedAppointment.issue_category}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600">Issue Category</p>
-                      <p className="font-medium capitalize">{selectedAppointment.issue_category?.replace(/_/g, ' ')}</p>
+                      <p className="text-sm text-gray-600">Irrigation Systems</p>
+                      <p className="font-medium capitalize">{formatIrrigationSystemsDisplay(selectedAppointment)}</p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Assigned Technician</p>
