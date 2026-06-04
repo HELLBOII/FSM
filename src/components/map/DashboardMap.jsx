@@ -279,7 +279,8 @@ export default function DashboardMap({
                       <span
                         className={cn(
                           'inline-block rounded-[10px] px-2 py-0.5 text-[10px] font-medium',
-                          MAP_STATUS_BADGE_CLASS[job.mapStatus] || MAP_STATUS_BADGE_CLASS.unscheduled
+                          job.statusToneClass ||
+                            MAP_STATUS_BADGE_CLASS.unscheduled
                         )}
                       >
                         {job.mapStatusLabel ?? '—'}

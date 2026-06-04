@@ -33,13 +33,17 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { toast } from 'sonner';
-import { format, isBefore, startOfToday } from 'date-fns';
+import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { Tooltip } from '@/components/ui/tooltip';
 import { useAuth } from '@/lib/AuthContext';
 import { mergeServiceRequestUpdateAudit } from '@/utils/serviceRequestAudit';
-
-const CLOSED_STATUSES = ['completed', 'approved', 'closed'];
+import {
+  CLOSED_STATUSES,
+  getServiceRequestPinColor,
+  getServiceRequestStatusLabel,
+  getServiceRequestStatusToneClass,
+} from '@/utils/serviceRequestStatusDisplay';
 
 function canEditOrCancelHistoryRequest(r) {
   const st = (r.status || '').toLowerCase();
@@ -82,41 +86,6 @@ function sortRequestsLatestServiceFirst(arr) {
   return [...arr].sort((a, b) => getRequestServiceSortTimeMs(b) - getRequestServiceSortTimeMs(a));
 }
 
-/** Map + list + history pills: Unscheduled, Scheduled, Overdue, or Completed. */
-function getClientCardHistoryBucket(r) {
-  const st = (r.status || '').toLowerCase();
-  if (['completed', 'approved', 'closed'].includes(st)) {
-    return { bucket: 'completed', label: 'Completed' };
-  }
-  if (st === 'pending') {
-    return { bucket: 'overdue', label: 'Overdue' };
-  }
-  if (st === 'new' && !r.scheduled_date) {
-    return { bucket: 'unscheduled', label: 'Unscheduled' };
-  }
-  if (['scheduled', 'in_progress', 'assigned'].includes(st)) {
-    const endRef = r.scheduled_end_time || r.scheduled_date;
-    if (endRef && isBefore(new Date(endRef), startOfToday())) {
-      return { bucket: 'overdue', label: 'Overdue' };
-    }
-    return { bucket: 'scheduled', label: 'Scheduled' };
-  }
-  if (st === 'new' && r.scheduled_date) {
-    if (isBefore(new Date(r.scheduled_date), startOfToday())) {
-      return { bucket: 'overdue', label: 'Overdue' };
-    }
-    return { bucket: 'scheduled', label: 'Scheduled' };
-  }
-  return { bucket: 'unscheduled', label: 'Unscheduled' };
-}
-
-const CLIENT_CARD_BUCKET_PILL_CLASS = {
-  unscheduled: 'bg-[#FAEEDA] text-[#BA7517]',
-  scheduled: 'bg-[#EEEDFE] text-[#534AB7]',
-  overdue: 'bg-[#FCEBEB] text-[#A32D2D]',
-  completed: 'bg-[#EAF3DE] text-[#3B6D11]',
-};
-
 function formatRequestAppt(r) {
   if (r?.scheduled_start_time) {
     try {
@@ -147,35 +116,34 @@ function concatClientAddress(client) {
 }
 
 /**
- * Map / clients list / client card: status from the **latest service** request (by service dates),
- * or **Unscheduled** when the client has no requests / latest row is unscheduled work.
+ * Map / clients list / client card: latest service request `status` field (AdminTechnicianJobs-style),
+ * or **Unscheduled** when the client has no requests.
  */
 function deriveClientMapContext(requestsForClient) {
   const list = sortRequestsLatestServiceFirst(requestsForClient);
   if (!list.length) {
     return {
-      mapStatus: 'unscheduled',
       mapStatusLabel: 'Unscheduled',
+      statusToneClass: 'bg-[#FAEEDA] text-[#BA7517]',
       pinColor: MAP_PIN_COLORS.unscheduled,
       nextApptText: '—',
       primaryRequest: null,
     };
   }
   const r = list[0];
-  const { bucket, label } = getClientCardHistoryBucket(r);
-  let nextApptText = bucket === 'unscheduled' ? '—' : formatRequestAppt(r);
-  if (bucket === 'completed' && r?.actual_end_time) {
+  let nextApptText = formatRequestAppt(r);
+  const st = String(r.status || '').toLowerCase();
+  if (CLOSED_STATUSES.includes(st) && r?.actual_end_time) {
     try {
       nextApptText = format(new Date(r.actual_end_time), 'MMM d');
     } catch {
       // keep formatRequestAppt
     }
   }
-  const pinColor = MAP_PIN_COLORS[bucket] || MAP_PIN_COLORS.unscheduled;
   return {
-    mapStatus: bucket,
-    mapStatusLabel: label,
-    pinColor,
+    mapStatusLabel: getServiceRequestStatusLabel(r),
+    statusToneClass: getServiceRequestStatusToneClass(r),
+    pinColor: getServiceRequestPinColor(r),
     nextApptText,
     primaryRequest: r,
   };
@@ -317,8 +285,8 @@ export default function AdminDashboard() {
               lng,
               address: client.address || '',
             },
-            mapStatus: ctx.mapStatus,
             mapStatusLabel: ctx.mapStatusLabel,
+            statusToneClass: ctx.statusToneClass,
             pinColor: ctx.pinColor,
             nextApptText: ctx.nextApptText,
             primaryRequest: ctx.primaryRequest,
@@ -403,25 +371,6 @@ export default function AdminDashboard() {
     }
     return [raw];
   }, [selectedClientEntity]);
-
-  const statusPillClass = {
-    scheduled: 'bg-[#EEEDFE] text-[#534AB7]',
-    unscheduled: 'bg-[#FAEEDA] text-[#BA7517]',
-    overdue: 'bg-[#FCEBEB] text-[#A32D2D]',
-    completed: 'bg-[#EAF3DE] text-[#3B6D11]',
-    reactive: 'bg-[#E6F1FB] text-[#185FA5]',
-  };
-  const requestStatusPillClass = {
-    new: 'bg-[#FAEEDA] text-[#BA7517]',
-    scheduled: 'bg-[#EEEDFE] text-[#534AB7]',
-    assigned: 'bg-[#EEEDFE] text-[#534AB7]',
-    in_progress: 'bg-[#E6F1FB] text-[#185FA5]',
-    pending: 'bg-[#FCEBEB] text-[#A32D2D]',
-    overdue: 'bg-[#FCEBEB] text-[#A32D2D]',
-    completed: 'bg-[#EAF3DE] text-[#3B6D11]',
-    approved: 'bg-[#EAF3DE] text-[#3B6D11]',
-    closed: 'bg-[#EAF3DE] text-[#3B6D11]',
-  };
 
   if (isPendingRequestsPage) {
     return (
@@ -613,14 +562,10 @@ export default function AdminDashboard() {
                             <span
                               className={cn(
                                 'inline-block rounded-[10px] px-2 py-0.5 text-[10px] font-medium',
-                                statusPillClass[job.mapStatus] || statusPillClass.unscheduled
+                                job.statusToneClass
                               )}
                             >
-                              {['scheduled', 'overdue'].includes(job.mapStatus) &&
-                              job.nextApptText &&
-                              job.nextApptText !== '—'
-                                ? `${job.mapStatusLabel} — ${job.nextApptText}`
-                                : job.mapStatusLabel}
+                              {job.mapStatusLabel}
                             </span>
                           </div>
                         </div>
@@ -702,7 +647,7 @@ export default function AdminDashboard() {
                       <span
                         className={cn(
                           'rounded-[10px] px-2 py-0.5 text-[10px] font-medium',
-                          statusPillClass[selectedMapJob.mapStatus] || statusPillClass.unscheduled
+                          selectedMapJob.statusToneClass
                         )}
                       >
                         {selectedMapJob.mapStatusLabel}
@@ -722,7 +667,6 @@ export default function AdminDashboard() {
                   </p>
                   <div className="space-y-2">
                     {selectedClientRequests.slice(0, 5).map((r) => {
-                      const hist = getClientCardHistoryBucket(r);
                       const showActions = canEditOrCancelHistoryRequest(r);
                       return (
                         <div
@@ -739,11 +683,10 @@ export default function AdminDashboard() {
                                 <span
                                   className={cn(
                                     'inline-block rounded-[10px] px-2 py-0.5 text-[10px] font-medium',
-                                    CLIENT_CARD_BUCKET_PILL_CLASS[hist.bucket] ||
-                                    CLIENT_CARD_BUCKET_PILL_CLASS.unscheduled
+                                    getServiceRequestStatusToneClass(r)
                                   )}
                                 >
-                                  {hist.label}
+                                  {getServiceRequestStatusLabel(r)}
                                 </span>
                               </div>
                               <div className="mt-0.5 text-[10px] text-muted-foreground">

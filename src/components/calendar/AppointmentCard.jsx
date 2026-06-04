@@ -1,40 +1,20 @@
 import React from 'react';
 import { cn } from "@/lib/utils";
 import { MapPin, Clock, AlertCircle } from 'lucide-react';
-import StatusBadge from '@/components/ui/StatusBadge';
-import { parseISO } from 'date-fns';
+import {
+  getServiceRequestStatusCardClass,
+  getServiceRequestStatusLabel,
+  getServiceRequestStatusToneClass,
+} from '@/utils/serviceRequestStatusDisplay';
 
 export default function AppointmentCard({ appointment, isDragging, compact = false }) {
-  const getCardColor = () => {
-    const end = appointment?.scheduled_end_time ? parseISO(appointment.scheduled_end_time) : null;
-    const isClosed = ['completed', 'approved', 'closed'].includes(appointment?.status);
-    const isOverdue = (() => {
-      if (appointment?.status === 'overdue' || appointment?.is_sla_breached) return true;
-      if (isClosed || !end || Number.isNaN(end.getTime())) return false;
-      const due = new Date(end);
-      due.setHours(0, 0, 0, 0);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      return due < today;
-    })();
-    const status = (appointment?.status || '').toLowerCase();
-
-    if (isOverdue || appointment.priority === 'urgent') return 'bg-red-100 border-red-200';
-    if (status === 'completed') return 'bg-green-100 border-green-200';
-    if (status === 'approved') return 'bg-emerald-100 border-emerald-200';
-    if (status === 'closed') return 'bg-gray-100 border-gray-200';
-    if (status === 'new') return 'bg-blue-100 border-blue-200';
-    if (status === 'scheduled' || status === 'assigned' || status === 'in_progress') {
-      return 'bg-[#EEEDFE] border-[#D8D4FB]';
-    }
-    return 'bg-gray-100 border-gray-200';
-  };
+  const cardColor = getServiceRequestStatusCardClass(appointment);
 
   if (compact) {
     return (
       <div className={cn(
         "p-2 rounded-lg border cursor-grab transition-all",
-        getCardColor(),
+        cardColor,
         isDragging && "shadow-lg rotate-2 opacity-90"
       )}>
         <div className="flex items-start justify-between gap-2 mb-1">
@@ -65,7 +45,14 @@ export default function AppointmentCard({ appointment, isDragging, compact = fal
           </p>
           <p className="text-sm text-gray-600">{appointment.client_name}</p>
         </div>
-        <StatusBadge status={appointment.status} size="xs" />
+        <span
+          className={cn(
+            'inline-block rounded-[10px] px-2 py-0.5 text-[10px] font-medium',
+            getServiceRequestStatusToneClass(appointment)
+          )}
+        >
+          {getServiceRequestStatusLabel(appointment)}
+        </span>
       </div>
 
       <div className="space-y-1 text-xs text-gray-600">

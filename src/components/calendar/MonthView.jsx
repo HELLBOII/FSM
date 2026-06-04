@@ -2,6 +2,7 @@ import React from 'react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, isSameDay, isSameMonth, parseISO } from 'date-fns';
 import { cn } from "@/lib/utils";
+import { getServiceRequestStatusCardClass } from '@/utils/serviceRequestStatusDisplay';
 
 export default function MonthView({ date, appointments, onReschedule, onAppointmentClick, onDateClick }) {
   const monthStart = startOfMonth(date);
@@ -45,31 +46,6 @@ export default function MonthView({ date, appointments, onReschedule, onAppointm
     } else {
       onReschedule(draggableId, newDate, '09:00 AM');
     }
-  };
-
-  const getStatusColor = (appointment) => {
-    const end = appointment?.scheduled_end_time ? parseISO(appointment.scheduled_end_time) : null;
-    const isClosed = ['completed', 'approved', 'closed'].includes(appointment?.status);
-    const isOverdue = (() => {
-      if (appointment?.status === 'overdue' || appointment?.is_sla_breached) return true;
-      if (isClosed || !end || Number.isNaN(end.getTime())) return false;
-      const due = new Date(end);
-      due.setHours(0, 0, 0, 0);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      return due < today;
-    })();
-    const status = (appointment?.status || '').toLowerCase();
-
-    if (isOverdue || appointment?.priority === 'urgent') return 'bg-red-100 border-red-200 text-red-700';
-    if (status === 'completed') return 'bg-green-100 border-green-200 text-green-700';
-    if (status === 'approved') return 'bg-emerald-100 border-emerald-200 text-emerald-700';
-    if (status === 'closed') return 'bg-gray-100 border-gray-200 text-gray-700';
-    if (status === 'new') return 'bg-blue-100 border-blue-200 text-blue-700';
-    if (status === 'scheduled' || status === 'assigned' || status === 'in_progress') {
-      return 'bg-[#EEEDFE] border-[#D8D4FB] text-[#534AB7]';
-    }
-    return 'bg-gray-100 border-gray-200 text-gray-600';
   };
 
   return (
@@ -148,7 +124,7 @@ export default function MonthView({ date, appointments, onReschedule, onAppointm
                                   }}
                                   className={cn(
                                     "text-xs p-1.5 rounded border cursor-pointer truncate",
-                                    getStatusColor(apt),
+                                    getServiceRequestStatusCardClass(apt, { withText: true }),
                                     snapshot.isDragging && "shadow-lg rotate-2",
                                     !snapshot.isDragging && "hover:opacity-80"
                                   )}

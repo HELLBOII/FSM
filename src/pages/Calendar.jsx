@@ -11,8 +11,12 @@ import MonthView from '@/components/calendar/MonthView';
 import WeekView from '@/components/calendar/WeekView';
 import DayView from '@/components/calendar/DayView';
 import ServiceRequestForm from '@/components/forms/ServiceRequestForm';
-import StatusBadge from '@/components/ui/StatusBadge';
+import {
+  getServiceRequestStatusLabel,
+  getServiceRequestStatusToneClass,
+} from '@/utils/serviceRequestStatusDisplay';
 import { format, addMonths, addWeeks, addDays, startOfWeek, endOfWeek, parseISO } from 'date-fns';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
 const VIEWS = { month: 'month', week: 'week', day: 'day' };
@@ -173,22 +177,6 @@ export default function Calendar() {
     return format(currentDate, 'EEEE, MMMM d, yyyy');
   };
 
-  const getDisplayStatus = (appointment) => {
-    const status = (appointment?.status || '').toLowerCase();
-    const isScheduledFamily = status === 'scheduled' || status === 'in_progress';
-    const endDate = appointment?.scheduled_end_time ? new Date(appointment.scheduled_end_time) : null;
-    const hasValidEnd = endDate && !Number.isNaN(endDate.getTime());
-    if (isScheduledFamily && hasValidEnd) {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const due = new Date(endDate);
-      due.setHours(0, 0, 0, 0);
-      if (due < today) return 'overdue';
-    }
-    if (status === 'in_progress') return 'scheduled';
-    return status || appointment?.status;
-  };
-
   if (isLoading) {
     return (
       <div data-source-location="pages/Calendar:74:6" data-dynamic-content="false" className="flex items-center justify-center min-h-[60vh]">
@@ -278,7 +266,14 @@ export default function Calendar() {
                       {selectedAppointment.client_name} • {selectedAppointment.farm_name}
                     </DialogDescription>
                   </div>
-                  <StatusBadge status={getDisplayStatus(selectedAppointment)} size="md" />
+                  <span
+                    className={cn(
+                      'inline-block rounded-[10px] px-2.5 py-1 text-sm font-medium',
+                      getServiceRequestStatusToneClass(selectedAppointment)
+                    )}
+                  >
+                    {getServiceRequestStatusLabel(selectedAppointment)}
+                  </span>
                 </div>
               </DialogHeader>
 
