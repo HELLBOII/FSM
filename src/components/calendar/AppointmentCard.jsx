@@ -1,82 +1,25 @@
 import React from 'react';
-import { cn } from "@/lib/utils";
-import { MapPin, Clock, AlertCircle } from 'lucide-react';
-import {
-  getServiceRequestStatusCardClass,
-  getServiceRequestStatusLabel,
-  getServiceRequestStatusToneClass,
-} from '@/utils/serviceRequestStatusDisplay';
+import { format, parseISO } from 'date-fns';
+import { cn } from '@/lib/utils';
+import { getServiceRequestStatusCardClass } from '@/utils/serviceRequestStatusDisplay';
 
-export default function AppointmentCard({ appointment, isDragging, compact = false }) {
-  const cardColor = getServiceRequestStatusCardClass(appointment);
-
-  if (compact) {
-    return (
-      <div className={cn(
-        "p-2 rounded-lg border cursor-grab transition-all",
-        cardColor,
-        isDragging && "shadow-lg rotate-2 opacity-90"
-      )}>
-        <div className="flex items-start justify-between gap-2 mb-1">
-          <p className="font-semibold text-xs text-gray-900 truncate">
-            {appointment.client_name}
-          </p>
-          {appointment.priority === 'urgent' && (
-            <AlertCircle className="w-3 h-3 text-red-500 shrink-0" />
-          )}
-        </div>
-        <p className="text-xs text-gray-600 truncate">
-          {appointment.issue_category?.replace(/_/g, ' ')}
-        </p>
-      </div>
-    );
-  }
-
+export default function AppointmentCard({ appointment, isDragging }) {
   return (
-    <div className={cn(
-      "p-3 rounded-lg border cursor-grab transition-all",
-      getCardColor(),
-      isDragging && "shadow-lg rotate-2 opacity-90"
-    )}>
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <div>
-          <p className="font-semibold text-gray-900">
-            SR #{appointment.request_number}
-          </p>
-          <p className="text-sm text-gray-600">{appointment.client_name}</p>
-        </div>
-        <span
-          className={cn(
-            'inline-block rounded-[10px] px-2 py-0.5 text-[10px] font-medium',
-            getServiceRequestStatusToneClass(appointment)
-          )}
-        >
-          {getServiceRequestStatusLabel(appointment)}
-        </span>
-      </div>
-
-      <div className="space-y-1 text-xs text-gray-600">
-        <div className="flex items-center gap-1">
-          <MapPin className="w-3 h-3" />
-          <span className="truncate">{appointment.farm_name}</span>
-        </div>
-        {appointment.assigned_technician_name && (
-          <div className="flex items-center gap-1">
-            <Clock className="w-3 h-3" />
-            <span>{appointment.assigned_technician_name}</span>
-          </div>
-        )}
-        <div className="flex items-center gap-1">
-          <span className="capitalize">{appointment.issue_category?.replace(/_/g, ' ')}</span>
-        </div>
-      </div>
-
-      {appointment.priority === 'urgent' && (
-        <div className="mt-2 flex items-center gap-1 text-xs text-red-600 font-medium">
-          <AlertCircle className="w-3 h-3" />
-          Urgent
-        </div>
+    <div
+      className={cn(
+        'text-xs p-1.5 rounded border cursor-grab truncate transition-all',
+        getServiceRequestStatusCardClass(appointment, { withText: true }),
+        isDragging && 'shadow-lg rotate-2',
+        !isDragging && 'hover:opacity-80'
       )}
+      title={`${appointment.request_number} - ${appointment.client_name}`}
+    >
+      <div className="font-medium truncate">
+        {appointment.scheduled_start_time
+          ? format(parseISO(appointment.scheduled_start_time), 'hh:mm a')
+          : ''}{' '}
+        {appointment.client_name}
+      </div>
     </div>
   );
 }

@@ -1,59 +1,50 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { serviceRequestService } from '@/services';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, MapPin, Clock, User, Phone, Mail } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react';
 import PageHeader from '@/components/common/PageHeader';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
 import MonthView from '@/components/calendar/MonthView';
 import WeekView from '@/components/calendar/WeekView';
 import DayView from '@/components/calendar/DayView';
 import ServiceRequestForm from '@/components/forms/ServiceRequestForm';
-import {
-  getServiceRequestStatusLabel,
-  getServiceRequestStatusToneClass,
-} from '@/utils/serviceRequestStatusDisplay';
-import { format, addMonths, addWeeks, addDays, startOfWeek, endOfWeek, parseISO } from 'date-fns';
-import { cn } from '@/lib/utils';
+import { format, addMonths, addWeeks, addDays, startOfWeek, endOfWeek } from 'date-fns';
 import { toast } from 'sonner';
 
 const VIEWS = { month: 'month', week: 'week', day: 'day' };
 
-function parseIrrigationSystemsList(raw) {
-  if (raw == null) return [];
-  if (Array.isArray(raw)) {
-    return raw.map((s) => String(s).trim()).filter(Boolean);
-  }
-  if (typeof raw === 'string') {
-    const t = raw.trim();
-    if (!t) return [];
-    try {
-      const p = JSON.parse(t);
-      if (Array.isArray(p)) return p.map((s) => String(s).trim()).filter(Boolean);
-      return [String(p).trim()].filter(Boolean);
-    } catch {
-      return t.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
-    }
-  }
-  return [];
-}
-
-function formatIrrigationSystemsDisplay(appointment) {
-  let list = parseIrrigationSystemsList(appointment?.irrigation_systems);
-  if (!list.length) list = parseIrrigationSystemsList(appointment?.irrigation_type);
-  return list.length ? list.join(', ') : '—';
-}
-
 export default function Calendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [view, setView] = useState(VIEWS.month);
-  const [selectedAppointment, setSelectedAppointment] = useState(null);
-  const [showDetailsDialog, setShowDetailsDialog] = useState(false);
   const [showFormDialog, setShowFormDialog] = useState(false);
+  const [selectedRequest, setSelectedRequest] = useState(null);
+  const [formMode, setFormMode] = useState('edit');
+  const [isOpeningForm, setIsOpeningForm] = useState(false);
+  const [isViewActionDelayActive, setIsViewActionDelayActive] = useState(false);
   const [selectedDate, setSelectedDate] = useState(null);
+  const openingTimerRef = useRef(null);
+  const viewDelayTimerRef = useRef(null);
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    return () => {
+      if (openingTimerRef.current) clearTimeout(openingTimerRef.current);
+      if (viewDelayTimerRef.current) clearTimeout(viewDelayTimerRef.current);
+    };
+  }, []);
+
+  const resetFormDialogState = () => {
+    if (openingTimerRef.current) clearTimeout(openingTimerRef.current);
+    if (viewDelayTimerRef.current) clearTimeout(viewDelayTimerRef.current);
+    setSelectedRequest(null);
+    setSelectedDate(null);
+    setFormMode('edit');
+    setIsOpeningForm(false);
+    setIsViewActionDelayActive(false);
+  };
 
   const { data: appointments = [], isLoading } = useQuery({
     queryKey: ['scheduledAppointments'],
@@ -65,8 +56,9 @@ export default function Calendar() {
     mutationFn: (data) => serviceRequestService.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scheduledAppointments'] });
+      queryClient.invalidateQueries({ queryKey: ['serviceRequests'] });
       setShowFormDialog(false);
-      setSelectedDate(null);
+      resetFormDialogState();
       toast.success('Service request created successfully');
     },
     onError: (error) => {
@@ -78,8 +70,9 @@ export default function Calendar() {
     mutationFn: ({ id, data }) => serviceRequestService.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scheduledAppointments'] });
+      queryClient.invalidateQueries({ queryKey: ['serviceRequests'] });
       setShowFormDialog(false);
-      setSelectedDate(null);
+      resetFormDialogState();
       toast.success('Request updated successfully');
     },
     onError: (error) => {
@@ -87,9 +80,22 @@ export default function Calendar() {
     }
   });
 
-  const handleAppointmentClick = (appointment) => {
-    setSelectedAppointment(appointment);
-    setShowDetailsDialog(true);
+  const handleAppointmentClick = (request) => {
+    if (openingTimerRef.current) clearTimeout(openingTimerRef.current);
+    if (viewDelayTimerRef.current) clearTimeout(viewDelayTimerRef.current);
+    const statusKey = String(request?.status || '').toLowerCase();
+    const isCancelled = statusKey === 'cancelled' || String(request?.is_cancelled || '').toUpperCase() === 'T';
+    const isViewOnly = statusKey === 'completed' || isCancelled;
+    setSelectedDate(null);
+    setFormMode(isViewOnly ? 'view' : 'edit');
+    setIsOpeningForm(true);
+    setIsViewActionDelayActive(isViewOnly);
+    setSelectedRequest(request);
+    setShowFormDialog(true);
+    openingTimerRef.current = setTimeout(() => setIsOpeningForm(false), 450);
+    if (isViewOnly) {
+      viewDelayTimerRef.current = setTimeout(() => setIsViewActionDelayActive(false), 3000);
+    }
   };
 
   const handleDateClick = (date, timeSlot) => {
@@ -106,11 +112,22 @@ export default function Calendar() {
     } else {
       dateToUse.setHours(9, 0, 0, 0);
     }
+    if (openingTimerRef.current) clearTimeout(openingTimerRef.current);
+    if (viewDelayTimerRef.current) clearTimeout(viewDelayTimerRef.current);
+    setSelectedRequest(null);
+    setFormMode('edit');
+    setIsOpeningForm(false);
+    setIsViewActionDelayActive(false);
     setSelectedDate(dateToUse);
     setShowFormDialog(true);
   };
 
   const handleFormSubmit = async (data) => {
+    if (selectedRequest) {
+      await updateMutation.mutateAsync({ id: selectedRequest.id, data });
+      return;
+    }
+
     // If a date was selected from calendar slot, set both start and end from it (form may already have them pre-filled)
     if (selectedDate) {
       const startDate = new Date(selectedDate);
@@ -128,11 +145,7 @@ export default function Calendar() {
       data.scheduled_end_time = endDate.toISOString();
     }
 
-    if (data.id) {
-      await updateMutation.mutateAsync({ id: data.id, data });
-    } else {
-      await createMutation.mutateAsync(data);
-    }
+    await createMutation.mutateAsync(data);
   };
 
   const updateAppointmentMutation = useMutation({
@@ -276,153 +289,59 @@ export default function Calendar() {
         )}
       </div>
 
-      {/* Appointment Details Dialog */}
-      <Dialog open={showDetailsDialog} onOpenChange={setShowDetailsDialog}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          {selectedAppointment && (
-            <>
-              <DialogHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <DialogTitle className="text-xl">
-                      Service Request #{selectedAppointment.request_number}
-                    </DialogTitle>
-                    <DialogDescription>
-                      {selectedAppointment.client_name} • {selectedAppointment.farm_name}
-                    </DialogDescription>
-                  </div>
-                  <span
-                    className={cn(
-                      'inline-block rounded-[10px] px-2.5 py-1 text-sm font-medium',
-                      getServiceRequestStatusToneClass(selectedAppointment)
-                    )}
-                  >
-                    {getServiceRequestStatusLabel(selectedAppointment)}
-                  </span>
-                </div>
-              </DialogHeader>
-
-              <div className="space-y-6 mt-4">
-                {/* Client Information */}
-                <div className="space-y-3">
-                  <h3 className="font-semibold text-gray-900">Client Information</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="flex items-start gap-2">
-                      <User className="w-4 h-4 text-gray-400 mt-0.5" />
-                      <div>
-                        <p className="text-sm text-gray-600">Client Name</p>
-                        <p className="font-medium">{selectedAppointment.client_name}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <MapPin className="w-4 h-4 text-gray-400 mt-0.5" />
-                      <div>
-                        <p className="text-sm text-gray-600">Farm Name</p>
-                        <p className="font-medium">{selectedAppointment.farm_name}</p>
-                      </div>
-                    </div>
-                    {selectedAppointment.contact_phone && (
-                      <div className="flex items-start gap-2">
-                        <Phone className="w-4 h-4 text-gray-400 mt-0.5" />
-                        <div>
-                          <p className="text-sm text-gray-600">Phone</p>
-                          <p className="font-medium">{selectedAppointment.contact_phone}</p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Service Details */}
-                <div className="space-y-3">
-                  <h3 className="font-semibold text-gray-900">Service Details</h3>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div>
-                      <p className="text-sm text-gray-600">Issue Category</p>
-                      <p className="font-medium capitalize">{selectedAppointment.issue_category}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Irrigation Systems</p>
-                      <p className="font-medium capitalize">{formatIrrigationSystemsDisplay(selectedAppointment)}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Assigned Technician</p>
-                      <p className="font-medium">{selectedAppointment.assigned_technician_name || '-'}</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Schedule Information */}
-                {selectedAppointment.scheduled_start_time && (
-                  <div className="space-y-3">
-                    <h3 className="font-semibold text-gray-900">Schedule</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="flex items-start gap-2">
-                        <Clock className="w-4 h-4 text-gray-400 mt-0.5" />
-                        <div>
-                          <p className="text-sm text-gray-600">Start Time</p>
-                          <p className="font-medium">
-                            {format(parseISO(selectedAppointment.scheduled_start_time), 'PPpp')}
-                          </p>
-                        </div>
-                      </div>
-                      {selectedAppointment.scheduled_end_time && (
-                        <div className="flex items-start gap-2">
-                          <Clock className="w-4 h-4 text-gray-400 mt-0.5" />
-                          <div>
-                            <p className="text-sm text-gray-600">End Time</p>
-                            <p className="font-medium">
-                              {format(parseISO(selectedAppointment.scheduled_end_time), 'PPpp')}
-                            </p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Notes */}
-                {selectedAppointment.notes && (
-                  <div className="space-y-2">
-                    <h3 className="font-semibold text-gray-900">Notes</h3>
-                    <p className="text-sm text-gray-600">{selectedAppointment.notes}</p>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
-
       {/* Service Request Form Dialog */}
       <Dialog open={showFormDialog} onOpenChange={(open) => {
         setShowFormDialog(open);
-        if (!open) setSelectedDate(null);
+        if (!open) resetFormDialogState();
       }}>
         <DialogContent className="max-w-6xl w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0">
           <DialogHeader>
-            <DialogTitle>New Service Request</DialogTitle>
+            <DialogTitle>
+              {selectedRequest
+                ? (formMode === 'view' ? 'View Service Request' : 'Edit Service Request')
+                : 'New Service Request'}
+            </DialogTitle>
             <DialogDescription>
-              {selectedDate ? `Create a new service request for ${format(selectedDate, 'MMMM d, yyyy')}${selectedDate.getHours() !== 0 || selectedDate.getMinutes() !== 0 ? ` at ${format(selectedDate, 'h:mm a')}` : ''}` : 'Fill in the details for the new service request'}
+              {selectedRequest
+                ? (formMode === 'view'
+                  ? ''
+                  : 'Update the service request details below')
+                : (selectedDate
+                  ? `Create a new service request for ${format(selectedDate, 'MMMM d, yyyy')}${selectedDate.getHours() !== 0 || selectedDate.getMinutes() !== 0 ? ` at ${format(selectedDate, 'h:mm a')}` : ''}`
+                  : 'Fill in the details for the new service request')}
             </DialogDescription>
           </DialogHeader>
-          <ServiceRequestForm
-            request={null}
-            initialStartTime={selectedDate ?? undefined}
-            initialEndTime={selectedDate != null ? (() => {
-              const start = new Date(selectedDate);
-              const hasTime = start.getHours() !== 0 || start.getMinutes() !== 0;
-              const end = new Date(start);
-              if (!hasTime) end.setHours(10, 0, 0, 0);
-              else end.setHours(end.getHours() + 1, end.getMinutes(), 0, 0);
-              return end;
-            })() : undefined}
-            onSubmit={handleFormSubmit}
-            onCancel={() => {
-              setShowFormDialog(false);
-              setSelectedDate(null);
-            }}
-          />
+          {isOpeningForm ? (
+            <div className="flex min-h-[240px] items-center justify-center">
+              <LoadingSpinner
+                size="md"
+                text={formMode === 'view' ? 'Opening view mode...' : 'Opening edit mode...'}
+              />
+            </div>
+          ) : (
+            <ServiceRequestForm
+              key={`${selectedRequest ? String(selectedRequest.id) : 'new'}-${formMode}`}
+              request={selectedRequest}
+              readOnly={formMode === 'view'}
+              showEditInReadOnly={formMode === 'view'}
+              onEditRequest={() => setFormMode('edit')}
+              actionsDisabled={isViewActionDelayActive}
+              initialStartTime={!selectedRequest ? (selectedDate ?? undefined) : undefined}
+              initialEndTime={!selectedRequest && selectedDate != null ? (() => {
+                const start = new Date(selectedDate);
+                const hasTime = start.getHours() !== 0 || start.getMinutes() !== 0;
+                const end = new Date(start);
+                if (!hasTime) end.setHours(10, 0, 0, 0);
+                else end.setHours(end.getHours() + 1, end.getMinutes(), 0, 0);
+                return end;
+              })() : undefined}
+              onSubmit={handleFormSubmit}
+              onCancel={() => {
+                setShowFormDialog(false);
+                resetFormDialogState();
+              }}
+            />
+          )}
         </DialogContent>
       </Dialog>
 

@@ -84,7 +84,7 @@ const WeekSlotCell = React.memo(function WeekSlotCell({
                       snapshot.isDragging && 'shadow-lg opacity-90'
                     )}
                   >
-                    <AppointmentCard appointment={apt} isDragging={snapshot.isDragging} compact />
+                    <AppointmentCard appointment={apt} isDragging={snapshot.isDragging} />
                   </div>
                 )}
               </Draggable>

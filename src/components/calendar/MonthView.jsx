@@ -1,8 +1,8 @@
 import React from 'react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, isSameDay, isSameMonth, parseISO } from 'date-fns';
-import { cn } from "@/lib/utils";
-import { getServiceRequestStatusCardClass } from '@/utils/serviceRequestStatusDisplay';
+import { cn } from '@/lib/utils';
+import AppointmentCard from './AppointmentCard';
 
 export default function MonthView({ date, appointments, onReschedule, onAppointmentClick, onDateClick }) {
   const monthStart = startOfMonth(date);
@@ -123,16 +123,11 @@ export default function MonthView({ date, appointments, onReschedule, onAppointm
                                     onAppointmentClick?.(apt);
                                   }}
                                   className={cn(
-                                    "text-xs p-1.5 rounded border cursor-pointer truncate",
-                                    getServiceRequestStatusCardClass(apt, { withText: true }),
-                                    snapshot.isDragging && "shadow-lg rotate-2",
-                                    !snapshot.isDragging && "hover:opacity-80"
+                                    onAppointmentClick && 'cursor-pointer',
+                                    'cursor-grab active:cursor-grabbing'
                                   )}
-                                  title={`${apt.request_number} - ${apt.client_name}`}
                                 >
-                                  <div className="font-medium truncate">
-                                    {apt.scheduled_start_time ? format(parseISO(apt.scheduled_start_time), 'hh:mm a') : ''} {apt.client_name}
-                                  </div>
+                                  <AppointmentCard appointment={apt} isDragging={snapshot.isDragging} />
                                 </div>
                               )}
                             </Draggable>
