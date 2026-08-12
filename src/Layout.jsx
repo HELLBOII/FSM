@@ -47,7 +47,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Loader2,
-  UserPlus } from
+  UserPlus,
+  Upload } from
 'lucide-react';
 import { Tooltip } from "@/components/ui/tooltip";
 
@@ -73,7 +74,8 @@ const webNavSections = [
   items: [
   { name: 'Clients', icon: UserCircle, page: 'Clients' },
   { name: 'Technicians', icon: Users, page: 'Technicians' },
-  { name: 'Inventory / Equipment', icon: Package, page: 'EquipmentInventory' }]
+  { name: 'Inventory / Equipment', icon: Package, page: 'EquipmentInventory' },
+  { name: 'Data Upload', icon: Upload, page: 'DataUpload' }]
 },
 // {
 //   label: 'Reports',
